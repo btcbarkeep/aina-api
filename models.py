@@ -1,0 +1,40 @@
+from datetime import datetime
+from typing import Optional
+from sqlmodel import Field, SQLModel
+
+class BuildingBase(SQLModel):
+    name: str = Field(index=True)
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
+
+class Building(BuildingBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+
+class BuildingCreate(BuildingBase):
+    pass
+
+class BuildingRead(BuildingBase):
+    id: int
+    created_at: datetime
+
+class EventBase(SQLModel):
+    building_id: int = Field(foreign_key="building.id", index=True)
+    unit_number: Optional[str] = Field(default=None, index=True)
+    event_type: str = Field(description="e.g., 'assessment', 'notice', 'repair', 'insurance'")
+    title: str
+    body: Optional[str] = None
+    occurred_at: datetime
+
+class Event(EventBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+
+class EventCreate(EventBase):
+    pass
+
+class EventRead(EventBase):
+    id: int
+    created_at: datetime

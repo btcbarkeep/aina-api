@@ -1,43 +1,46 @@
-# Aina API — FastAPI Starter (for Render)
+# Aina API — DB Starter (FastAPI + SQLModel + Postgres)
 
-This is a tiny FastAPI app you can deploy to **Render**.
+Minimal API with **Buildings** and **Events** endpoints.
 
-## What's inside
-- `main.py` — the FastAPI app (routes: `/` and `/health`)
-- `requirements.txt` — Python dependencies
-- `render.yaml` — Render blueprint (optional; Render can also infer settings)
-- `.gitignore` — keeps your repo clean
+## Endpoints
+- `POST /buildings` — create building
+- `GET /buildings/{id}` — fetch building
+- `GET /buildings?limit=&offset=` — list buildings
+- `POST /events` — create event (requires `building_id`)
+- `GET /events?building_id=&unit_number=&limit=&offset=` — list events
+- `GET /health` — health check
 
-## Deploy in 10 minutes
+## Quick deploy (Render)
+1. Create a Postgres (Neon/Render/DO) and copy **DATABASE_URL**.
+   - If it starts with `postgres://`, change it to `postgresql+psycopg2://`
+2. In Render → your Web Service → **Environment** → add:
+   - `DATABASE_URL = postgresql+psycopg2://USER:PASS@HOST:5432/DBNAME`
+3. Click **Deploy latest**.
 
-### 1) Create a GitHub account (if you don't have one)
-- Go to https://github.com/signup and create an account.
-- Confirm your email.
+## Local test (optional)
+```
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export DATABASE_URL="sqlite:///./local.db"  # or your Postgres URL
+uvicorn main:app --reload
+```
 
-### 2) Create a new repository
-- Click the **+** (top-right) → **New repository**.
-- Name it, e.g., `aina-api` → **Create repository**.
-- Click **"uploading an existing file"**, then drag these files in:
-  - `main.py`, `requirements.txt`, `render.yaml`, `.gitignore`, `README.md`
-- Click **Commit changes**.
+## Example requests
+Create a building:
+```
+curl -X POST https://api.ainaprotocol.com/buildings   -H 'content-type: application/json'   -d '{ "name":"Kaanapali Shores", "address":"3445 Lower Honoapiilani Rd", "city":"Lahaina", "state":"HI", "zip":"96761" }'
+```
 
-### 3) Deploy on Render
-- Sign up / Log in: https://render.com/signup
-- Click **New +** → **Web Service**.
-- Connect your GitHub and pick the repo you just created.
-- Render will detect Python.
-  - **Build command:** `pip install -r requirements.txt`
-  - **Start command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
-  - **Environment:** Python (use `PYTHON_VERSION=3.11.9` if asked)
-- Click **Create Web Service** and wait for deploy.
+Create an event:
+```
+curl -X POST https://api.ainaprotocol.com/events   -H 'content-type: application/json'   -d '{ "building_id": 1, "unit_number":"264", "event_type":"notice", "title":"Plumbing maintenance", "body":"Shutoff 10–12am", "occurred_at":"2025-01-01T10:00:00Z" }'
+```
 
-When it finishes, visit your Render URL, e.g. `https://aina-api.onrender.com`
-- `GET /` should show “Aina API is running ✅”
-- `GET /health` should return `{ "ok": true }`
+List events for a building:
+```
+curl "https://api.ainaprotocol.com/events?building_id=1&limit=20"
+```
 
-### 4) Point your domain (when ready)
-In Cloudflare → **DNS → Add record**:
-- `CNAME` **api** → `your-service-name.onrender.com` (Proxied)
-- `CNAME` **app** → (later, when you deploy your dashboard)
+---
 
-You're deployed! Next step would be adding a database and your first endpoints.
+**Note:** This auto-creates tables at startup (simple for MVP). Later we can add migrations (Alembic) and auth.
