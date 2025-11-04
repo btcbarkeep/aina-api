@@ -38,3 +38,21 @@ class EventCreate(EventBase):
 class EventRead(EventBase):
     id: int
     created_at: datetime
+
+class DocumentBase(SQLModel):
+    event_id: int = Field(foreign_key="event.id", index=True)
+    s3_key: str = Field(description="S3 object key, e.g., uploads/uuid.pdf")
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+
+class Document(DocumentBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+
+class DocumentCreate(DocumentBase):
+    pass
+
+class DocumentRead(DocumentBase):
+    id: int
+    created_at: datetime
