@@ -52,3 +52,7 @@ async def root():
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+
+from routers import buildings, events, uploads, documents, auth
+
+app.include_router(auth.router)
