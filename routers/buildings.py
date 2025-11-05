@@ -1,4 +1,4 @@
- from typing import List
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from database import get_session, create_db_and_tables
