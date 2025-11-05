@@ -3,10 +3,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import buildings, events
-from routers import uploads, documents   # add this
+from routers import uploads, documents   
 
-app.include_router(uploads.router)       # add this
-app.include_router(documents.router)     # add this
+app.include_router(uploads.router)       
+app.include_router(documents.router)     
 
 from database import create_db_and_tables
 
