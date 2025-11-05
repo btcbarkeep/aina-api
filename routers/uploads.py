@@ -1,61 +1,36 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-import os
-from uuid import uuid4
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
+from pathlib import Path
+import shutil
 
-router = APIRouter(prefix="/upload", tags=["upload"])
+router = APIRouter()
 
-class PresignRequest(BaseModel):
-    filename: str = Field(..., description="Original filename, e.g. report.pdf")
-    content_type: str = Field(..., description="MIME type, e.g. application/pdf")
+# Define your upload directory
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-def _require_env(var: str) -> str:
-    val = os.getenv(var)
-    if not val:
-        raise HTTPException(status_code=500, detail=f"{var} not configured")
-    return val
-
-@router.post("/url")
-def create_presigned_url(req: PresignRequest):
-    """
-    Returns a one-time URL the browser can PUT the file to S3 with.
-    Response shape:
-    {
-      "url": "<presigned PUT url>",
-      "method": "PUT",
-      "headers": {"Content-Type": "<mime>"},
-      "key": "uploads/<uuid>-<safe-filename>"
-    }
-    """
-    bucket = _require_env("S3_BUCKET")
-    region = _require_env("AWS_REGION")  # e.g. us-east-2
-
-    # Basic filename hardening (keep it simple)
-    safe_name = req.filename.replace("/", "_").replace("\\", "_").strip()
-    if not safe_name:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-
-    key = f"uploads/{uuid4().hex}-{safe_name}"
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    file_path = UPLOAD_DIR / file.filename
 
     try:
-        s3 = boto3.client("s3", region_name=region)
-        url = s3.generate_presigned_url(
-            ClientMethod="put_object",
-            Params={
-                "Bucket": bucket,
-                "Key": key,
-                "ContentType": req.content_type,
-            },
-            ExpiresIn=600,  # 10 minutes
-        )
-    except (BotoCoreError, ClientError) as e:
-        raise HTTPException(status_code=500, detail=f"Failed to presign: {e}")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
+
+    download_url = f"/uploads/{file.filename}"
 
     return {
-        "url": url,
-        "method": "PUT",
-        "headers": {"Content-Type": req.content_type},
-        "key": key,
+        "filename": file.filename,
+        "content_type": file.content_type,
+        "download_url": download_url
     }
+
+# Optional: serve files directly from uploads/
+@router.get("/uploads/{filename}")
+async def get_uploaded_file(filename: str):
+    file_path = UPLOAD_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
