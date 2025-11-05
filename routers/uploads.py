@@ -1,9 +1,11 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 import boto3
 import os
+from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
 
 router = APIRouter()
+
 
 def get_s3_client():
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -24,25 +26,43 @@ def get_s3_client():
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Upload a file to S3 and return its public URL."""
+async def upload_file(
+    file: UploadFile = File(...),
+    property_name: str = Form(...),
+    category: str = Form("misc")
+):
+    """
+    Uploads a file to S3 under:
+        properties/{property_name}/{category}/{filename}
+    and returns its S3 download URL + metadata.
+    """
     try:
         s3, bucket, region = get_s3_client()
 
-        # Upload without ACLs (for Object Ownership: Bucket owner enforced)
+        # Normalize names
+        safe_property = property_name.strip().replace(" ", "-").lower()
+        safe_category = category.strip().replace(" ", "_").lower()
+
+        # Build key
+        key = f"properties/{safe_property}/{safe_category}/{file.filename}"
+
+        # Upload to S3
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
-            Key=file.filename,
+            Key=key,
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # Build public URL (ensure bucket has public access enabled)
-        download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{file.filename}"
+        # Public URL
+        download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
         return {
             "filename": file.filename,
+            "property": safe_property,
+            "category": safe_category,
             "content_type": file.content_type,
+            "uploaded_at": datetime.utcnow().isoformat(),
             "download_url": download_url,
         }
 
