@@ -3,6 +3,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import buildings, events
+from routers import uploads, documents   # add this
+
+app.include_router(uploads.router)       # add this
+app.include_router(documents.router)     # add this
+
 from database import create_db_and_tables
 
 app = FastAPI(title="Aina API", version="0.2.0")
