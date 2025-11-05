@@ -195,39 +195,27 @@ def list_files(
 from fastapi import Path
 
 
+from routers.auth import get_current_user
+
 @router.delete("/files/{key:path}")
 def delete_file(
-    key: str = Path(..., description="The full S3 key of the file to delete, e.g. complexes/KAHANA_VILLA/complex/insurance/test.pdf"),
-    force: bool = Query(False, description="Set to true to skip file existence check before delete")
+    key: str,
+    force: bool = Query(False),
+    user=Depends(get_current_user)
 ):
-    """
-    Deletes a file from S3 by key.
-
-    Example:
-        DELETE /files/complexes/KAHANA_VILLA/complex/insurance/test.pdf
-        DELETE /files/complexes/KAHANA_VILLA/complex/insurance/test.pdf?force=true
-    """
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="You are not authorized to delete files")
 
     try:
         s3, bucket, _ = get_s3_client()
-
-        # Optional existence check
         if not force:
             try:
                 s3.head_object(Bucket=bucket, Key=key)
             except ClientError as e:
                 if e.response["Error"]["Code"] == "404":
                     raise HTTPException(status_code=404, detail=f"File not found: {key}")
-                raise HTTPException(status_code=500, detail=f"Error checking file existence: {e}")
-
-        # Delete object
+                raise
         s3.delete_object(Bucket=bucket, Key=key)
-
-        return {
-            "deleted": True,
-            "key": key,
-            "message": "File successfully deleted from S3"
-        }
-
+        return {"deleted": True, "key": key, "message": "File successfully deleted from S3"}
     except ClientError as e:
         raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
