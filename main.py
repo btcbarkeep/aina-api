@@ -6,17 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 # DB bootstrap
 from database import create_db_and_tables
 
-# Routers (make sure these files exist under routers/)
-#   routers/buildings.py
-#   routers/events.py
-#   routers/uploads.py
-#   routers/documents.py
+# Routers (files under routers/)
+# - routers/buildings.py
+# - routers/events.py
+# - routers/uploads.py
+# - routers/documents.py
 from routers import buildings, events, uploads, documents
 
 # ---- Create the app FIRST ----
-app = FastAPI(title="Aina API", version="0.2.0")
+app = FastAPI(title="Aina API", version="0.2.1")
 
-# CORS (origins you’ll use in browser)
+# ---- CORS (origins you’ll use in the browser) ----
 ALLOWED_ORIGINS = [
     "https://app.ainaprotocol.com",
     "https://www.ainaprotocol.com",
@@ -32,9 +32,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure tables exist on boot
+# ---- Startup hook (ensure tables exist) ----
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     create_db_and_tables()
 
 # ---- Include routers AFTER app exists ----
@@ -43,7 +43,7 @@ app.include_router(events.router)
 app.include_router(uploads.router)     # POST /upload/url
 app.include_router(documents.router)   # POST /documents/attach, GET /documents
 
-# Health + root
+# ---- Health + root ----
 @app.get("/health")
 def health():
     return {"ok": True}
