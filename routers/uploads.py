@@ -98,26 +98,38 @@ async def upload_file(
 # -----------------------------------------------------
 #  LIST FILES
 # -----------------------------------------------------
+from datetime import datetime
+from fastapi import Query, HTTPException
+from botocore.exceptions import ClientError
+
+
 @router.get("/files")
 def list_files(
-    complex_name: str = Query(...),
-    scope: str = Query("complex"),        # "complex" or "unit"
-    unit_name: str | None = Query(None),  # required if scope == "unit"
-    category: str | None = Query(None)    # optional filter (e.g. "insurance")
+    complex_name: str = Query(..., description="Name of the complex (e.g. Kahana Villa)"),
+    scope: str = Query("complex", description="Scope: 'complex' or 'unit'"),
+    unit_name: str | None = Query(None, description="Required if scope='unit'"),
+    category: str | None = Query(None, description="Optional folder/category filter"),
+    limit: int = Query(50, ge=1, le=200, description="Max number of results to return"),
+    offset: int = Query(0, ge=0, description="Results offset for pagination"),
+    uploaded_after: str | None = Query(None, description="Filter by date (ISO format, e.g. 2025-10-01)"),
+    uploaded_before: str | None = Query(None, description="Filter by date (ISO format, e.g. 2025-11-01)")
 ):
     """
-    Lists all files in S3 for a given complex or unit.
+    Lists files from S3 for a specific complex or unit.
+    Supports optional filtering by category, date, and pagination.
 
-    Example paths:
-        complexes/{complex_name}/complex/{category}/
-        complexes/{complex_name}/units/{unit_name}/{category}/
+    Examples:
+        /files?complex_name=Kahana%20Villa&scope=complex
+        /files?complex_name=Kahana%20Villa&scope=unit&unit_name=302&category=insurance
+        /files?complex_name=Kahana%20Villa&limit=20&offset=0&uploaded_after=2025-10-01
     """
+
     try:
         s3, bucket, region = get_s3_client()
 
+        # --- Sanitize inputs ---
         safe_complex = complex_name.strip().replace(" ", "_").upper()
 
-        # Determine prefix
         if scope == "unit":
             if not unit_name:
                 raise HTTPException(status_code=400, detail="unit_name is required when scope='unit'")
@@ -130,34 +142,51 @@ def list_files(
             safe_category = category.strip().replace(" ", "_").lower()
             prefix += f"{safe_category}/"
 
-        # --- Query S3 objects ---
+        # --- Query S3 ---
         response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
 
         if "Contents" not in response:
             return {"files": [], "message": "No files found."}
 
         files = []
-
         for obj in response["Contents"]:
             key = obj["Key"]
-            if key.endswith("/"):  # skip folder placeholders
+            if key.endswith("/"):  # skip folders
                 continue
+
+            file_date = obj["LastModified"]
+            if uploaded_after or uploaded_before:
+                after = datetime.fromisoformat(uploaded_after) if uploaded_after else None
+                before = datetime.fromisoformat(uploaded_before) if uploaded_before else None
+                if after and file_date < after:
+                    continue
+                if before and file_date > before:
+                    continue
 
             files.append({
                 "filename": key.split("/")[-1],
                 "key": key,
                 "size_kb": round(obj["Size"] / 1024, 2),
-                "last_modified": obj["LastModified"].isoformat(),
+                "last_modified": file_date.isoformat(),
                 "download_url": f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
             })
+
+        # --- Sort newest first ---
+        files.sort(key=lambda x: x["last_modified"], reverse=True)
+
+        # --- Apply pagination ---
+        paged_files = files[offset:offset + limit]
 
         return {
             "complex": safe_complex,
             "scope": scope,
             "unit": safe_unit if scope == "unit" else None,
             "category": category,
-            "count": len(files),
-            "files": files
+            "count_total": len(files),
+            "count_returned": len(paged_files),
+            "limit": limit,
+            "offset": offset,
+            "files": paged_files
         }
 
     except ClientError as e:
