@@ -28,25 +28,34 @@ def get_s3_client():
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    property_name: str = Form(...),
-    category: str = Form("misc")
+    complex_name: str = Form(...),
+    category: str = Form(...),
+    scope: str = Form("complex"),        # "complex" or "unit"
+    unit_name: str | None = Form(None)   # only required when scope == "unit"
 ):
     """
-    Uploads a file to S3 under:
-        properties/{property_name}/{category}/{filename}
-    and returns its S3 download URL + metadata.
+    Upload a file to S3 under one of the following paths:
+      - complexes/{complex_name}/complex/{category}/{filename}
+      - complexes/{complex_name}/units/{unit_name}/{category}/{filename}
+    Returns a public download URL and metadata.
     """
     try:
         s3, bucket, region = get_s3_client()
 
-        # Normalize names
-        safe_property = property_name.strip().replace(" ", "-").lower()
+        # --- Normalize names ---
+        safe_complex = complex_name.strip().replace(" ", "_").upper()
         safe_category = category.strip().replace(" ", "_").lower()
 
-        # Build key
-        key = f"properties/{safe_property}/{safe_category}/{file.filename}"
+        # Determine folder path
+        if scope == "unit":
+            if not unit_name:
+                raise HTTPException(status_code=400, detail="unit_name is required when scope='unit'")
+            safe_unit = unit_name.strip().replace(" ", "_").upper()
+            key = f"complexes/{safe_complex}/units/{safe_unit}/{safe_category}/{file.filename}"
+        else:
+            key = f"complexes/{safe_complex}/complex/{safe_category}/{file.filename}"
 
-        # Upload to S3
+        # --- Upload to S3 ---
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -54,13 +63,15 @@ async def upload_file(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # Public URL
         download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
         return {
             "filename": file.filename,
-            "property": safe_property,
+            "scope": scope,
+            "complex": safe_complex,
+            "unit": safe_unit if scope == "unit" else None,
             "category": safe_category,
+            "path": key,
             "content_type": file.content_type,
             "uploaded_at": datetime.utcnow().isoformat(),
             "download_url": download_url,
