@@ -1,47 +1,61 @@
-import os, uuid
-from typing import Optional
-import boto3
-from botocore.config import Config
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+import os
+from uuid import uuid4
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
-router = APIRouter(prefix="/upload", tags=["uploads"])
-
-AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
-S3_BUCKET = os.getenv("S3_BUCKET")
-S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", None)
-
-_session = boto3.session.Session(
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    region_name=AWS_REGION,
-)
-_s3 = _session.client("s3", endpoint_url=S3_ENDPOINT_URL, config=Config(s3={"addressing_style": "virtual"}))
+router = APIRouter(prefix="/upload", tags=["upload"])
 
 class PresignRequest(BaseModel):
-    filename: str
-    content_type: Optional[str] = "application/pdf"
-    prefix: Optional[str] = "uploads/"
+    filename: str = Field(..., description="Original filename, e.g. report.pdf")
+    content_type: str = Field(..., description="MIME type, e.g. application/pdf")
 
-class PresignResponse(BaseModel):
-    url: str
-    method: str = "PUT"
-    headers: dict
-    key: str
+def _require_env(var: str) -> str:
+    val = os.getenv(var)
+    if not val:
+        raise HTTPException(status_code=500, detail=f"{var} not configured")
+    return val
 
-@router.post("/url", response_model=PresignResponse)
-def create_presigned_upload_url(req: PresignRequest):
-    if not S3_BUCKET:
-        raise HTTPException(status_code=500, detail="S3_BUCKET not configured")
+@router.post("/url")
+def create_presigned_url(req: PresignRequest):
+    """
+    Returns a one-time URL the browser can PUT the file to S3 with.
+    Response shape:
+    {
+      "url": "<presigned PUT url>",
+      "method": "PUT",
+      "headers": {"Content-Type": "<mime>"},
+      "key": "uploads/<uuid>-<safe-filename>"
+    }
+    """
+    bucket = _require_env("S3_BUCKET")
+    region = _require_env("AWS_REGION")  # e.g. us-east-2
 
-    key = f"{req.prefix}{uuid.uuid4().hex}-{req.filename}"
+    # Basic filename hardening (keep it simple)
+    safe_name = req.filename.replace("/", "_").replace("\\", "_").strip()
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    key = f"uploads/{uuid4().hex}-{safe_name}"
+
     try:
-        url = _s3.generate_presigned_url(
+        s3 = boto3.client("s3", region_name=region)
+        url = s3.generate_presigned_url(
             ClientMethod="put_object",
-            Params={"Bucket": S3_BUCKET, "Key": key, "ContentType": req.content_type or "application/pdf"},
-            ExpiresIn=600,
+            Params={
+                "Bucket": bucket,
+                "Key": key,
+                "ContentType": req.content_type,
+            },
+            ExpiresIn=600,  # 10 minutes
         )
-    except Exception as e:
+    except (BotoCoreError, ClientError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to presign: {e}")
 
-    return PresignResponse(url=url, headers={"Content-Type": req.content_type or "application/pdf"}, key=key)
+    return {
+        "url": url,
+        "method": "PUT",
+        "headers": {"Content-Type": req.content_type},
+        "key": key,
+    }
