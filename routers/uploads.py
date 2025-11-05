@@ -5,39 +5,40 @@ from botocore.exceptions import NoCredentialsError, ClientError
 
 router = APIRouter()
 
-# --- AWS CONFIGURATION ---
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
-AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
+def get_s3_client():
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+    AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
 
-if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME]):
-    raise RuntimeError("Missing AWS S3 credentials or bucket name in environment variables.")
+    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME]):
+        raise RuntimeError("Missing AWS S3 credentials or bucket name in environment variables.")
 
-# Initialize S3 client
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION,
-)
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_REGION,
+    )
+    return s3, AWS_BUCKET_NAME, AWS_REGION
 
-# --- ROUTES ---
+
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """
-    Upload a file to the configured S3 bucket.
-    Returns a JSON response with a public download URL.
-    """
+    """Upload a file to S3 and return its public URL."""
     try:
+        s3, bucket, region = get_s3_client()
+
+        # Upload without ACLs (for Object Ownership: Bucket owner enforced)
         s3.upload_fileobj(
             Fileobj=file.file,
-            Bucket=AWS_BUCKET_NAME,
+            Bucket=bucket,
             Key=file.filename,
-            ExtraArgs={"ContentType": file.content_type, "ACL": "public-read"},
+            ExtraArgs={"ContentType": file.content_type},
         )
 
-        download_url = f"https://{AWS_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{file.filename}"
+        # Build public URL (ensure bucket has public access enabled)
+        download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{file.filename}"
 
         return {
             "filename": file.filename,
@@ -49,4 +50,3 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="AWS credentials not found.")
     except ClientError as e:
         raise HTTPException(status_code=500, detail=f"Error uploading to S3: {e}")
-
