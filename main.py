@@ -34,7 +34,7 @@ app.include_router(uploads.router, prefix="", tags=["Uploads"])
 app.include_router(documents.router, prefix="/documents", tags=["Documents"])
 
 # ---- Serve Uploaded Files ----
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # ---- Root Route ----
 @app.get("/", response_class=HTMLResponse)
