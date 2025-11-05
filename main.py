@@ -1,53 +1,56 @@
-# main.py
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # DB bootstrap
 from database import create_db_and_tables
 
-# Routers (files under routers/)
-# - routers/buildings.py
-# - routers/events.py
-# - routers/uploads.py
-# - routers/documents.py
+# Routers
 from routers import buildings, events, uploads, documents
 
-# ---- Create the app FIRST ----
-app = FastAPI(title="Aina API", version="0.2.1")
+# ---- Create the app ----
+app = FastAPI(title="Aina API", version="0.2.0")
 
-# ---- CORS (origins you’ll use in the browser) ----
-ALLOWED_ORIGINS = [
-    "https://app.ainaprotocol.com",
-    "https://www.ainaprotocol.com",
-    "http://localhost:5173",
+# ---- CORS ----
+origins = [
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://your-frontend-domain.com"  # replace with your actual frontend domain
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---- Startup hook (ensure tables exist) ----
-@app.on_event("startup")
-async def on_startup():
-    create_db_and_tables()
+# ---- Include Routers ----
+app.include_router(buildings.router, prefix="/buildings", tags=["Buildings"])
+app.include_router(events.router, prefix="/events", tags=["Events"])
+app.include_router(uploads.router, prefix="", tags=["Uploads"])
+app.include_router(documents.router, prefix="/documents", tags=["Documents"])
 
-# ---- Include routers AFTER app exists ----
-app.include_router(buildings.router)
-app.include_router(events.router)
-app.include_router(uploads.router)     # POST /upload/url
-app.include_router(documents.router)   # POST /documents/attach, GET /documents
+# ---- Serve Uploaded Files ----
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# ---- Health + root ----
-@app.get("/health")
-def health():
-    return {"ok": True}
-
+# ---- Root Route ----
 @app.get("/", response_class=HTMLResponse)
-def root():
-    return "<h1>Aina API is running ✅</h1><p>Try <code>/docs</code> or <code>/health</code>.</p>"
+async def root():
+    return """
+    <html>
+        <head><title>Aina API</title></head>
+        <body style="font-family: sans-serif; margin: 2rem;">
+            <h2>Aina Protocol API is running 🚀</h2>
+            <p>Try POSTing to <code>/upload</code> with a file to test uploads.</p>
+            <p>Uploaded files will be available at <code>/uploads/&lt;filename&gt;</code>.</p>
+        </body>
+    </html>
+    """
+
+# ---- Initialize DB on Startup ----
+@app.on_event("startup")
+def on_startup():
+    create_db_and_tables()
