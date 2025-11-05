@@ -1,28 +1,44 @@
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
-
-from database import get_session, create_db_and_tables
-from models import Document, DocumentCreate, DocumentRead, Event
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from uuid import uuid4
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-@router.on_event("startup")
-def startup() -> None:
-    create_db_and_tables()
+class AttachRequest(BaseModel):
+    event_id: int = Field(..., description="ID of the event this document belongs to")
+    s3_key: str = Field(..., description="S3 object key returned by /upload/url")
+    filename: str
+    content_type: str
+    size_bytes: Optional[int] = None
 
-@router.post("/attach", response_model=DocumentRead)
-def attach_document(payload: DocumentCreate, session: Session = Depends(get_session)):
-    e = session.get(Event, payload.event_id)
-    if not e:
-        raise HTTPException(status_code=400, detail="Invalid event_id")
-    doc = Document.from_orm(payload)
-    session.add(doc)
-    session.commit()
-    session.refresh(doc)
+class DocumentOut(BaseModel):
+    id: str
+    event_id: int
+    s3_key: str
+    filename: str
+    content_type: str
+    size_bytes: Optional[int] = None
+
+# Temporary in-memory store so the GET route works during MVP testing
+_FAKE_STORE: List[DocumentOut] = []
+
+@router.post("/attach", response_model=DocumentOut)
+def attach_document(body: AttachRequest):
+    # TODO: replace this block with a DB insert when your models are ready.
+    doc = DocumentOut(
+        id=uuid4().hex,
+        event_id=body.event_id,
+        s3_key=body.s3_key,
+        filename=body.filename,
+        content_type=body.content_type,
+        size_bytes=body.size_bytes,
+    )
+    _FAKE_STORE.append(doc)
     return doc
 
-@router.get("", response_model=List[DocumentRead])
-def list_documents(event_id: int, session: Session = Depends(get_session)):
-    q = select(Document).where(Document.event_id == event_id).order_by(Document.created_at.desc())
-    return session.exec(q).all()
+@router.get("", response_model=List[DocumentOut])
+def list_documents(event_id: int = Query(..., description="Filter by event_id")):
+    # TODO: replace with a DB query
+    return [d for d in _FAKE_STORE if d.event_id == event_id]
+
