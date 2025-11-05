@@ -123,6 +123,15 @@ def list_files(
             return {"files": [], "message": "No files found."}
 
         files = []
-        for obj in response["Contents"]:
-            key = obj["Key"]
-            if key.endswith("/"):  # skip folder placeholders
+for obj in response["Contents"]:
+    key = obj["Key"]
+    if key.endswith("/"):  # skip folder placeholders
+        continue  # <-- this was missing indentation
+
+    files.append({
+        "filename": key.split("/")[-1],
+        "key": key,
+        "size_kb": round(obj["Size"] / 1024, 2),
+        "last_modified": obj["LastModified"].isoformat(),
+        "download_url": f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+    })
