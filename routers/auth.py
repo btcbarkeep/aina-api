@@ -41,3 +41,29 @@ def login(username: str = Form(...), password: str = Form(...)):
         access_token = create_access_token({"sub": username, "role": "admin"})
         return {"access_token": access_token, "token_type": "bearer"}
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
+from fastapi import APIRouter, Form, HTTPException
+from datetime import datetime, timedelta
+from jose import jwt
+
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
+SECRET_KEY = "supersecret"
+ALGORITHM = "HS256"
+
+def create_access_token(data: dict, expires_minutes: int = 60):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+@router.post("/login")
+def login(username: str = Form(...), password: str = Form(...)):
+    if username == "admin" and password == "ainapass":
+        token = create_access_token({"sub": username, "role": "admin"})
+        return {"access_token": token, "token_type": "bearer"}
+    elif username == "user" and password == "ainapass":
+        token = create_access_token({"sub": username, "role": "user"})
+        return {"access_token": token, "token_type": "bearer"}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
