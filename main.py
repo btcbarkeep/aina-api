@@ -55,4 +55,6 @@ def on_startup():
 
 from routers import buildings, events, uploads, documents, auth
 
+from routers import auth
 app.include_router(auth.router)
+
