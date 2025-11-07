@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 import boto3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from botocore.exceptions import NoCredentialsError, ClientError
 from src.dependencies import get_active_user
 
@@ -41,12 +41,12 @@ async def upload_file(
     unit_name: str | None = Form(None)
 ):
     """
-    Upload a file to S3 in the proper folder structure.
-    Only authenticated users can upload files.
+    Upload a file to S3 (private) and return a presigned download URL.
     """
     try:
         s3, bucket, region = get_s3_client()
 
+        # sanitize naming
         safe_complex = complex_name.strip().replace(" ", "_").upper()
         safe_category = category.strip().replace(" ", "_").lower()
 
@@ -58,6 +58,7 @@ async def upload_file(
         else:
             key = f"complexes/{safe_complex}/complex/{safe_category}/{file.filename}"
 
+        # Upload (no ACL, since bucket is private)
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -65,11 +66,17 @@ async def upload_file(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+        # Generate presigned URL (valid for 24 hours)
+        presigned_url = s3.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=86400,  # 24 hours (seconds)
+        )
 
         return {
             "filename": file.filename,
-            "download_url": download_url,
+            "s3_key": key,
+            "presigned_url": presigned_url,
             "scope": scope,
             "complex": safe_complex,
             "category": safe_category,
