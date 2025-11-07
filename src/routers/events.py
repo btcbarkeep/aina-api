@@ -21,7 +21,7 @@ def create_event(event_data: EventCreate, session: Session = Depends(get_session
     return event
 
 
-# 🟣 LIST events (filterable by building/unit/category)
+# 🟣 LIST events (filterable by building/unit/type)
 @router.get("/", response_model=List[EventRead])
 def list_events(
     building_id: Optional[int] = Query(None, description="Filter by building ID"),
