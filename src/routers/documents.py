@@ -1,8 +1,8 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-from database import get_session
-from models import Document, DocumentCreate, DocumentRead
+from src.database import get_session
+from src.models import Document, DocumentCreate, DocumentRead
 
 router = APIRouter()
 
