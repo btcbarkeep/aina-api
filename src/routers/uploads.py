@@ -1,9 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 import boto3
 import os
 from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
-from src.routers.auth import get_current_user  # ✅ updated path
+from src.routers.auth import get_current_user  # optional if you use auth
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 
@@ -11,11 +11,6 @@ router = APIRouter(prefix="/upload", tags=["Uploads"])
 #  AWS CONFIGURATION
 # -----------------------------------------------------
 def get_s3_client():
-    """
-    Initializes and returns an authenticated S3 client.
-    Requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_BUCKET_NAME
-    to be defined in Render environment variables.
-    """
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
@@ -30,13 +25,13 @@ def get_s3_client():
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
         region_name=AWS_REGION,
     )
-    return s3, AWS_BUCKET_NAME, AWS_REGION
+    return s3, AWS_BUCKET_NAME
 
 
 # -----------------------------------------------------
 #  UPLOAD FILE
 # -----------------------------------------------------
-@router.post("/")
+@router.post("/", summary="Upload File to S3")
 async def upload_file(
     file: UploadFile = File(...),
     complex_name: str = Form(...),
@@ -45,37 +40,28 @@ async def upload_file(
     unit_name: str | None = Form(None)   # only required when scope == "unit"
 ):
     """
-    Uploads a file to S3 in the correct hierarchy.
-
-    Folder structure:
-        complexes/{complex_name}/complex/{category}/{filename}
-        complexes/{complex_name}/units/{unit_name}/{category}/{filename}
+    Uploads a file to S3 under the correct hierarchy.
     """
-    s3, bucket_name, region = get_s3_client()
+    s3, bucket_name = get_s3_client()
+
+    # Construct S3 path
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    filename = f"{timestamp}_{file.filename}"
+
+    if scope == "complex":
+        s3_key = f"complexes/{complex_name}/complex/{category}/{filename}"
+    elif scope == "unit" and unit_name:
+        s3_key = f"complexes/{complex_name}/units/{unit_name}/{category}/{filename}"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid scope or missing unit_name")
 
     try:
-        # Build S3 key path
-        if scope == "unit":
-            if not unit_name:
-                raise HTTPException(status_code=400, detail="unit_name is required for unit-level uploads.")
-            s3_path = f"complexes/{complex_name}/units/{unit_name}/{category}/{file.filename}"
-        else:
-            s3_path = f"complexes/{complex_name}/complex/{category}/{file.filename}"
-
-        # Upload file to S3
-        s3.upload_fileobj(file.file, bucket_name, s3_path)
-
-        # Generate public URL
-        file_url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_path}"
-
-        return {
-            "message": "File uploaded successfully.",
-            "file_url": file_url,
-            "uploaded_at": datetime.utcnow().isoformat(),
-            "path": s3_path,
-        }
-
+        s3.upload_fileobj(file.file, bucket_name, s3_key)
     except (NoCredentialsError, ClientError) as e:
-        raise HTTPException(status_code=500, detail=f"AWS upload failed: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "message": "File uploaded successfully",
+        "s3_key": s3_key,
+        "bucket": bucket_name,
+    }
