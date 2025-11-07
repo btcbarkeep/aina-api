@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 import boto3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
 from src.dependencies import get_active_user
 
@@ -58,7 +58,7 @@ async def upload_file(
         else:
             key = f"complexes/{safe_complex}/complex/{safe_category}/{file.filename}"
 
-        # Upload (no ACL, since bucket is private)
+        # Upload (private)
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -66,7 +66,7 @@ async def upload_file(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # Generate presigned URL (valid for 24 hours)
+        # Generate presigned URL (valid 24 hours)
         presigned_url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket, "Key": key},
@@ -88,13 +88,14 @@ async def upload_file(
 
 
 # -----------------------------------------------------
-#  LIST FILES (Protected)
+#  LIST FILES BY COMPLEX / CATEGORY (Protected)
 # -----------------------------------------------------
 @router.get("/", dependencies=[Depends(get_active_user)])
 def list_files(
     complex_name: str = Query(..., description="Complex name (e.g., 'KAHANA_VILLA')"),
     unit_name: str | None = Query(None, description="Unit name if scope=unit"),
     category: str | None = Query(None, description="Category filter (e.g., 'permits', 'reports')"),
+    expires_in: int = Query(86400, ge=60, le=604800, description="Presigned URL expiration time in seconds (default 24h)"),
 ):
     """
     List uploaded files for a complex, optionally filtered by unit or category.
@@ -130,7 +131,7 @@ def list_files(
             presigned_url = s3.generate_presigned_url(
                 ClientMethod="get_object",
                 Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=86400,  # 24 hours
+                ExpiresIn=expires_in,
             )
 
             files.append({
@@ -150,6 +151,54 @@ def list_files(
 
     except ClientError as e:
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
+
+
+# -----------------------------------------------------
+#  LIST ALL FILES (Admin)
+# -----------------------------------------------------
+@router.get("/all", dependencies=[Depends(get_active_user)])
+def list_all_files(
+    expires_in: int = Query(86400, ge=60, le=604800, description="Presigned URL expiration time in seconds (default 24h)"),
+):
+    """
+    Admin-only endpoint to list *all* files in the S3 bucket.
+    """
+    try:
+        s3, bucket, _ = get_s3_client()
+        paginator = s3.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket)
+        all_files = []
+
+        for page in pages:
+            if "Contents" not in page:
+                continue
+            for obj in page["Contents"]:
+                key = obj["Key"]
+                filename = key.split("/")[-1]
+                last_modified = obj.get("LastModified")
+                size_kb = round(obj.get("Size", 0) / 1024, 2)
+
+                presigned_url = s3.generate_presigned_url(
+                    ClientMethod="get_object",
+                    Params={"Bucket": bucket, "Key": key},
+                    ExpiresIn=expires_in,
+                )
+
+                all_files.append({
+                    "filename": filename,
+                    "s3_key": key,
+                    "size_kb": size_kb,
+                    "last_modified": last_modified.isoformat() if last_modified else None,
+                    "presigned_url": presigned_url
+                })
+
+        return {
+            "total_files": len(all_files),
+            "files": sorted(all_files, key=lambda x: x["s3_key"]),
+        }
+
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=f"Error listing all files: {str(e)}")
 
 
 # -----------------------------------------------------
