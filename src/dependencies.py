@@ -6,6 +6,7 @@ from src.routers.auth import SECRET_KEY, ALGORITHM
 def get_current_user(request: Request):
     """
     Simplified auth: manually extract the Bearer token from Authorization header.
+    Works in both production and test environments (no dependency injection issues).
     """
     auth_header = request.headers.get("authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -14,7 +15,7 @@ def get_current_user(request: Request):
             detail="Missing or invalid Authorization header",
         )
 
-    token = auth_header.split("Bearer ")[1]
+    token = auth_header.split("Bearer ")[1].strip()
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
