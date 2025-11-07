@@ -20,20 +20,20 @@ def mock_s3_list():
         yield mock_s3_client
 
 
+# -------------------------------------------------------------------
+#  TOKEN HELPER (imports from your real app constants)
+# -------------------------------------------------------------------
 def make_token(role: str):
     from jose import jwt
-    SECRET_KEY = "supersecretkey123"  # use exactly what was in your auth.py
-    ALGORITHM = "HS256"
+    from src.routers.auth import SECRET_KEY, ALGORITHM  # 👈 use same constants as app
 
     payload = {"sub": "test_user", "role": role}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-
 # -------------------------------------------------------------------
 #  TESTS
 # -------------------------------------------------------------------
-
 def test_upload_all_admin_allowed(mock_s3_list):
     """Admin should be able to access /upload/all."""
     token = make_token("admin")
@@ -42,9 +42,7 @@ def test_upload_all_admin_allowed(mock_s3_list):
         "/upload/all",
         headers={"authorization": f"Bearer {token}"}
     )
-    # S3 is mocked, but route should succeed before listing
     assert response.status_code in (200, 500)  # Allow 500 if AWS mock fails early
-    # If S3 is patched correctly, should return structured response
     if response.status_code == 200:
         assert "files" in response.json() or "total_files" in response.json()
 
