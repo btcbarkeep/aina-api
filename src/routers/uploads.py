@@ -70,7 +70,7 @@ async def upload_file(
         presigned_url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=86400,  # 24 hours (seconds)
+            ExpiresIn=86400,
         )
 
         return {
@@ -88,11 +88,76 @@ async def upload_file(
 
 
 # -----------------------------------------------------
+#  LIST FILES (Protected)
+# -----------------------------------------------------
+@router.get("/", dependencies=[Depends(get_active_user)])
+def list_files(
+    complex_name: str = Query(..., description="Complex name (e.g., 'KAHANA_VILLA')"),
+    unit_name: str | None = Query(None, description="Unit name if scope=unit"),
+    category: str | None = Query(None, description="Category filter (e.g., 'permits', 'reports')"),
+):
+    """
+    List uploaded files for a complex, optionally filtered by unit or category.
+    Returns file metadata + presigned URLs.
+    """
+    try:
+        s3, bucket, _ = get_s3_client()
+
+        safe_complex = complex_name.strip().replace(" ", "_").upper()
+        prefix = f"complexes/{safe_complex}/"
+
+        if unit_name:
+            safe_unit = unit_name.strip().replace(" ", "_").upper()
+            prefix += f"units/{safe_unit}/"
+        else:
+            prefix += "complex/"
+
+        if category:
+            prefix += f"{category.strip().replace(' ', '_').lower()}/"
+
+        response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        files = []
+
+        if "Contents" not in response:
+            return {"files": [], "message": "No files found"}
+
+        for obj in response["Contents"]:
+            key = obj["Key"]
+            filename = key.split("/")[-1]
+            last_modified = obj.get("LastModified")
+            size_kb = round(obj.get("Size", 0) / 1024, 2)
+
+            presigned_url = s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={"Bucket": bucket, "Key": key},
+                ExpiresIn=86400,  # 24 hours
+            )
+
+            files.append({
+                "filename": filename,
+                "s3_key": key,
+                "size_kb": size_kb,
+                "last_modified": last_modified.isoformat() if last_modified else None,
+                "presigned_url": presigned_url
+            })
+
+        return {
+            "complex": safe_complex,
+            "category": category or "all",
+            "file_count": len(files),
+            "files": sorted(files, key=lambda x: x["filename"]),
+        }
+
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
+
+
+# -----------------------------------------------------
 #  DELETE FILE (Protected)
 # -----------------------------------------------------
 @router.delete("/", dependencies=[Depends(get_active_user)])
 def delete_file(
-    s3_key: str = Query(..., description="Full S3 object key to delete, e.g. 'complexes/BUILDING/complex/notices/file.pdf'")
+    s3_key: str = Query(..., description="Full S3 object key to delete, e.g. 'complexes/KAHANA_VILLA/complex/permits/file.pdf'")
 ):
     """
     Delete a file from the S3 bucket using its key.
