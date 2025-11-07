@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query, Request
 import boto3
 import os
 from datetime import datetime
@@ -158,11 +158,15 @@ def list_files(
 # -----------------------------------------------------
 @router.get("/all", dependencies=[Depends(get_admin_user)])
 def list_all_files(
+    request: Request,
     expires_in: int = Query(86400, ge=60, le=604800, description="Presigned URL expiration time in seconds (default 24h)"),
 ):
     """
     Admin-only endpoint to list *all* files in the S3 bucket.
     """
+    # Debug print to confirm if Authorization header is received
+    print("DEBUG HEADERS:", dict(request.headers))
+
     try:
         s3, bucket, _ = get_s3_client()
         paginator = s3.get_paginator("list_objects_v2")
