@@ -93,3 +93,18 @@ class DocumentCreate(SQLModel):
 class DocumentRead(DocumentBase):
     id: int
     created_at: datetime
+
+# -----------------------------------------------------
+#  AUTH MODELS
+# -----------------------------------------------------
+from typing import Optional
+from sqlmodel import SQLModel
+
+class LoginRequest(SQLModel):
+    username: str
+    password: str
+
+class TokenResponse(SQLModel):
+    access_token: str
+    token_type: str = "bearer"
+
