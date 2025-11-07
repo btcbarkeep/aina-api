@@ -31,11 +31,12 @@ app.add_middleware(
 )
 
 # ---- Include Routers ----
-app.include_router(buildings.router, prefix="/buildings", tags=["Buildings"])
-app.include_router(events.router, prefix="/events", tags=["Events"])
-app.include_router(documents.router, prefix="/documents", tags=["Documents"])
-app.include_router(uploads.router, prefix="", tags=["Uploads"])  # root-level upload
-app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+# ⚙️ Each router already defines its prefix (e.g., prefix="/buildings")
+app.include_router(buildings.router)
+app.include_router(events.router)
+app.include_router(documents.router)
+app.include_router(uploads.router)
+app.include_router(auth.router)
 
 # ---- Root Route ----
 @app.get("/", response_class=HTMLResponse)
