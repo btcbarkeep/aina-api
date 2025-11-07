@@ -54,7 +54,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
 # -----------------------------------------------------
 #  AUTH ROUTES
 # -----------------------------------------------------
-router = APIRouter(prefix="/auth", tags=["Auth"])
+router = APIRouter(tags=["Auth"])
 
 @router.post("/login")
 def login(username: str = Form(...), password: str = Form(...)):
