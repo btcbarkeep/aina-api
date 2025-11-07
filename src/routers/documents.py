@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from src.database import get_session
 from src.models import Document, DocumentCreate, DocumentRead
-from src.routers.dependencies import get_current_user
+from src.dependencies import get_current_user
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
