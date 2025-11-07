@@ -1,8 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
-import boto3, os
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Depends, Path
+import boto3
+import os
 from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
-from src.routers.dependencies import get_current_user
+from src.dependencies import get_active_user
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 
@@ -13,7 +14,7 @@ def get_s3_client():
     AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
 
     if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME]):
-        raise RuntimeError("Missing AWS S3 credentials in environment variables.")
+        raise RuntimeError("Missing AWS credentials or bucket name")
 
     s3 = boto3.client(
         "s3",
@@ -23,15 +24,16 @@ def get_s3_client():
     )
     return s3, AWS_BUCKET_NAME, AWS_REGION
 
-@router.post("/", summary="Upload File to S3")
+
+@router.post("/", dependencies=[Depends(get_active_user)])
 async def upload_file(
     file: UploadFile = File(...),
     complex_name: str = Form(...),
     category: str = Form(...),
     scope: str = Form("complex"),
-    unit_name: str | None = Form(None),
-    current_user: str = Depends(get_current_user)
+    unit_name: str | None = Form(None)
 ):
+    """Upload a file to S3 in the proper folder structure."""
     try:
         s3, bucket, region = get_s3_client()
         safe_complex = complex_name.strip().replace(" ", "_").upper()
@@ -39,18 +41,29 @@ async def upload_file(
 
         if scope == "unit":
             if not unit_name:
-                raise HTTPException(status_code=400, detail="unit_name is required when scope='unit'")
+                raise HTTPException(status_code=400, detail="unit_name required when scope='unit'")
             safe_unit = unit_name.strip().replace(" ", "_").upper()
             key = f"complexes/{safe_complex}/units/{safe_unit}/{safe_category}/{file.filename}"
         else:
             key = f"complexes/{safe_complex}/complex/{safe_category}/{file.filename}"
 
-        s3.upload_fileobj(file.file, bucket, key, ExtraArgs={"ContentType": file.content_type})
-        url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+        s3.upload_fileobj(
+            Fileobj=file.file,
+            Bucket=bucket,
+            Key=key,
+            ExtraArgs={"ContentType": file.content_type, "ACL": "public-read"},
+        )
 
-        return {"filename": file.filename, "path": key, "url": url, "uploaded_by": current_user, "uploaded_at": datetime.utcnow().isoformat()}
+        download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
-    except NoCredentialsError:
-        raise HTTPException(status_code=500, detail="AWS credentials not found.")
-    except ClientError as e:
-        raise HTTPException(status_code=500, detail=f"Error uploading to S3: {e}")
+        return {
+            "filename": file.filename,
+            "download_url": download_url,
+            "scope": scope,
+            "complex": safe_complex,
+            "category": safe_category,
+            "uploaded_at": datetime.utcnow().isoformat(),
+        }
+
+    except (NoCredentialsError, ClientError) as e:
+        raise HTTPException(status_code=500, detail=str(e))
