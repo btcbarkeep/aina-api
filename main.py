@@ -58,3 +58,5 @@ from routers import buildings, events, uploads, documents, auth
 from routers import auth
 app.include_router(auth.router)
 
+from routers import events
+app.include_router(events.router)
