@@ -1,47 +1,29 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, status, Request
 from jose import jwt, JWTError
 from src.routers.auth import SECRET_KEY, ALGORITHM
 
-# -----------------------------------------------------
-#  TOKEN VALIDATION
-# -----------------------------------------------------
-# auto_error=False lets us handle missing/invalid tokens ourselves
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
-
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(request: Request):
     """
-    Validates JWT token from Authorization header.
-    Returns the decoded user payload if valid.
+    Simplified auth: manually extract the Bearer token from Authorization header.
     """
-    if not token:
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
+            detail="Missing or invalid Authorization header",
         )
 
-    # Temporary debug line — remove after confirming tests pass
-    print("DEBUG get_current_user() called. Token =", token)
-
+    token = auth_header.split("Bearer ")[1]
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
-
         if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-            )
-
+            raise HTTPException(status_code=401, detail="Invalid token payload")
         return {"username": username, "role": role}
-
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate token",
-        )
+        raise HTTPException(status_code=401, detail="Could not validate token")
 
 
 def get_admin_user(current_user: dict = Depends(get_current_user)):
@@ -56,5 +38,5 @@ def get_admin_user(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
-# Alias to keep compatibility with existing routes
+# Keep compatibility
 get_active_user = get_current_user
