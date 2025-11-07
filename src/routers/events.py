@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from datetime import datetime
 
 from src.database import get_session
-from src.database.events_model import Event
+from src.models import Event
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
