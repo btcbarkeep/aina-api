@@ -25,7 +25,7 @@ def mock_s3_list():
 # -------------------------------------------------------------------
 def make_token(role: str):
     from jose import jwt
-    from src.routers.auth import SECRET_KEY, ALGORITHM  # 👈 use same constants as app
+    from src.routers.auth import SECRET_KEY, ALGORITHM  # 👈 same constants as app
 
     payload = {"sub": "test_user", "role": role}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
@@ -38,10 +38,19 @@ def test_upload_all_admin_allowed(mock_s3_list):
     """Admin should be able to access /upload/all."""
     token = make_token("admin")
     print("\nGenerated token for admin:\n", token)
-    response = client.get(
-        "/upload/all",
-        headers={"authorization": f"Bearer {token}"}
-    )
+
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.get("/upload/all", headers=headers)
+
+    # --- Debug info ---
+    print("Token being sent:", token)
+    print("Headers used:", headers)
+    try:
+        print("Response JSON:", response.json())
+    except Exception:
+        print("Response not JSON, raw text:", response.text)
+    # ------------------
+
     assert response.status_code in (200, 500)  # Allow 500 if AWS mock fails early
     if response.status_code == 200:
         assert "files" in response.json() or "total_files" in response.json()
@@ -50,10 +59,19 @@ def test_upload_all_admin_allowed(mock_s3_list):
 def test_upload_all_user_forbidden(mock_s3_list):
     """Non-admin should be blocked from /upload/all."""
     token = make_token("user")
-    response = client.get(
-        "/upload/all",
-        headers={"authorization": f"Bearer {token}"}
-    )
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.get("/upload/all", headers=headers)
+
+    # --- Debug info ---
+    print("\n[User Access Test]")
+    print("Token being sent:", token)
+    print("Headers used:", headers)
+    try:
+        print("Response JSON:", response.json())
+    except Exception:
+        print("Response not JSON, raw text:", response.text)
+    # ------------------
+
     assert response.status_code == 403
     assert response.json()["detail"] == "Admin access required"
 
@@ -61,5 +79,6 @@ def test_upload_all_user_forbidden(mock_s3_list):
 def test_upload_all_unauthorized():
     """No token should result in 401."""
     response = client.get("/upload/all")
+    print("\n[Unauthorized Test] Response:", response.json())
     assert response.status_code == 401
     assert "detail" in response.json()
