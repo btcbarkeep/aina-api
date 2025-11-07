@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from src.database import get_session
 from src.models import Building, BuildingCreate, BuildingRead
 
-router = APIRouter(prefix="/buildings", tags=["Buildings"])
+router = APIRouter(prefix="Buildings"])
 
 # 🏗️ Create a new building
 @router.post("/", response_model=BuildingRead)
