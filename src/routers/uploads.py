@@ -3,7 +3,7 @@ import boto3
 import os
 from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
-from src.dependencies import get_active_user
+from src.dependencies import get_active_user, get_admin_user
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 
@@ -156,7 +156,7 @@ def list_files(
 # -----------------------------------------------------
 #  LIST ALL FILES (Admin)
 # -----------------------------------------------------
-@router.get("/all", dependencies=[Depends(get_active_user)])
+@router.get("/all", dependencies=[Depends(get_admin_user)])
 def list_all_files(
     expires_in: int = Query(86400, ge=60, le=604800, description="Presigned URL expiration time in seconds (default 24h)"),
 ):
