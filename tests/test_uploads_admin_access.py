@@ -22,7 +22,9 @@ def mock_s3_list():
 
 def make_token(role: str):
     from jose import jwt
-    from src.routers.auth import SECRET_KEY, ALGORITHM  # use real values
+    SECRET_KEY = "supersecretkey123"  # use exactly what was in your auth.py
+    ALGORITHM = "HS256"
+
     payload = {"sub": "test_user", "role": role}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
