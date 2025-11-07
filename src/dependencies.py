@@ -3,23 +3,40 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from src.routers.auth import SECRET_KEY, ALGORITHM
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# -----------------------------------------------------
+#  TOKEN VALIDATION
+# -----------------------------------------------------
+# auto_error=False lets us handle missing/invalid tokens ourselves
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     """
     Validates JWT token from Authorization header.
     Returns the decoded user payload if valid.
     """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header",
+        )
+
+    # Temporary debug line — remove after confirming tests pass
+    print("DEBUG get_current_user() called. Token =", token)
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
+
         if username is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",
             )
+
         return {"username": username, "role": role}
+
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
