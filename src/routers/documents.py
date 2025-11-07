@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from src.database import get_session
 from src.models import Document, DocumentCreate, DocumentRead
 
-router = APIRouter(tags=["Documents"])
+router = APIRouter(prefix="/documents", tags=["Documents"])
 
 # 🟢 Create / Attach new document
 @router.post("/", response_model=DocumentRead)
