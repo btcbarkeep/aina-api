@@ -1,26 +1,21 @@
+from fastapi import APIRouter, HTTPException, Depends, status, Form
 from datetime import datetime, timedelta
-from typing import Optional
+from jose import JWTError, jwt
 import os
-from fastapi import APIRouter, Depends, Form, HTTPException, Security, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, JWTError
+from src.models import LoginRequest, TokenResponse
 
-# -----------------------------------------------------
-#  JWT CONFIGURATION
-# -----------------------------------------------------
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "supersecret")  # ⚠️ Replace this in Render env
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
+# Secret key (you can store this securely in Render environment variables)
+SECRET_KEY = os.getenv("JWT_SECRET", "supersecretkey")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 12  # 12 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-security = HTTPBearer()
 
 # -----------------------------------------------------
-#  TOKEN CREATION
+#  Generate JWT token
 # -----------------------------------------------------
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """
-    Creates a JWT access token with an expiration time.
-    """
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
@@ -29,36 +24,25 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 # -----------------------------------------------------
-#  VERIFY CURRENT USER
+#  Login Endpoint
 # -----------------------------------------------------
-def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+@router.post("/login", response_model=TokenResponse)
+def login(login_data: LoginRequest):
     """
-    Decodes and verifies JWT tokens for protected routes.
-    Returns a dict with 'username' and 'role'.
+    Authenticate user and return a JWT access token.
     """
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        role: str = payload.get("role", "user")
 
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
+    # Replace this with your own authentication logic (database, etc.)
+    # For now, we'll use a static demo account for testing:
+    DEMO_USERNAME = os.getenv("DEMO_USER", "admin")
+    DEMO_PASSWORD = os.getenv("DEMO_PASS", "password123")
 
-        return {"username": username, "role": role}
+    if login_data.username != DEMO_USERNAME or login_data.password != DEMO_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-
-# -----------------------------------------------------
-#  AUTH ROUTES
-# -----------------------------------------------------
-router = APIRouter(prefix="/auth", tags=["Auth"])
-
-@router.post("/login")
-def login(username: str = Form(...), password: str = Form(...)):
-    """
-    Demo login route.
-    Later
-    """
+    access_token = create_access_token(data={"sub": login_data.username})
+    return TokenResponse(access_token=access_token)
