@@ -24,4 +24,9 @@ def list_documents(limit: int = 50, offset: int = 0, session: Session = Depends(
 
 
 # 🔵 Get a single document by ID
-@router.get("/{docume
+@router.get("/{document_id}", response_model=DocumentRead)
+def get_document(document_id: int, session: Session = Depends(get_session)):
+    d = session.get(Document, document_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return d
