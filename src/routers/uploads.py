@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Depends, Path
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 import boto3
 import os
 from datetime import datetime
@@ -7,7 +7,11 @@ from src.dependencies import get_active_user
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 
+# -----------------------------------------------------
+#  AWS CONFIGURATION
+# -----------------------------------------------------
 def get_s3_client():
+    """Initialize and return an authenticated S3 client."""
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
@@ -25,6 +29,9 @@ def get_s3_client():
     return s3, AWS_BUCKET_NAME, AWS_REGION
 
 
+# -----------------------------------------------------
+#  UPLOAD FILE (Protected)
+# -----------------------------------------------------
 @router.post("/", dependencies=[Depends(get_active_user)])
 async def upload_file(
     file: UploadFile = File(...),
@@ -33,9 +40,13 @@ async def upload_file(
     scope: str = Form("complex"),
     unit_name: str | None = Form(None)
 ):
-    """Upload a file to S3 in the proper folder structure."""
+    """
+    Upload a file to S3 in the proper folder structure.
+    Only authenticated users can upload files.
+    """
     try:
         s3, bucket, region = get_s3_client()
+
         safe_complex = complex_name.strip().replace(" ", "_").upper()
         safe_category = category.strip().replace(" ", "_").lower()
 
@@ -67,3 +78,22 @@ async def upload_file(
 
     except (NoCredentialsError, ClientError) as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# -----------------------------------------------------
+#  DELETE FILE (Protected)
+# -----------------------------------------------------
+@router.delete("/", dependencies=[Depends(get_active_user)])
+def delete_file(
+    s3_key: str = Query(..., description="Full S3 object key to delete, e.g. 'complexes/BUILDING/complex/notices/file.pdf'")
+):
+    """
+    Delete a file from the S3 bucket using its key.
+    Only authenticated users can delete files.
+    """
+    try:
+        s3, bucket, _ = get_s3_client()
+        s3.delete_object(Bucket=bucket, Key=s3_key)
+        return {"message": f"✅ File '{s3_key}' deleted successfully"}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
