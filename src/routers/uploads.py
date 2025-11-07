@@ -5,7 +5,7 @@ from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
 from src.routers.auth import get_current_user  # ✅ updated path
 
-router = APIRouter(tags=["Uploads"])
+router = APIRouter(prefix="/upload", tags=["Uploads"])
 
 # -----------------------------------------------------
 #  AWS CONFIGURATION
