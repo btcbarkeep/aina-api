@@ -7,7 +7,7 @@ from src.models import Building, BuildingCreate, BuildingRead
 router = APIRouter(prefix="/buildings", tags=["Buildings"])
 
 # 🏗️ Create a new building
-@router.post("", response_model=BuildingRead)
+@router.post("/", response_model=BuildingRead)
 def create_building(payload: BuildingCreate, session: Session = Depends(get_session)):
     building = Building.from_orm(payload)
     session.add(building)
