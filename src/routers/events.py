@@ -1,69 +1,51 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
-from datetime import datetime
-
 from src.database import get_session
-from src.models import Event, EventCreate, EventRead
+from src.models import Event
+from src.routers.dependencies import get_current_user
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
-# 🟢 CREATE event
-@router.post("/", response_model=EventRead)
-def create_event(event_data: EventCreate, session: Session = Depends(get_session)):
-    """
-    Creates a new event in the database.
-    """
-    event = Event.from_orm(event_data)
+# 🟢 Create (admin only)
+@router.post("/", response_model=Event)
+def create_event(event: Event, session: Session = Depends(get_session), current_user: str = Depends(get_current_user)):
     session.add(event)
     session.commit()
     session.refresh(event)
     return event
 
-
-# 🟣 LIST events (filterable by building/unit/type)
-@router.get("/", response_model=List[EventRead])
+# 🟣 List (public)
+@router.get("/", response_model=List[Event])
 def list_events(
-    building_id: Optional[int] = Query(None, description="Filter by building ID"),
-    unit_number: Optional[str] = Query(None, description="Filter by unit number"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
-    limit: int = Query(50, ge=1, le=200, description="Max number of results to return"),
-    offset: int = Query(0, ge=0, description="Results offset for pagination"),
+    complex_name: Optional[str] = Query(None),
+    unit: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    limit: int = 50,
+    offset: int = 0,
     session: Session = Depends(get_session)
 ):
-    """
-    Returns a filtered list of events.
-    """
     query = select(Event)
-    if building_id:
-        query = query.where(Event.building_id == building_id)
-    if unit_number:
-        query = query.where(Event.unit_number == unit_number)
-    if event_type:
-        query = query.where(Event.event_type == event_type)
-
+    if complex_name:
+        query = query.where(Event.complex == complex_name)
+    if unit:
+        query = query.where(Event.unit == unit)
+    if category:
+        query = query.where(Event.category == category)
     query = query.offset(offset).limit(min(limit, 200))
     return session.exec(query).all()
 
-
-# 🔵 GET single event by ID
-@router.get("/{event_id}", response_model=EventRead)
+# 🔵 Get by ID (public)
+@router.get("/{event_id}", response_model=Event)
 def get_event(event_id: int, session: Session = Depends(get_session)):
-    """
-    Fetch a single event by ID.
-    """
     event = session.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
 
-
-# 🔴 DELETE event
+# 🔴 Delete (admin only)
 @router.delete("/{event_id}")
-def delete_event(event_id: int, session: Session = Depends(get_session)):
-    """
-    Deletes an event by ID.
-    """
+def delete_event(event_id: int, session: Session = Depends(get_session), current_user: str = Depends(get_current_user)):
     event = session.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
