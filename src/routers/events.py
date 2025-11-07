@@ -6,7 +6,7 @@ from datetime import datetime
 from src.database import get_session
 from src.models import Event
 
-router = APIRouter(prefix="Events"])
+router = APIRouter(tags=["Events"])
 
 # 🟢 CREATE event
 @router.post("/", response_model=Event)
