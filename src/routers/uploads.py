@@ -62,7 +62,7 @@ async def upload_file(
             Fileobj=file.file,
             Bucket=bucket,
             Key=key,
-            ExtraArgs={"ContentType": file.content_type, "ACL": "public-read"},
+            ExtraArgs={"ContentType": file.content_type},
         )
 
         download_url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
