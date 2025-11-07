@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from datetime import datetime
 
-from database import get_session, create_db_and_tables
-from database.events_model import Event
+from src.database import get_session, create_db_and_tables
+from src.database.events_model import Event
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
