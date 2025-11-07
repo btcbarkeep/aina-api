@@ -1,31 +1,28 @@
 import os
 from typing import Generator
 from sqlmodel import SQLModel, create_engine, Session
+from src.database.events_model import Event  # ✅ Make sure this path is correct
 
+# ---- DATABASE URL CONFIG ----
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
-# Render/Neon often provide 'postgres://'. SQLAlchemy prefers 'postgresql+psycopg2://'
+# Render/Neon compatibility fix
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
 
+# Fallback for local development
 if not DATABASE_URL:
-    # Fallback to local SQLite for quick testing (not for production on Render)
-    DATABASE_URL = "sqlite:///./local.db"
+    DATABASE_URL = "sqlite:///./aina.db"
 
+# ---- ENGINE SETUP ----
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+engine = create_engine(DATABASE_URL, echo=True, connect_args=connect_args)
 
+# ---- DB INIT ----
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
 
+# ---- SESSION GENERATOR ----
 def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
-
-from sqlmodel import create_engine, SQLModel
-from database.events_model import Event
-
-engine = create_engine("sqlite:///./aina.db")
-
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
