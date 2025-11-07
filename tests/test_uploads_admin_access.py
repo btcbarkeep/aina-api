@@ -21,15 +21,11 @@ def mock_s3_list():
 
 
 def make_token(role: str):
-    """
-    Return a fake JWT token payload stub.
-    In a real test, you could use your app’s token generator.
-    """
     from jose import jwt
-    SECRET_KEY = "testsecret"
-    ALGORITHM = "HS256"
+    from src.routers.auth import SECRET_KEY, ALGORITHM  # use real values
     payload = {"sub": "test_user", "role": role}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
 
 
 # -------------------------------------------------------------------
