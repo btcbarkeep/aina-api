@@ -1,12 +1,16 @@
+import sys, os
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# Database
-from database import create_db_and_tables
+# Ensure 'src' is recognized as a package (important for Render)
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Routers
-from routers import buildings, events, uploads, documents
+# ---- Database ----
+from src.database import create_db_and_tables
+
+# ---- Routers ----
+from src.routers import buildings, events, uploads, documents, auth
 
 # ---- Create the app ----
 app = FastAPI(title="Aina API", version="0.2.0")
@@ -15,7 +19,7 @@ app = FastAPI(title="Aina API", version="0.2.0")
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://your-frontend-domain.com"  # Replace with your real frontend domain
+    "https://your-frontend-domain.com"  # Replace with your actual frontend domain
 ]
 
 app.add_middleware(
@@ -27,11 +31,11 @@ app.add_middleware(
 )
 
 # ---- Include Routers ----
-# Each router is mounted once with a clear prefix and tag
 app.include_router(buildings.router, prefix="/buildings", tags=["Buildings"])
 app.include_router(events.router, prefix="/events", tags=["Events"])
 app.include_router(documents.router, prefix="/documents", tags=["Documents"])
-app.include_router(uploads.router, prefix="", tags=["Uploads"])  # keep root-level upload
+app.include_router(uploads.router, prefix="", tags=["Uploads"])  # root-level upload
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 # ---- Root Route ----
 @app.get("/", response_class=HTMLResponse)
@@ -43,7 +47,7 @@ async def root():
             <h2>Aina Protocol API is running 🚀</h2>
             <p>✅ Uploads working via <code>/upload</code></p>
             <p>✅ Explore full API docs at <a href='/docs' target='_blank'>/docs</a></p>
-            <p>✅ Buildings, Events, and Documents all use structured endpoints.</p>
+            <p>✅ Buildings, Events, Documents, and Auth endpoints are ready.</p>
         </body>
     </html>
     """
@@ -52,11 +56,3 @@ async def root():
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
-
-from routers import buildings, events, uploads, documents, auth
-
-from routers import auth
-app.include_router(auth.router)
-
-from routers import events
-app.include_router(events.router)
