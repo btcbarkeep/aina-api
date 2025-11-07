@@ -37,3 +37,7 @@ def get_admin_user(current_user: dict = Depends(get_current_user)):
             detail="Admin access required",
         )
     return current_user
+
+
+# Alias to keep compatibility with existing routes
+get_active_user = get_current_user
