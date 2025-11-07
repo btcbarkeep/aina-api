@@ -1,69 +1,64 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import Depends, HTTPException, status, Security
+import os
+from fastapi import APIRouter, Depends, Form, HTTPException, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
-import os
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "supersecret")  # replace in Render env
+# -----------------------------------------------------
+#  JWT CONFIGURATION
+# -----------------------------------------------------
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "supersecret")  # ⚠️ Replace this in Render env
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 12  # 12 hours
 
 security = HTTPBearer()
 
+# -----------------------------------------------------
+#  TOKEN CREATION
+# -----------------------------------------------------
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """
+    Creates a JWT access token with an expiration time.
+    """
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+
+# -----------------------------------------------------
+#  VERIFY CURRENT USER
+# -----------------------------------------------------
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """
+    Decodes and verifies JWT tokens for protected routes.
+    Returns a dict with 'username' and 'role'.
+    """
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role", "user")
+
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
+
         return {"username": username, "role": role}
+
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-from fastapi import APIRouter, Form
 
+# -----------------------------------------------------
+#  AUTH ROUTES
+# -----------------------------------------------------
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/login")
 def login(username: str = Form(...), password: str = Form(...)):
-    # Demo only — later connect to real user DB
-    if username == "admin" and password == "ainapass":
-        access_token = create_access_token({"sub": username, "role": "admin"})
-        return {"access_token": access_token, "token_type": "bearer"}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
-from fastapi import APIRouter, Form, HTTPException
-from datetime import datetime, timedelta
-from jose import jwt
-
-router = APIRouter(prefix="/auth", tags=["Auth"])
-
-SECRET_KEY = "supersecret"
-ALGORITHM = "HS256"
-
-def create_access_token(data: dict, expires_minutes: int = 60):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-@router.post("/login")
-def login(username: str = Form(...), password: str = Form(...)):
-    if username == "admin" and password == "ainapass":
-        token = create_access_token({"sub": username, "role": "admin"})
-        return {"access_token": token, "token_type": "bearer"}
-    elif username == "user" and password == "ainapass":
-        token = create_access_token({"sub": username, "role": "user"})
-        return {"access_token": token, "token_type": "bearer"}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+    """
+    Demo login route.
+    Later
 
