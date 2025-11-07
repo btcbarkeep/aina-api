@@ -21,3 +21,11 @@ def create_db_and_tables() -> None:
 def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
+
+from sqlmodel import create_engine, SQLModel
+from database.events_model import Event
+
+engine = create_engine("sqlite:///./aina.db")
+
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
