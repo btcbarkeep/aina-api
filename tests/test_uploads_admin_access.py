@@ -37,6 +37,7 @@ def make_token(role: str):
 def test_upload_all_admin_allowed(mock_s3_list):
     """Admin should be able to access /upload/all."""
     token = make_token("admin")
+    print("\nGenerated token for admin:\n", token)
     response = client.get(
         "/upload/all",
         headers={"Authorization": f"Bearer {token}"}
