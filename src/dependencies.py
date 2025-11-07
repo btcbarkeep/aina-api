@@ -2,6 +2,14 @@ from fastapi import Depends, HTTPException, status, Request
 from jose import jwt, JWTError
 from src.routers.auth import SECRET_KEY, ALGORITHM
 
+import os
+import inspect
+print("🧭 dependencies.py loaded from:", os.path.abspath(__file__))
+print("🧭 Imported via module name:", __name__)
+print("🧭 Current working dir:", os.getcwd())
+print("🧭 Call stack top:", inspect.stack()[1].filename)
+
+
 def get_current_user(request: Request):
     """
     Simplified auth: manually extract the Bearer token from Authorization header.
