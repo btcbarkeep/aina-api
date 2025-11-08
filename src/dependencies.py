@@ -1,86 +1,62 @@
-import sys
 from fastapi import Depends, HTTPException, status, Request
 from jose import jwt, JWTError
 from src.routers.auth import SECRET_KEY, ALGORITHM
 
-
 # ------------------------------------------------------------------
-# Helper: decode the JWT token from the Authorization header
+# Get current user from JWT
 # ------------------------------------------------------------------
 def get_current_user(request: Request):
     """
-    Validate JWT and return the decoded payload.
-    Includes detailed debug output for troubleshooting token validation.
+    Validate JWT from Authorization header and return the decoded payload.
+    Expected header: Authorization: Bearer <token>
     """
     auth_header = request.headers.get("authorization")
-    print("🔍 [DEBUG] Auth header received:", auth_header, flush=True)
 
-    # Check header exists
-    if not auth_header:
-        print("❌ No Authorization header found.", flush=True)
+    if not auth_header or not auth_header.lower().startswith("bearer "):
+        # No header or wrong format
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing token",
+            detail="Missing or invalid token",
         )
 
-    # Check Bearer prefix
-    if not auth_header.lower().startswith("bearer "):
-        print("❌ Authorization header does not start with 'Bearer '.", flush=True)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format",
-        )
-
-    # Extract JWT from header
-    token = auth_header.split(" ")[1]
-    print("🔐 [DEBUG] Token extracted:", token[:60] + "...", flush=True)
+    token = auth_header.split(" ", 1)[1]
 
     try:
-        print(f"🧩 [DEBUG] Using SECRET_KEY={SECRET_KEY!r}, ALGORITHM={ALGORITHM}", flush=True)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        print("🧠 [DEBUG] Decoded payload:", payload, flush=True)
-
-        if "sub" not in payload or "role" not in payload:
-            print("❌ Missing sub/role in payload.", flush=True)
+        username = payload.get("sub")
+        role = payload.get("role")
+        if not username or role is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
             )
-
-        return payload
-
-    except JWTError as e:
-        print("💥 [DEBUG] JWTError during decode:", str(e), flush=True)
+        # Return a simple user dict
+        return {"username": username, "role": role}
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token decode failed: {e}",
+            detail="Could not validate token",
         )
 
-
 # ------------------------------------------------------------------
-# Restrict access to Admins only
+# Require admin
 # ------------------------------------------------------------------
 def get_admin_user(current_user: dict = Depends(get_current_user)):
     """
-    Only allow users with role='admin' to pass.
+    Only allow users with role='admin'.
     """
-    print("🧍 [DEBUG] Current user (for admin check):", current_user, flush=True)
     if current_user.get("role") != "admin":
-        print("🚫 [DEBUG] User is not admin.", flush=True)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
         )
-    print("✅ [DEBUG] Admin access granted.", flush=True)
     return current_user
 
-
 # ------------------------------------------------------------------
-# Basic "active user" dependency
+# Basic "active" user
 # ------------------------------------------------------------------
 def get_active_user(current_user: dict = Depends(get_current_user)):
     """
-    Just ensures the user is authenticated (any role).
+    Any authenticated user.
     """
-    print("👤 [DEBUG] Active user validated:", current_user, flush=True)
     return current_user
