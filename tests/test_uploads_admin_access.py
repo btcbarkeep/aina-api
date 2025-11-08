@@ -5,7 +5,7 @@ from jose import jwt
 from datetime import datetime, timedelta
 
 # ✅ Import FastAPI app exactly like in Render
-from src.main import app
+from main import app
 from src.core.config import SECRET_KEY, ALGORITHM
 
 client = TestClient(app)
