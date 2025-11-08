@@ -40,13 +40,10 @@ async def upload_file(
     scope: str = Form("complex"),
     unit_name: str | None = Form(None)
 ):
-    """
-    Upload a file to S3 (private) and return a presigned download URL.
-    """
+    """Upload a file to S3 (private) and return a presigned download URL."""
     try:
         s3, bucket, region = get_s3_client()
 
-        # sanitize naming
         safe_complex = complex_name.strip().replace(" ", "_").upper()
         safe_category = category.strip().replace(" ", "_").lower()
 
@@ -58,7 +55,6 @@ async def upload_file(
         else:
             key = f"complexes/{safe_complex}/complex/{safe_category}/{file.filename}"
 
-        # Upload (private)
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -66,7 +62,6 @@ async def upload_file(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # Generate presigned URL (valid 24 hours)
         presigned_url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket, "Key": key},
@@ -92,15 +87,12 @@ async def upload_file(
 # -----------------------------------------------------
 @router.get("/", dependencies=[Depends(get_active_user)])
 def list_files(
-    complex_name: str = Query(..., description="Complex name (e.g., 'KAHANA_VILLA')"),
-    unit_name: str | None = Query(None, description="Unit name if scope=unit"),
-    category: str | None = Query(None, description="Category filter (e.g., 'permits', 'reports')"),
-    expires_in: int = Query(86400, ge=60, le=604800, description="Presigned URL expiration time in seconds (default 24h)"),
+    complex_name: str = Query(...),
+    unit_name: str | None = Query(None),
+    category: str | None = Query(None),
+    expires_in: int = Query(86400, ge=60, le=604800)
 ):
-    """
-    List uploaded files for a complex, optionally filtered by unit or category.
-    Returns file metadata + presigned URLs.
-    """
+    """List uploaded files for a complex, optionally filtered by unit or category."""
     try:
         s3, bucket, _ = get_s3_client()
 
@@ -156,19 +148,12 @@ def list_files(
 # -----------------------------------------------------
 #  LIST ALL FILES (Admin-only)
 # -----------------------------------------------------
-@router.get("/all")
+@router.get("/all", dependencies=[Depends(get_admin_user)])
 def list_all_files(
-    expires_in: int = Query(
-        86400,
-        ge=60,
-        le=604800,
-        description="Presigned URL expiration time in seconds (default 24h)",
-    ),
-    current_admin: dict = Depends(get_admin_user),  # 👈 THIS enforces admin
+    expires_in: int = Query(86400, ge=60, le=604800),
+    current_admin: dict = Depends(get_admin_user)
 ):
-    """
-    Admin-only endpoint to list *all* files in the S3 bucket.
-    """
+    """Admin-only endpoint to list *all* files in the S3 bucket."""
     try:
         s3, bucket, _ = get_s3_client()
         paginator = s3.get_paginator("list_objects_v2")
@@ -212,12 +197,9 @@ def list_all_files(
 # -----------------------------------------------------
 @router.delete("/", dependencies=[Depends(get_active_user)])
 def delete_file(
-    s3_key: str = Query(..., description="Full S3 object key to delete, e.g. 'complexes/KAHANA_VILLA/complex/permits/file.pdf'")
+    s3_key: str = Query(...)
 ):
-    """
-    Delete a file from the S3 bucket using its key.
-    Only authenticated users can delete files.
-    """
+    """Delete a file from the S3 bucket using its key."""
     try:
         s3, bucket, _ = get_s3_client()
         s3.delete_object(Bucket=bucket, Key=s3_key)
