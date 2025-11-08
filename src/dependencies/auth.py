@@ -6,9 +6,8 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-from core.config import settings
+from core.config import settings  # ✅ NEW import
 
-# NOTE: this should match the REAL login endpoint path
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
@@ -40,35 +39,3 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
 
     except JWTError:
         raise credentials_exception
-
-
-def requires_role(*roles: str):
-    """
-    Role-based guard implemented as a dependency factory.
-
-    Usage example:
-
-        @router.get("/admin-only")
-        async def admin_only(
-            current_user: CurrentUser = Depends(requires_role("admin"))
-        ):
-            return {"hello": current_user.username}
-
-    You can also use it as a global dependency on a route:
-
-        @router.get("/reports", dependencies=[Depends(requires_role("admin"))])
-        async def get_reports():
-            ...
-    """
-
-    async def _role_checker(
-        current_user: CurrentUser = Depends(get_current_user),
-    ) -> CurrentUser:
-        if roles and current_user.role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not enough permissions",
-            )
-        return current_user
-
-    return _role_checker
