@@ -1,33 +1,14 @@
-import sys
 import os
+import sys
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# Ensure 'src' is recognized as a package (important for Render)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# ✅ Ensure 'src' is recognized as a package for local + Render
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 # ---- Database ----
 from src.database import create_db_and_tables
-
-
-import sys, os
-print("=== PYTHONPATH ===")
-for p in sys.path:
-    print(" ", p)
-print("=== CWD:", os.getcwd(), "===")
-try:
-    import dependencies
-    print("Imported dependencies:", dependencies.__file__)
-except Exception as e:
-    print("⚠️ Could not import bare 'dependencies':", e)
-try:
-    import src.dependencies as dep2
-    print("Imported src.dependencies:", dep2.__file__)
-except Exception as e:
-    print("⚠️ Could not import src.dependencies:", e)
-
-
 
 # ---- Routers ----
 from src.routers import buildings, events, documents, uploads, auth
@@ -40,7 +21,6 @@ app = FastAPI(
 )
 
 # ---- CORS Configuration ----
-# You can expand this list later with your frontend domain
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -60,7 +40,7 @@ def on_startup():
     create_db_and_tables()
 
 # ---- Include Routers ----
-# Each router already defines its prefix and tags
+# Each router defines its own prefix and tags
 app.include_router(auth.router)
 app.include_router(buildings.router)
 app.include_router(events.router)
@@ -85,6 +65,7 @@ async def root():
     </html>
     """
 
-@app.get("/")
+# ---- Health Check ----
+@app.get("/health")
 def health_check():
     return {"status": "ok"}
