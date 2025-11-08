@@ -1,10 +1,15 @@
-# src/dependencies.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.openapi.models import APIKey, APIKeyIn
+from fastapi.openapi.utils import get_openapi
 from jose import jwt, JWTError
 from src.core.config import SECRET_KEY, ALGORITHM
 
-security = HTTPBearer()
+# -----------------------------------------------------
+#  BEARER AUTH SCHEME (for Swagger + FastAPI security)
+# -----------------------------------------------------
+security = HTTPBearer(auto_error=True)
+
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
@@ -38,3 +43,30 @@ def get_admin_user(current_user: dict = Depends(get_current_user)):
             detail="Admin access required",
         )
     return current_user
+
+
+# -----------------------------------------------------
+#  CUSTOM OPENAPI SCHEMA (pretty Swagger label)
+# -----------------------------------------------------
+def custom_openapi(app):
+    """
+    Override default OpenAPI schema to rename the Authorize label to 'Bearer Token'.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Aina Protocol API",
+        version="0.3.0",
+        description="Backend for Aina Protocol — blockchain-based condo and property reporting system.",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "HTTPBearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Paste your **Bearer token** here (e.g., `Bearer eyJhbGciOi...`).",
+        }
+    }
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
