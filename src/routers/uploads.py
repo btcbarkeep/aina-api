@@ -153,12 +153,13 @@ def list_files(
 # -----------------------------------------------------
 #  LIST ALL FILES (Admin-only)
 # -----------------------------------------------------
-@router.get("/all", dependencies=[Depends(get_admin_user)])
+@router.get("/all")
 def list_all_files(
     expires_in: int = Query(86400, ge=60, le=604800),
-    current_admin: dict = Depends(get_admin_user)
+    current_admin: dict = Depends(get_admin_user)  # ✅ only this one
 ):
     """Admin-only endpoint to list *all* files in the S3 bucket."""
+
     try:
         s3, bucket, _ = get_s3_client()
         paginator = s3.get_paginator("list_objects_v2")
