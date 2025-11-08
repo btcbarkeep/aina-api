@@ -1,41 +1,30 @@
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
-from src.routers.auth import SECRET_KEY, ALGORITHM
+from src.core.config import SECRET_KEY, ALGORITHM
 
-def get_current_user(request: Request):
-    print("🔍 DEBUG HEADERS:", dict(request.headers))
-    auth_header = (
-        request.headers.get("Authorization")
-        or request.headers.get("authorization")
-    )
-    ...
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
+    """
+    Validates JWT token from Authorization header.
+    Returns the user dict if valid.
+    """
+    print("🔍 DEBUG HEADERS:", dict(request.headers))  # 👈 keep this for now
 
-    print("🔍 AUTH HEADER (test):", request.headers)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
 
-    
-    if not auth_header or not auth_header.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header",
-        )
-
-    token = auth_header.split(" ")[1].strip()
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        role: str = payload.get("role")
-        if username is None or role is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
+        role: str = payload.get("role", "user")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication credentials")
         return {"username": username, "role": role}
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate token",
-        )
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
 
 
 def get_admin_user(current_user: dict = Depends(get_current_user)):
