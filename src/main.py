@@ -8,10 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 # ---- Database ----
-from src.database import create_db_and_tables
+from database import create_db_and_tables
 
 # ---- Routers ----
-from src.routers import buildings, events, documents, uploads, auth
+from routers import buildings, events, documents, uploads, auth
 
 # ---- Create the FastAPI app ----
 app = FastAPI(
