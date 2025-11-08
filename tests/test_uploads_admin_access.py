@@ -2,9 +2,8 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
-from src.main import app    # if main.py is in /src
-# if your main.py is at the project root instead, use:
-# from main import app
+from src.main import app   # if main.py lives inside /src
+# from main import app     # if main.py is in project root
 
 from src.dependencies import get_admin_user
 
@@ -12,21 +11,20 @@ client = TestClient(app)
 
 
 # ------------------------------------------------------------------
-# Helpers: dependency overrides
+# Dependency overrides
 # ------------------------------------------------------------------
 def override_admin_ok():
-    """Pretend the user is a valid admin."""
+    """Pretend user is a valid admin."""
     return {"sub": "testadmin", "role": "admin"}
 
 
 def override_admin_forbidden():
-    """Pretend auth ran and decided the user is NOT an admin."""
-    # Simulate what get_admin_user would do for non-admins
+    """Pretend auth ran and rejected the user."""
     raise HTTPException(status_code=403, detail="Admin access required")
 
 
 def override_admin_unauthorized():
-    """Simulate missing/invalid token -> 401."""
+    """Simulate missing/invalid token."""
     raise HTTPException(status_code=401, detail="Missing or invalid token")
 
 
@@ -35,9 +33,7 @@ def override_admin_unauthorized():
 # ------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def clear_overrides():
-    """
-    Ensure dependency_overrides is clean before each test.
-    """
+    """Reset overrides before/after each test."""
     app.dependency_overrides = {}
     yield
     app.dependency_overrides = {}
@@ -45,9 +41,7 @@ def clear_overrides():
 
 @pytest.fixture
 def mock_s3_list(monkeypatch):
-    """
-    Mock get_s3_client so tests never hit real AWS.
-    """
+    """Mock S3 so no network calls happen."""
     from unittest.mock import MagicMock
 
     mock_client = MagicMock()
@@ -63,23 +57,20 @@ def mock_s3_list(monkeypatch):
 
 
 # ------------------------------------------------------------------
-# TESTS
+# Tests
 # ------------------------------------------------------------------
 def test_upload_all_admin_allowed(mock_s3_list):
     """Admin should be able to access /upload/all."""
-    # ✅ Pretend auth already succeeded with an admin user
     app.dependency_overrides[get_admin_user] = override_admin_ok
 
     response = client.get("/upload/all")
     print("🧪 admin_allowed response:", response.status_code, response.text)
 
-    # 200 = success, 500 = AWS mock hiccup, both are OK for this test
     assert response.status_code in (200, 500)
 
 
 def test_upload_all_user_forbidden(mock_s3_list):
-    """Non-admin should be blocked from /upload/all."""
-    # ✅ Pretend auth check ran and rejected the user
+    """Non-admin should be blocked."""
     app.dependency_overrides[get_admin_user] = override_admin_forbidden
 
     response = client.get("/upload/all")
@@ -90,8 +81,7 @@ def test_upload_all_user_forbidden(mock_s3_list):
 
 
 def test_upload_all_unauthorized(mock_s3_list):
-    """Missing/invalid token returns 401."""
-    # ✅ Pretend we never got a valid token at all
+    """Missing/invalid token should return 401."""
     app.dependency_overrides[get_admin_user] = override_admin_unauthorized
 
     response = client.get("/upload/all")
