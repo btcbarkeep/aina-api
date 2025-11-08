@@ -1,5 +1,7 @@
-import os
-import sys
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+print("✅ Added src to sys.path:", os.path.join(os.path.dirname(__file__), "src"))
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
