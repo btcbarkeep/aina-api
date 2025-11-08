@@ -3,7 +3,7 @@ import boto3
 import os
 from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
-from ..dependencies import get_active_user, get_admin_user
+from src.dependencies import get_active_user, get_admin_user
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 
