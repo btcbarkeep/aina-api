@@ -43,7 +43,7 @@ def test_upload_all_admin_allowed(mock_s3_list):
     token = make_token("admin")
     response = client.get(
         "/upload/all",
-        headers={"Authorization": f"Bearer {token}"}
+        headers={"authorization": f"Bearer {token}"}
     )
     # S3 is mocked; 200 OK or 500 if AWS mock fails early
     assert response.status_code in (200, 500)
@@ -54,7 +54,7 @@ def test_upload_all_user_forbidden(mock_s3_list):
     token = make_token("user")
     response = client.get(
         "/upload/all",
-        headers={"Authorization": f"Bearer {token}"}
+        headers={"authorization": f"Bearer {token}"}
     )
     assert response.status_code == 403
     assert response.json()["detail"] in [
