@@ -1,72 +1,51 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, status, Request
 from jose import jwt, JWTError
+from src.routers.auth import SECRET_KEY, ALGORITHM
 
-# ------------------------------------------------------------------
-# Import secret and algorithm
-# ------------------------------------------------------------------
-try:
-    from src.core.config import SECRET_KEY, ALGORITHM
-except ModuleNotFoundError:
-    from core.config import SECRET_KEY, ALGORITHM
-
-# ------------------------------------------------------------------
-# Use HTTPBearer so Swagger uses Bearer token auth (not password)
-# ------------------------------------------------------------------
-bearer_scheme = HTTPBearer(auto_error=False)
-
-# ------------------------------------------------------------------
-# Decode and validate token
-# ------------------------------------------------------------------
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+def get_current_user(request: Request):
     """
-    Validate JWT token and return user info (username + role).
+    Extract and validate JWT from Authorization header.
+    Works with 'Authorization' or 'authorization' keys.
     """
-    if not credentials:
+    auth_header = (
+        request.headers.get("Authorization")
+        or request.headers.get("authorization")
+    )
+
+    if not auth_header or not auth_header.lower().startswith("bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header"
+            detail="Missing or invalid Authorization header",
         )
 
-    token = credentials.credentials
+    token = auth_header.split(" ")[1].strip()
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        role = payload.get("role", "user")
-
-        if not username:
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if username is None or role is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
+                detail="Invalid token payload",
             )
-
         return {"username": username, "role": role}
-
-    except JWTError as e:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token validation failed: {e}"
+            detail="Could not validate token",
         )
 
-# ------------------------------------------------------------------
-# Restrict admin-only routes
-# ------------------------------------------------------------------
+
 def get_admin_user(current_user: dict = Depends(get_current_user)):
-    """
-    Only allow admin role to proceed.
-    """
+    """Restricts access to users with role 'admin'."""
     if current_user.get("role") != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required."
+            detail="Admin access required",
         )
     return current_user
 
-# ------------------------------------------------------------------
-# General user dependency
-# ------------------------------------------------------------------
+
 def get_active_user(current_user: dict = Depends(get_current_user)):
-    """
-    Allow any valid (authenticated) user.
-    """
+    """Basic authenticated user access."""
     return current_user
