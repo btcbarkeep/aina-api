@@ -3,7 +3,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.openapi.models import APIKey, APIKeyIn
 from fastapi.openapi.utils import get_openapi
 from jose import jwt, JWTError
-from src.core.config import SECRET_KEY, ALGORITHM
+from core.config import settings
+
 
 # -----------------------------------------------------
 #  BEARER AUTH SCHEME (for Swagger + FastAPI security)
