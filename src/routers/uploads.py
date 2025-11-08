@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
 from src.dependencies import get_active_user, get_admin_user
+print("📦 Using get_admin_user from:", get_admin_user.__module__)
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 
