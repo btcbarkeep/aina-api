@@ -1,15 +1,16 @@
+# src/dependencies.py
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from src.core.config import SECRET_KEY, ALGORITHM
 
-# 👇 tells FastAPI that Bearer tokens are required for protected routes
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+security = HTTPBearer()
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
-    Validate JWT from the Authorization header and return user info.
+    Validate JWT from the Bearer token and return user info.
     """
+    token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -19,6 +20,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
             raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
         return {"username": username, "role": role}
+
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
