@@ -4,8 +4,11 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# ✅ Ensure 'src' is recognized as a package for local + Render
-sys.path.append(os.path.dirname(__file__))
+# ✅ Explicitly ensure correct import path
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_PATH = os.path.join(BASE_DIR, "src")
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
 
 # ---- Database ----
 from src.database import create_db_and_tables
@@ -40,7 +43,6 @@ def on_startup():
     create_db_and_tables()
 
 # ---- Include Routers ----
-# Each router defines its own prefix and tags
 app.include_router(auth.router)
 app.include_router(buildings.router)
 app.include_router(events.router)
