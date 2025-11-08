@@ -8,6 +8,3 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      # Add this in the Render dashboard with your actual connection string
-      # - key: DATABASE_URL
-      #   value: postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
