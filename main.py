@@ -1,79 +1,81 @@
-import sys, os
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+# main.py
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-# ✅ Add /src to sys.path for imports
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SRC_PATH = os.path.join(BASE_DIR, "src")
-if SRC_PATH not in sys.path:
-    sys.path.insert(0, SRC_PATH)
-print("✅ Added src to sys.path:", SRC_PATH)
+from core.config import settings
+from core.logging_config import logger
+from database import create_db_and_tables
+from routers import api_router
 
-# ---- Database ----
-from src.database import create_db_and_tables
 
-# ---- Routers ----
-from src.routers import buildings, events, documents, uploads, auth
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title=settings.PROJECT_NAME,
+        version="0.3.0",
+    )
 
-# ---- Dependencies (custom OpenAPI) ----
-from src.dependencies import custom_openapi
+    # CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS] or ["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# ---- Create the FastAPI app ----
-app = FastAPI(
-    title="Aina Protocol API",
-    version="0.3.0",
-    description="Backend for Aina Protocol — blockchain-based condo and property reporting system."
-)
+    # Startup
+    @app.on_event("startup")
+    async def on_startup():
+        logger.info("Starting Aina Protocol API")
+        create_db_and_tables()
 
-# ---- CORS Configuration ----
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://your-frontend-domain.com",  # Replace with your actual frontend domain
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # Centralized logging for 401 / 403 / 500 via HTTPException
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(
+        request: Request,
+        exc: StarletteHTTPException,
+    ):
+        if exc.status_code in (401, 403, 500):
+            logger.warning(
+                "HTTP %s at %s - detail=%s",
+                exc.status_code,
+                request.url,
+                exc.detail,
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
 
-# ---- Initialize Database on Startup ----
-@app.on_event("startup")
-def on_startup():
-    """Initialize database tables when the app starts."""
-    create_db_and_tables()
+    # Catch-all for unexpected errors -> always log as 500
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.error("Unhandled server error at %s", request.url, exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+        )
 
-# ---- Include Routers ----
-app.include_router(auth.router)
-app.include_router(buildings.router)
-app.include_router(events.router)
-app.include_router(documents.router)
-app.include_router(uploads.router)
+    # Versioned API: everything under /api/v1
+    app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
-# ---- Custom OpenAPI for Swagger UI ----
-app.openapi = lambda: custom_openapi(app)
+    # Simple root endpoint
+    @app.get("/", tags=["health"])
+    async def root():
+        return {
+            "status": "ok",
+            "message": "Aina Protocol API",
+            "version": app.version,
+        }
 
-# ---- Root Route ----
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    """Landing page for the API."""
-    return """
-    <html>
-        <head><title>Aina Protocol API</title></head>
-        <body style="font-family: sans-serif; margin: 2rem;">
-            <h2>🌺 Aina Protocol API is running 🚀</h2>
-            <ul>
-                <li>✅ <b>Uploads</b> working via <code>/upload</code></li>
-                <li>✅ <b>Explore full API docs</b> at <a href='/docs' target='_blank'>/docs</a></li>
-                <li>✅ <b>Routers active:</b> Buildings, Events, Documents, Uploads, and Auth</li>
-            </ul>
-        </body>
-    </html>
-    """
+    return app
 
-# ---- Health Check ----
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+
+app = create_app()
