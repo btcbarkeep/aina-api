@@ -1,22 +1,23 @@
 import sys, os
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-print("✅ Added src to sys.path:", os.path.join(os.path.dirname(__file__), "src"))
-
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# ✅ Explicitly ensure correct import path
+# ✅ Add /src to sys.path for imports
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_PATH = os.path.join(BASE_DIR, "src")
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
+print("✅ Added src to sys.path:", SRC_PATH)
 
 # ---- Database ----
 from src.database import create_db_and_tables
 
 # ---- Routers ----
 from src.routers import buildings, events, documents, uploads, auth
+
+# ---- Dependencies (custom OpenAPI) ----
+from src.dependencies import custom_openapi
 
 # ---- Create the FastAPI app ----
 app = FastAPI(
@@ -50,6 +51,9 @@ app.include_router(buildings.router)
 app.include_router(events.router)
 app.include_router(documents.router)
 app.include_router(uploads.router)
+
+# ---- Custom OpenAPI for Swagger UI ----
+app.openapi = lambda: custom_openapi(app)
 
 # ---- Root Route ----
 @app.get("/", response_class=HTMLResponse)
