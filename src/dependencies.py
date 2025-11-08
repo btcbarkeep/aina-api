@@ -3,14 +3,13 @@ from jose import jwt, JWTError
 from src.routers.auth import SECRET_KEY, ALGORITHM
 
 def get_current_user(request: Request):
-    """
-    Extract and validate JWT from Authorization header.
-    Works with 'Authorization' or 'authorization' keys.
-    """
+    print("🔍 DEBUG HEADERS:", dict(request.headers))
     auth_header = (
         request.headers.get("Authorization")
         or request.headers.get("authorization")
     )
+    ...
+
 
     print("🔍 AUTH HEADER (test):", request.headers)
 
