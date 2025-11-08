@@ -10,6 +10,25 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # ---- Database ----
 from src.database import create_db_and_tables
 
+
+import sys, os
+print("=== PYTHONPATH ===")
+for p in sys.path:
+    print(" ", p)
+print("=== CWD:", os.getcwd(), "===")
+try:
+    import dependencies
+    print("Imported dependencies:", dependencies.__file__)
+except Exception as e:
+    print("⚠️ Could not import bare 'dependencies':", e)
+try:
+    import src.dependencies as dep2
+    print("Imported src.dependencies:", dep2.__file__)
+except Exception as e:
+    print("⚠️ Could not import src.dependencies:", e)
+
+
+
 # ---- Routers ----
 from src.routers import buildings, events, documents, uploads, auth
 
