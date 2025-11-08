@@ -5,13 +5,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # ✅ Ensure 'src' is recognized as a package for local + Render
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+sys.path.append(os.path.dirname(__file__))
 
 # ---- Database ----
-from database import create_db_and_tables
+from src.database import create_db_and_tables
 
 # ---- Routers ----
-from routers import buildings, events, documents, uploads, auth
+from src.routers import buildings, events, documents, uploads, auth
 
 # ---- Create the FastAPI app ----
 app = FastAPI(
