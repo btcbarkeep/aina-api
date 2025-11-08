@@ -84,3 +84,7 @@ async def root():
         </body>
     </html>
     """
+
+@app.get("/")
+def health_check():
+    return {"status": "ok"}
