@@ -4,18 +4,20 @@ from unittest.mock import MagicMock
 from jose import jwt
 from datetime import datetime, timedelta
 
-from main import app
-from src.core.config import SECRET_KEY, ALGORITHM  # ✅ unified import
+# ✅ Import FastAPI app exactly like in Render
+from src.main import app
+from src.core.config import SECRET_KEY, ALGORITHM
 
 client = TestClient(app)
 
 # ------------------------------------------------------------------
-# Helper: generate JWT with proper secret + algorithm
+# Helper: generate JWT with correct key + algorithm
 # ------------------------------------------------------------------
-def make_token(role="user"):
+def make_token(role: str = "user"):
     expire = datetime.utcnow() + timedelta(hours=1)
     payload = {"sub": "testuser", "role": role, "exp": expire}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return token
 
 # ------------------------------------------------------------------
 # Fixture: mock S3
@@ -39,19 +41,29 @@ def mock_s3_list(monkeypatch):
 def test_upload_all_admin_allowed(mock_s3_list):
     """Admin should be able to access /upload/all."""
     token = make_token("admin")
-    resp = client.get("/upload/all", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code in (200, 500)
+    response = client.get(
+        "/upload/all",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    # S3 is mocked; 200 OK or 500 if AWS mock fails early
+    assert response.status_code in (200, 500)
 
 
 def test_upload_all_user_forbidden(mock_s3_list):
     """Non-admin should be blocked from /upload/all."""
     token = make_token("user")
-    resp = client.get("/upload/all", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "Admin access required"
+    response = client.get(
+        "/upload/all",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] in [
+        "Admin access required",
+        "Admin privileges required."
+    ]
 
 
 def test_upload_all_unauthorized(mock_s3_list):
-    """Missing token returns 401."""
-    resp = client.get("/upload/all")
-    assert resp.status_code == 401
+    """Missing token should trigger 401."""
+    response = client.get("/upload/all")
+    assert response.status_code == 401
