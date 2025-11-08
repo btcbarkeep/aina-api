@@ -12,6 +12,9 @@ def get_current_user(request: Request):
         or request.headers.get("authorization")
     )
 
+    print("🔍 AUTH HEADER (test):", request.headers)
+
+    
     if not auth_header or not auth_header.lower().startswith("bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
