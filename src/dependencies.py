@@ -25,3 +25,10 @@ def get_current_user(request: Request):
     except JWTError as e:
         print("❌ [DEBUG] JWT decode failed:", e)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Token decode failed: {e}")
+
+from fastapi import Depends, HTTPException, status, Request
+
+def get_active_user(request: Request):
+    """Placeholder active user dependency to satisfy router imports."""
+    # For now, just return a mock user object so imports succeed.
+    return {"username": "test_user", "role": "user"}
