@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from jose import jwt
 from datetime import datetime, timedelta
 
@@ -9,9 +9,8 @@ from src.routers.auth import SECRET_KEY, ALGORITHM
 
 client = TestClient(app)
 
-
 # ------------------------------------------------------------------
-# Helper: Generate JWT for tests
+# Helper: generate a JWT matching the app's SECRET_KEY/ALGORITHM
 # ------------------------------------------------------------------
 def make_token(role="user"):
     expire = datetime.utcnow() + timedelta(hours=1)
@@ -20,13 +19,11 @@ def make_token(role="user"):
         "role": role,
         "exp": expire,
     }
-    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    print(f"[DEBUG] Generated token for {role}: {token}")
-    return token
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 # ------------------------------------------------------------------
-# Fixture: mock AWS client
+# Fixture: mock S3 interaction
 # ------------------------------------------------------------------
 @pytest.fixture
 def mock_s3_list(monkeypatch):
@@ -35,47 +32,39 @@ def mock_s3_list(monkeypatch):
         {"Contents": [{"Key": "test/file.txt", "Size": 1024}]}
     ]
 
-    def mock_get_s3_client():
+    def fake_get_s3_client():
         return mock_client, "fake-bucket", "us-east-1"
 
-    monkeypatch.setattr("src.routers.uploads.get_s3_client", mock_get_s3_client)
-    yield mock_client
+    monkeypatch.setattr("src.routers.uploads.get_s3_client", fake_get_s3_client)
+    return mock_client
 
 
 # ------------------------------------------------------------------
-# TEST: Admin can access /upload/all
+# TESTS
 # ------------------------------------------------------------------
 def test_upload_all_admin_allowed(mock_s3_list):
     """Admin should be able to access /upload/all."""
     token = make_token("admin")
-    response = client.get(
+    resp = client.get(
         "/upload/all",
-        headers={"Authorization": f"Bearer {token}"}
+        headers={"Authorization": f"Bearer {token}"},
     )
-    print("[DEBUG] Response status:", response.status_code)
-    print("[DEBUG] Response body:", response.text)
-    assert response.status_code in (200, 500)  # Allow 500 if AWS mock fails early
+    assert resp.status_code in (200, 500)  # 500 is OK if S3 mock isn't perfect
 
 
-# ------------------------------------------------------------------
-# TEST: Non-admin blocked
-# ------------------------------------------------------------------
 def test_upload_all_user_forbidden(mock_s3_list):
     """Non-admin should be blocked from /upload/all."""
     token = make_token("user")
-    response = client.get(
+    resp = client.get(
         "/upload/all",
-        headers={"Authorization": f"Bearer {token}"}
+        headers={"Authorization": f"Bearer {token}"},
     )
-    print("[DEBUG] Response status:", response.status_code)
-    assert response.status_code == 403
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Admin access required"
 
 
-# ------------------------------------------------------------------
-# TEST: Missing token -> Unauthorized
-# ------------------------------------------------------------------
 def test_upload_all_unauthorized(mock_s3_list):
     """No token should result in 401."""
-    response = client.get("/upload/all")
-    print("[DEBUG] Response status:", response.status_code)
-    assert response.status_code == 401
+    resp = client.get("/upload/all")
+    assert resp.status_code == 401
+    assert "detail" in resp.json()
