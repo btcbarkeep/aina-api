@@ -1,3 +1,7 @@
+import sys
+print("🧭 sys.path during uploads import:", sys.path)
+
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 import boto3
 import os
