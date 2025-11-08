@@ -18,26 +18,24 @@ class Token(BaseModel):
 
 
 def _create_access_token(username: str, role: str = "admin") -> str:
+    """
+    Create a JWT access token with an expiration and embedded role.
+    """
     expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     expire = datetime.utcnow() + expires_delta
-    to_encode = {
-        "sub": username,
-        "role": role,
-        "exp": expire,
-    }
-    encoded_jwt = jwt.encode(
+    to_encode = {"sub": username, "role": role, "exp": expire}
+
+    return jwt.encode(
         to_encode,
         settings.JWT_SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )
-    return encoded_jwt
 
 
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """
-    Simple admin login backed by env vars:
-    ADMIN_USERNAME / ADMIN_PASSWORD
+    Simple admin login using credentials from environment variables.
     """
     if (
         form_data.username != settings.ADMIN_USERNAME
