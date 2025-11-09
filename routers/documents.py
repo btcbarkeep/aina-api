@@ -1,8 +1,8 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-from src.database import get_session
-from src.models import Document, DocumentCreate, DocumentRead
+from database import get_session
+from models import Document, DocumentCreate, DocumentRead
 from dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
