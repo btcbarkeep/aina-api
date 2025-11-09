@@ -8,7 +8,17 @@ from datetime import datetime, timedelta
 from core.config import settings
 from dependencies.auth import CurrentUser, get_current_user
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
+router = APIRouter(
+    prefix="/auth",
+    tags=["Auth"],
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}},
+)
+
+"""
+Auth endpoints handle secure JWT-based authentication for admin and user access,
+including login and identity verification via the /me endpoint.
+"""
+
 
 
 class Token(BaseModel):
