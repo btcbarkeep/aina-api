@@ -21,7 +21,9 @@ def create_app() -> FastAPI:
         version="0.3.0",
     )
 
+    # -------------------------------------------------
     # CORS
+    # -------------------------------------------------
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS] or ["*"],
@@ -30,13 +32,25 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # -------------------------------------------------
     # Startup
+    # -------------------------------------------------
     @app.on_event("startup")
     async def on_startup():
-        logger.info("Starting Aina Protocol API")
+        logger.info("🚀 Starting Aina Protocol API")
         create_db_and_tables()
 
-    # Centralized logging for 401 / 403 / 500 via HTTPException
+        # Log all /api/v1 routes for quick Render visibility
+        print("\n📍 Registered /api/v1 Routes:\n")
+        for route in app.routes:
+            if route.path.startswith("/api/v1"):
+                methods = ",".join(route.methods or [])
+                print(f"➡️  {methods:10s} {route.path}")
+        print("\n✅ Route log complete.\n")
+
+    # -------------------------------------------------
+    # Centralized error logging
+    # -------------------------------------------------
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(
         request: Request,
@@ -54,7 +68,6 @@ def create_app() -> FastAPI:
             content={"detail": exc.detail},
         )
 
-    # Catch-all for unexpected errors -> always log as 500
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         logger.error("Unhandled server error at %s", request.url, exc_info=exc)
@@ -63,10 +76,14 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
+    # -------------------------------------------------
     # Versioned API: everything under /api/v1
+    # -------------------------------------------------
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
-    # Simple root endpoint
+    # -------------------------------------------------
+    # Root endpoint for uptime monitoring
+    # -------------------------------------------------
     @app.get("/", tags=["health"])
     async def root():
         return {
