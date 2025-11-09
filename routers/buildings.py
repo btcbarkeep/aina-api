@@ -1,6 +1,7 @@
-from typing import List
+# routers/buildings.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
+from typing import List
 
 from database import get_session
 from models import Building, BuildingCreate, BuildingRead
