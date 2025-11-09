@@ -1,14 +1,12 @@
-import sys
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
-import boto3
-import os
+# routers/uploads.py
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from datetime import datetime
-from botocore.exceptions import NoCredentialsError, ClientError
+import boto3, os
+from botocore.exceptions import ClientError, NoCredentialsError
 
-# ✅ updated imports
 from dependencies.auth import get_current_user, requires_role
 
-router = APIRouter(prefix="/upload", tags=["Uploads"])
+router = APIRouter(prefix="/uploads", tags=["Uploads"])
 
 
 # -----------------------------------------------------
