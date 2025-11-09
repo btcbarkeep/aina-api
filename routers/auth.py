@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from core.config import settings
 from dependencies.auth import CurrentUser, get_current_user
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 class Token(BaseModel):
