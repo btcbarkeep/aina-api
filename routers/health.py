@@ -1,7 +1,16 @@
-# src/routers/health.py
+# routers/health.py
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/health", tags=["Health"])
+router = APIRouter(
+    prefix="/health",
+    tags=["Health"],
+)
+
+"""
+Health endpoints provide system and database status checks for uptime monitoring,
+including /db (database connectivity) and /app (application status).
+"""
+
 
 
 @router.get("/db", summary="Database / Supabase health check")
