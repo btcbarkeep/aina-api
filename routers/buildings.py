@@ -1,13 +1,15 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
+
 from database import get_session
 from models import Building, BuildingCreate, BuildingRead
 from dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/buildings", tags=["Buildings"])
 
-@router.post("/", response_model=BuildingRead, dependencies=[Depends(get_active_user)])
+
+@router.post("/", response_model=BuildingRead, dependencies=[Depends(get_current_user)])
 def create_building(payload: BuildingCreate, session: Session = Depends(get_session)):
     """Create a new building (protected)."""
     building = Building.from_orm(payload)
