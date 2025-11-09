@@ -6,7 +6,16 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import get_current_user, requires_role
 
-router = APIRouter(prefix="/uploads", tags=["Uploads"])
+router = APIRouter(
+    prefix="/uploads",
+    tags=["Uploads"],
+)
+
+"""
+Upload endpoints handle S3 file uploads, secure file listing, and admin-level
+file management across complexes, units, and categories.
+"""
+
 
 
 # -----------------------------------------------------
