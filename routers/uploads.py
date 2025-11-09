@@ -1,16 +1,17 @@
 import sys
 print("🧭 sys.path during uploads import:", sys.path)
 
-
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 import boto3
 import os
 from datetime import datetime
 from botocore.exceptions import NoCredentialsError, ClientError
-from dependencies.auth import get_active_user, get_admin_user
-print("📦 Using get_admin_user from:", get_admin_user.__module__)
+
+# ✅ updated imports
+from dependencies.auth import get_current_user, requires_role
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
+
 
 # -----------------------------------------------------
 #  AWS CONFIGURATION
@@ -37,7 +38,7 @@ def get_s3_client():
 # -----------------------------------------------------
 #  UPLOAD FILE (Protected)
 # -----------------------------------------------------
-@router.post("/", dependencies=[Depends(get_active_user)])
+@router.post("/", dependencies=[Depends(get_current_user)])  # ✅ updated
 async def upload_file(
     file: UploadFile = File(...),
     complex_name: str = Form(...),
@@ -90,7 +91,7 @@ async def upload_file(
 # -----------------------------------------------------
 #  LIST FILES BY COMPLEX / CATEGORY (Protected)
 # -----------------------------------------------------
-@router.get("/", dependencies=[Depends(get_active_user)])
+@router.get("/", dependencies=[Depends(get_current_user)])  # ✅ updated
 def list_files(
     complex_name: str = Query(...),
     unit_name: str | None = Query(None),
@@ -153,13 +154,11 @@ def list_files(
 # -----------------------------------------------------
 #  LIST ALL FILES (Admin-only)
 # -----------------------------------------------------
-@router.get("/all")
+@router.get("/all", dependencies=[Depends(requires_role("admin"))])  # ✅ updated
 def list_all_files(
     expires_in: int = Query(86400, ge=60, le=604800),
-    current_admin: dict = Depends(get_admin_user)  # ✅ only this one
 ):
     """Admin-only endpoint to list *all* files in the S3 bucket."""
-
     try:
         s3, bucket, _ = get_s3_client()
         paginator = s3.get_paginator("list_objects_v2")
@@ -201,7 +200,7 @@ def list_all_files(
 # -----------------------------------------------------
 #  DELETE FILE (Protected)
 # -----------------------------------------------------
-@router.delete("/", dependencies=[Depends(get_active_user)])
+@router.delete("/", dependencies=[Depends(get_current_user)])  # ✅ updated
 def delete_file(
     s3_key: str = Query(...)
 ):
