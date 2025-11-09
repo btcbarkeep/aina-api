@@ -8,7 +8,16 @@ from database import get_session
 from models import Event
 from dependencies.auth import get_current_user
 
-router = APIRouter(prefix="/events", tags=["Events"])
+router = APIRouter(
+    prefix="/events",
+    tags=["Events"],
+)
+
+"""
+Event endpoints manage building and AOAO-related events, maintenance logs,
+and important updates for property records.
+"""
+
 
 
 @router.post("/", response_model=Event, dependencies=[Depends(get_current_user)])  # ✅ FIXED
