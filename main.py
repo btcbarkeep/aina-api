@@ -84,13 +84,14 @@ def create_app() -> FastAPI:
     # -------------------------------------------------
     # Root endpoint for uptime monitoring
     # -------------------------------------------------
-    @app.get("/", tags=["health"])
+    @app.get("/")
     async def root():
         return {
             "status": "ok",
             "message": "Aina Protocol API",
             "version": app.version,
         }
+
 
     return app
 
