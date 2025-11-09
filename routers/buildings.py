@@ -7,7 +7,16 @@ from database import get_session
 from models import Building, BuildingCreate, BuildingRead
 from dependencies.auth import get_current_user
 
-router = APIRouter(prefix="/buildings", tags=["Buildings"])
+router = APIRouter(
+    prefix="/buildings",
+    tags=["Buildings"],
+)
+
+"""
+Building endpoints manage property data for AOAOs and complexes, including creation,
+listing, and retrieval of registered building information.
+"""
+
 
 
 @router.post("/", response_model=BuildingRead, dependencies=[Depends(get_current_user)])
