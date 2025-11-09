@@ -2,13 +2,15 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from datetime import datetime
+
 from database import get_session
 from models import Event
-from dependencies.auth import get_active_user
+from dependencies.auth import get_current_user  # ✅ FIXED import
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
-@router.post("/", response_model=Event, dependencies=[Depends(get_active_user)])
+
+@router.post("/", response_model=Event, dependencies=[Depends(get_current_user)])  # ✅ FIXED
 def create_event(event: Event, session: Session = Depends(get_session)):
     """Create a new event (protected)."""
     session.add(event)
@@ -35,7 +37,7 @@ def list_events(
     return session.exec(query).all()
 
 
-@router.delete("/{event_id}", dependencies=[Depends(get_active_user)])
+@router.delete("/{event_id}", dependencies=[Depends(get_current_user)])  # ✅ FIXED
 def delete_event(event_id: int, session: Session = Depends(get_session)):
     """Delete event (protected)."""
     event = session.get(Event, event_id)
