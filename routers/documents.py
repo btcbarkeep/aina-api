@@ -7,7 +7,16 @@ from database import get_session
 from models import Document
 from dependencies.auth import get_current_user
 
-router = APIRouter(prefix="/documents", tags=["Documents"])
+router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"],
+)
+
+"""
+Document endpoints handle storage, retrieval, and management of AOAO and property
+documents including minutes, rules, reports, and financial disclosures.
+"""
+
 
 # 🟢 Attach (admin only)
 @router.post("/", response_model=DocumentRead)
