@@ -1,11 +1,12 @@
-from typing import List, Optional
+# routers/events.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
+from typing import List, Optional
 from datetime import datetime
 
 from database import get_session
 from models import Event
-from dependencies.auth import get_current_user  # ✅ FIXED import
+from dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
