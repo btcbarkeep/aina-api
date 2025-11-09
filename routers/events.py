@@ -2,8 +2,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from datetime import datetime
-from src.database import get_session
-from src.models import Event
+from database import get_session
+from models import Event
 from dependencies.auth import get_active_user
 
 router = APIRouter(prefix="/events", tags=["Events"])
