@@ -1,24 +1,26 @@
 # main.py
 import os
 import sys
-
-sys.path.append(os.path.dirname(__file__))
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+# Local imports
 from core.config import settings
 from core.logging_config import logger
 from database import create_db_and_tables
 from routers import api_router
+
+# Ensure local imports always resolve correctly
+sys.path.append(os.path.dirname(__file__))
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.PROJECT_NAME,
         version="0.3.0",
+        description="Aina Protocol API – Real Estate Data & AOAO Management on-chain",
     )
 
     # -------------------------------------------------
@@ -52,10 +54,7 @@ def create_app() -> FastAPI:
     # Centralized error logging
     # -------------------------------------------------
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request,
-        exc: StarletteHTTPException,
-    ):
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         if exc.status_code in (401, 403, 500):
             logger.warning(
                 "HTTP %s at %s - detail=%s",
@@ -82,16 +81,16 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
     # -------------------------------------------------
-    # Root endpoint for uptime monitoring
+    # Root endpoint (uptime / info)
     # -------------------------------------------------
-    @app.get("/")
+    @app.get("/", tags=["Health"], summary="API Uptime & Version Check")
     async def root():
+        """Simple root route for uptime monitoring (e.g., Render health check)."""
         return {
             "status": "ok",
             "message": "Aina Protocol API",
             "version": app.version,
         }
-
 
     return app
 
