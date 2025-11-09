@@ -1,10 +1,9 @@
-# src/routers/auth.py
-from datetime import datetime, timedelta
-
+# routers/auth.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import jwt
 from pydantic import BaseModel
+from datetime import datetime, timedelta
 
 from core.config import settings
 from dependencies.auth import CurrentUser, get_current_user
