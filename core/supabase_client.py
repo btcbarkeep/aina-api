@@ -47,3 +47,8 @@ def ping_supabase() -> dict:
             "status": "error",
             "detail": str(e),
         }
+
+
+print("[DEBUG] SUPABASE_URL:", settings.SUPABASE_URL)
+print("[DEBUG] SUPABASE_KEY:", "SET" if settings.SUPABASE_KEY else "MISSING")
+
