@@ -6,7 +6,6 @@ import supabase
 
 print(f"[DEBUG] Supabase SDK version: {getattr(supabase, '__version__', 'unknown')}")
 
-
 def get_supabase_client():
     """
     Safely create and return a Supabase client using URL + service key.
@@ -35,6 +34,10 @@ def ping_supabase() -> dict:
     Adjust the table name if necessary.
     """
     try:
+        print("[DEBUG] Live ENV check (from settings):")
+        print("  SUPABASE_URL:", settings.SUPABASE_URL)
+        print("  SUPABASE_API_KEY:", "SET" if settings.SUPABASE_API_KEY else "MISSING")
+
         client = get_supabase_client()
         if client is None:
             return {"service": "Supabase", "status": "not_configured"}
@@ -54,8 +57,3 @@ def ping_supabase() -> dict:
             "status": "error",
             "detail": str(e),
         }
-
-
-# Debugging logs on startup
-print("[DEBUG] SUPABASE_URL:", settings.SUPABASE_URL)
-print("[DEBUG] SUPABASE_API_KEY:", "SET" if settings.SUPABASE_API_KEY else "MISSING")
