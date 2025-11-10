@@ -23,3 +23,15 @@ async def db_health_check():
         "service": "Supabase",
         **response
     }
+
+import os
+
+@router.get("/env", summary="Environment variable check (masked)")
+async def env_check():
+    """Check what environment variables are actually loaded at runtime."""
+    return {
+        "SUPABASE_URL": os.getenv("SUPABASE_URL"),
+        "SUPABASE_API_KEY": "SET" if os.getenv("SUPABASE_API_KEY") else "MISSING",
+        "All Keys": list(os.environ.keys())[:20],  # show first 20 keys for context
+    }
+
