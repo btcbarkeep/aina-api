@@ -1,23 +1,28 @@
 # core/supabase_client.py
-from supabase import create_client, Client
+from supabase import create_client
 from core.config import settings
 
 import supabase
-print(f"[DEBUG] Supabase SDK version: {getattr(supabase, '__version__', 'unknown')}")\
 
-def get_supabase_client() -> Client | None:
+print(f"[DEBUG] Supabase SDK version: {getattr(supabase, '__version__', 'unknown')}")
+
+
+def get_supabase_client():
     """
     Safely create and return a Supabase client using URL + service key.
     Returns None if either value is missing.
     """
     try:
         supabase_url = str(settings.SUPABASE_URL) if settings.SUPABASE_URL else None
-        supabase_key = settings.SUPABASE_KEY
+        supabase_key = settings.SUPABASE_API_KEY  # ✅ Corrected field name
 
         if not supabase_url or not supabase_key:
+            print("[DEBUG] Missing Supabase credentials.")
             return None
 
-        return create_client(supabase_url, supabase_key)
+        client = create_client(supabase_url, supabase_key)
+        print("[DEBUG] Supabase client initialized successfully.")
+        return client
 
     except Exception as e:
         print(f"[Supabase Init Error] {e}")
@@ -35,7 +40,7 @@ def ping_supabase() -> dict:
             return {"service": "Supabase", "status": "not_configured"}
 
         result = client.table("users").select("*").limit(1).execute()
-        count = len(result.data) if result.data else 0
+        count = len(result.data or [])
 
         return {
             "service": "Supabase",
@@ -51,6 +56,6 @@ def ping_supabase() -> dict:
         }
 
 
+# Debugging logs on startup
 print("[DEBUG] SUPABASE_URL:", settings.SUPABASE_URL)
-print("[DEBUG] SUPABASE_KEY:", "SET" if settings.SUPABASE_KEY else "MISSING")
-
+print("[DEBUG] SUPABASE_API_KEY:", "SET" if settings.SUPABASE_API_KEY else "MISSING")
