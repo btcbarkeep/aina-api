@@ -12,8 +12,9 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 pydantic-settings>=2.0
 
-# Supabase dependencies — stable versions
-supabase==2.3.3
-gotrue==2.11.0
-httpx==0.25.2
+
+# Supabase SDK + compatible deps
+supabase==2.2.1
+gotrue==2.8.0
+httpx==0.25.0
 certifi>=2024.7.4
