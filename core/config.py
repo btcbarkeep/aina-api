@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # Supabase
     # -------------------------------------------------
     SUPABASE_URL: Optional[AnyHttpUrl] = Field(None, env="SUPABASE_URL")
-    SUPABASE_KEY: Optional[str] = Field(None, env="SUPABASE_KEY")
+    SUPABASE_API_KEY: Optional[str] = Field(None, env="SUPABASE_KEY")
 
     # -------------------------------------------------
     # Class Config
