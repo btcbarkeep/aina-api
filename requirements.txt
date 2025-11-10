@@ -10,4 +10,5 @@ jinja2==3.1.4
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 pydantic-settings>=2.0
-git+https://github.com/supabase-community/supabase-py.git@v2.4.0
+supabase==2.4.0
+postgrest==0.16.4
