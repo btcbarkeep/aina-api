@@ -61,15 +61,26 @@ def list_buildings_supabase(limit: int = 50):
     return result["data"]
 
 
-@router.post("/supabase", tags=["Buildings"])
-def create_building_supabase(payload: dict):
+@router.post("/supabase", response_model=BuildingRead, summary="Create Building Supabase")
+def create_building_supabase(payload: BuildingCreate):
     """
-    Insert a new building record into Supabase.
+    Insert a new building record directly into Supabase.
+    Uses the same BuildingCreate schema for consistent input.
     """
-    result = insert_record("buildings", payload)
-    if result["status"] != "ok":
-        raise HTTPException(status_code=500, detail=result["detail"])
-    return result["data"]
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        result = client.table("buildings").insert(payload.dict()).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Insert failed")
+
+        return result.data[0]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
 
 
 @router.put("/supabase/{building_id}", tags=["Buildings"])
