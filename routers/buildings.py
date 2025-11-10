@@ -43,3 +43,53 @@ def get_building(building_id: int, session: Session = Depends(get_session)):
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
     return building
+
+
+# Supabase integration
+from core.supabase_helpers import fetch_all, insert_record, update_record, delete_record
+
+
+@router.get("/supabase", tags=["Supabase Buildings"])
+def list_buildings_supabase(limit: int = 50):
+    """
+    Fetch building data directly from Supabase.
+    This is useful for debugging and verifying Supabase sync.
+    """
+    result = fetch_all("buildings", limit=limit)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=500, detail=result["detail"])
+    return result["data"]
+
+
+@router.post("/supabase", tags=["Supabase Buildings"])
+def create_building_supabase(payload: dict):
+    """
+    Insert a new building record into Supabase.
+    """
+    result = insert_record("buildings", payload)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=500, detail=result["detail"])
+    return result["data"]
+
+
+@router.put("/supabase/{building_id}", tags=["Supabase Buildings"])
+def update_building_supabase(building_id: str, payload: dict):
+    """
+    Update a building record in Supabase by ID.
+    """
+    result = update_record("buildings", building_id, payload)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=500, detail=result["detail"])
+    return result["data"]
+
+
+@router.delete("/supabase/{building_id}", tags=["Supabase Buildings"])
+def delete_building_supabase(building_id: str):
+    """
+    Delete a building record from Supabase by ID.
+    """
+    result = delete_record("buildings", building_id)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=500, detail=result["detail"])
+    return {"status": "deleted", "id": building_id}
+
