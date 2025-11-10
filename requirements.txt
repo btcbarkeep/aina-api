@@ -12,9 +12,8 @@ jinja2==3.1.4
 boto3==1.35.36
 pydantic-settings>=2.0
 
-# --- Supabase SDK (stable build) ---
-supabase==2.4.0
-gotrue>=2.12.3
+# Supabase SDK + compatible deps
+supabase==2.3.5
+gotrue>=2.10.0,<2.13.0
 certifi>=2024.7.4
-
-
+httpx>=0.24.1,<0.29
