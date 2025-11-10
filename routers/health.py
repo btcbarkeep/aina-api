@@ -7,12 +7,6 @@ router = APIRouter(
     tags=["Health"],
 )
 
-"""
-Health endpoints provide system and database status checks for uptime monitoring,
-including /db (database connectivity) and /app (application status).
-"""
-
-
 @router.get("/db", summary="Database / Supabase health check")
 async def db_health_check():
     """
@@ -24,14 +18,9 @@ async def db_health_check():
         **response
     }
 
-import os
-
-@router.get("/env", summary="Environment variable check (masked)")
-async def env_check():
-    """Check what environment variables are actually loaded at runtime."""
-    return {
-        "SUPABASE_URL": os.getenv("SUPABASE_URL"),
-        "SUPABASE_API_KEY": "SET" if os.getenv("SUPABASE_API_KEY") else "MISSING",
-        "All Keys": list(os.environ.keys())[:20],  # show first 20 keys for context
-    }
-
+@router.get("/app", summary="App health check")
+async def app_health_check():
+    """
+    Basic application status check.
+    """
+    return {"service": "Aina API", "status": "ok"}
