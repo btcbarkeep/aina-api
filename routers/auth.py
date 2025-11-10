@@ -1,6 +1,5 @@
 # routers/auth.py
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from jose import jwt
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -15,21 +14,24 @@ router = APIRouter(
 )
 
 """
-Auth endpoints handle secure JWT-based authentication for admin and user access,
-including login and identity verification via the /me endpoint.
+Auth endpoints handle JWT-based authentication for admin and user access,
+including token generation via /login and identity verification via /me.
 """
 
 
-
+# -----------------------------------------------------
+# Token Schema
+# -----------------------------------------------------
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
 
+# -----------------------------------------------------
+# Token Utility
+# -----------------------------------------------------
 def _create_access_token(username: str, role: str = "admin") -> str:
-    """
-    Create a JWT access token with an expiration and embedded role.
-    """
+    """Create a JWT access token with expiration and embedded role."""
     expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     expire = datetime.utcnow() + expires_delta
     to_encode = {"sub": username, "role": role, "exp": expire}
@@ -41,28 +43,30 @@ def _create_access_token(username: str, role: str = "admin") -> str:
     )
 
 
-@router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+# -----------------------------------------------------
+# Login Endpoint (Simple Admin Auth)
+# -----------------------------------------------------
+@router.post("/login", response_model=Token, summary="Generate Access Token")
+async def login(username: str, password: str):
     """
     Simple admin login using credentials from environment variables.
+    Returns a JWT token to be used as Bearer auth for other endpoints.
     """
-    if (
-        form_data.username != settings.ADMIN_USERNAME
-        or form_data.password != settings.ADMIN_PASSWORD
-    ):
+    if username != settings.ADMIN_USERNAME or password != settings.ADMIN_PASSWORD:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
 
     # For now, all logins are admin role
-    access_token = _create_access_token(username=form_data.username, role="admin")
+    access_token = _create_access_token(username=username, role="admin")
     return Token(access_token=access_token)
 
 
-@router.get("/me", response_model=CurrentUser)
+# -----------------------------------------------------
+# Verify Current User
+# -----------------------------------------------------
+@router.get("/me", response_model=CurrentUser, summary="Validate Access Token")
 async def read_me(current_user: CurrentUser = Depends(get_current_user)):
-    """
-    Returns user info derived from the JWT (username + role).
-    """
+    """Returns the authenticated user's info (decoded from JWT)."""
     return current_user
