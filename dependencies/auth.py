@@ -1,13 +1,14 @@
 # dependencies/auth.py
 from typing import Optional
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-from core.config import settings  # ✅ import from your new structure
+from core.config import settings  # ✅ import from your config
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+# Use HTTP Bearer (no OAuth2 password form)
+bearer_scheme = HTTPBearer()
 
 
 class CurrentUser(BaseModel):
@@ -15,8 +16,12 @@ class CurrentUser(BaseModel):
     role: str = "admin"
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
-    """Decode JWT and return the current authenticated user."""
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> CurrentUser:
+    """
+    Validate JWT from the Authorization header.
+    Example header: Authorization: Bearer <token>
+    """
+    token = credentials.credentials
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -45,7 +50,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
 #  ROLE-BASED ACCESS CONTROL
 # -----------------------------------------------------
 def requires_role(required_role: str):
-    """Decorator dependency for role-based access control."""
+    """Dependency decorator for role-based access control."""
     def role_dependency(current_user: CurrentUser = Depends(get_current_user)):
         if current_user.role != required_role:
             raise HTTPException(
