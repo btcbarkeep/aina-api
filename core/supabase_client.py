@@ -2,6 +2,8 @@
 from supabase import create_client, Client
 from core.config import settings
 
+import supabase
+print(f"[DEBUG] Supabase SDK version: {getattr(supabase, '__version__', 'unknown')}")\
 
 def get_supabase_client() -> Client | None:
     """
