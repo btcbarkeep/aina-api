@@ -36,8 +36,8 @@ def get_supabase_client():
 
 def ping_supabase() -> dict:
     """
-    Test Supabase connectivity by selecting 1 record from the 'users' table.
-    Adjust the table name if necessary.
+    Test Supabase connectivity by selecting 1 record from multiple tables.
+    Helps verify if the Supabase client and key are working properly.
     """
     try:
         print("[DEBUG] Live ENV check (from settings):")
@@ -49,16 +49,25 @@ def ping_supabase() -> dict:
             print("[DEBUG] No Supabase client returned → 'not_configured'")
             return {"service": "Supabase", "status": "not_configured"}
 
-        print("[DEBUG] Attempting to query 'users' table...")
-        result = client.table("users").select("*").limit(1).execute()
+        # Try querying multiple tables to help isolate issues
+        test_tables = ["users", "documents", "events", "buildings"]
+        results = {}
 
-        count = len(result.data or [])
-        print(f"[DEBUG] Query successful — rows found: {count}")
+        for table in test_tables:
+            try:
+                print(f"[DEBUG] Querying table '{table}'...")
+                response = client.table(table).select("*").limit(1).execute()
+                row_count = len(response.data or [])
+                print(f"[DEBUG] ✅ Table '{table}' OK — rows found: {row_count}")
+                results[table] = {"status": "ok", "rows_found": row_count}
+            except Exception as table_error:
+                print(f"[DEBUG] ❌ Error querying '{table}': {table_error}")
+                results[table] = {"status": "error", "detail": str(table_error)}
 
         return {
             "service": "Supabase",
             "status": "ok",
-            "rows_found": count,
+            "tables": results,
         }
 
     except Exception as e:
@@ -69,6 +78,7 @@ def ping_supabase() -> dict:
             "status": "error",
             "detail": str(e),
         }
+
 
 
 # Debugging logs on startup
