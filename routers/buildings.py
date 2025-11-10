@@ -49,7 +49,7 @@ def get_building(building_id: int, session: Session = Depends(get_session)):
 from core.supabase_helpers import fetch_all, insert_record, update_record, delete_record
 
 
-@router.get("/supabase", tags=["Supabase Buildings"])
+@router.get("/supabase", tags=["Buildings"])
 def list_buildings_supabase(limit: int = 50):
     """
     Fetch building data directly from Supabase.
@@ -61,7 +61,7 @@ def list_buildings_supabase(limit: int = 50):
     return result["data"]
 
 
-@router.post("/supabase", tags=["Supabase Buildings"])
+@router.post("/supabase", tags=["Buildings"])
 def create_building_supabase(payload: dict):
     """
     Insert a new building record into Supabase.
@@ -72,7 +72,7 @@ def create_building_supabase(payload: dict):
     return result["data"]
 
 
-@router.put("/supabase/{building_id}", tags=["Supabase Buildings"])
+@router.put("/supabase/{building_id}", tags=["Buildings"])
 def update_building_supabase(building_id: str, payload: dict):
     """
     Update a building record in Supabase by ID.
@@ -83,7 +83,7 @@ def update_building_supabase(building_id: str, payload: dict):
     return result["data"]
 
 
-@router.delete("/supabase/{building_id}", tags=["Supabase Buildings"])
+@router.delete("/supabase/{building_id}", tags=["Buildings"])
 def delete_building_supabase(building_id: str):
     """
     Delete a building record from Supabase by ID.
