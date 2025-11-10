@@ -13,8 +13,8 @@ passlib[bcrypt]==1.7.4
 pydantic-settings>=2.0
 
 
-# Supabase SDK + compatible deps
+# Supabase SDK (stable combo)
 supabase==2.2.1
 gotrue==2.8.0
-httpx==0.25.0
+httpx==0.24.1
 certifi>=2024.7.4
