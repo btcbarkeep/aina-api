@@ -1,19 +1,19 @@
-# --- Core FastAPI stack ---
+# Core API framework
 fastapi==0.115.2
 uvicorn[standard]==0.30.6
 sqlmodel==0.0.22
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+boto3==1.35.36
 python-multipart==0.0.9
 aiofiles==23.2.1
 jinja2==3.1.4
-boto3==1.35.36
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
 pydantic-settings>=2.0
 
-# Supabase SDK + compatible deps
-supabase==2.3.5
-gotrue>=2.10.0,<2.13.0
+# Supabase dependencies — stable versions
+supabase==2.3.3
+gotrue==2.11.0
+httpx==0.25.2
 certifi>=2024.7.4
-httpx>=0.24.1,<0.29
