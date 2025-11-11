@@ -8,11 +8,10 @@ router = APIRouter(
     tags=["Sync"],
 )
 
-
 @router.post("/run", summary="Run full sync now (manual trigger)")
 async def run_sync(current_user: CurrentUser = Depends(get_current_user)):
     """
-    Manually trigger the daily Supabase ↔️ local sync.
+    Manually trigger the Supabase ↔ local database sync.
     Requires admin authentication.
     """
     if current_user.role != "admin":
