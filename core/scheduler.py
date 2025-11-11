@@ -6,6 +6,8 @@ import time
 import traceback
 
 from core.notifications import send_email
+from routers.buildings import full_building_sync
+from database import get_session
 
 def scheduled_full_sync():
     from routers.sync import run_full_sync  # local import to avoid circular deps
