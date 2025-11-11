@@ -45,4 +45,13 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 
+    # Notification settings
+    SMTP_HOST: Optional[str] = Field(None, env="SMTP_HOST")
+    SMTP_PORT: Optional[int] = Field(None, env="SMTP_PORT")
+    SMTP_USER: Optional[str] = Field(None, env="SMTP_USER")
+    SMTP_PASS: Optional[str] = Field(None, env="SMTP_PASS")
+    SMTP_TO: Optional[str] = Field(None, env="SMTP_TO")
+
+
+
 settings = Settings()
