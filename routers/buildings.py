@@ -164,3 +164,50 @@ def create_building_sync(payload: BuildingCreate, session: Session = Depends(get
         print(f"[SYNC ERROR] Rolling back local insert: {e}")
         raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
 
+## sync checker
+
+@router.get("/sync", summary="Compare Local vs Supabase Buildings")
+def compare_building_sync(session: Session = Depends(get_session)):
+    """
+    Compare local and Supabase building tables to verify synchronization.
+    Returns which records exist only in one source.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        # --- 1️⃣ Fetch from local database ---
+        local_buildings = session.exec(select(Building)).all()
+        local_names = {b.name for b in local_buildings}
+
+        # --- 2️⃣ Fetch from Supabase ---
+        supa_result = client.table("buildings").select("name").execute()
+        supa_names = {row["name"] for row in supa_result.data or []}
+
+        # --- 3️⃣ Compare sets ---
+        local_only = sorted(list(local_names - supa_names))
+        supabase_only = sorted(list(supa_names - local_names))
+        synced = sorted(list(local_names & supa_names))
+
+        # --- 4️⃣ Return sync report ---
+        return {
+            "status": "ok",
+            "summary": {
+                "local_count": len(local_names),
+                "supabase_count": len(supa_names),
+                "synced_count": len(synced),
+                "local_only_count": len(local_only),
+                "supabase_only_count": len(supabase_only),
+            },
+            "local_only": local_only,
+            "supabase_only": supabase_only,
+            "synced": synced,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync comparison failed: {e}")
+
+
+
