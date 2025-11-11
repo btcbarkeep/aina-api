@@ -264,6 +264,81 @@ def reverse_building_sync(session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"Reverse sync failed: {e}")
 
 
+## master sync endpoint
+
+@router.post("/sync/full", summary="Fully synchronize buildings between local DB and Supabase")
+def full_building_sync(session: Session = Depends(get_session)):
+    """
+    Perform a full bi-directional sync:
+      1. Compare local and Supabase.
+      2. Push missing local buildings → Supabase.
+      3. Pull missing Supabase buildings → local DB.
+    Returns a combined summary of changes.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        # --- 1️⃣ Fetch all buildings from both sources ---
+        local_buildings = session.exec(select(Building)).all()
+        local_names = {b.name for b in local_buildings}
+
+        supa_result = client.table("buildings").select("*").execute()
+        supa_data = supa_result.data or []
+        supa_names = {row["name"] for row in supa_data}
+
+        # --- 2️⃣ Detect differences ---
+        missing_in_supa = [b for b in local_buildings if b.name not in supa_names]
+        missing_in_local = [row for row in supa_data if row["name"] not in local_names]
+
+        inserted_to_supa, inserted_to_local = [], []
+
+        # --- 3️⃣ Push missing local → Supabase ---
+        for b in missing_in_supa:
+            payload = {
+                "name": b.name,
+                "address": b.address,
+                "city": b.city,
+                "state": b.state,
+                "zip": b.zip,
+                "created_at": b.created_at.isoformat(),
+            }
+            result = client.table("buildings").insert(payload).execute()
+            if result.data:
+                inserted_to_supa.append(b.name)
+
+        # --- 4️⃣ Pull missing Supabase → local DB ---
+        for row in missing_in_local:
+            new_building = Building(
+                name=row.get("name"),
+                address=row.get("address"),
+                city=row.get("city"),
+                state=row.get("state"),
+                zip=row.get("zip"),
+            )
+            session.add(new_building)
+            inserted_to_local.append(row.get("name"))
+
+        session.commit()
+
+        # --- 5️⃣ Return unified summary ---
+        return {
+            "status": "ok",
+            "summary": {
+                "local_total": len(local_buildings),
+                "supa_total": len(supa_data),
+                "inserted_to_supabase": inserted_to_supa,
+                "inserted_to_local": inserted_to_local,
+            },
+            "message": f"Sync complete — {len(inserted_to_supa)} added to Supabase, {len(inserted_to_local)} added to local DB."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Full sync failed: {e}")
+
+
 
 
 ## Local Database Routes
