@@ -22,16 +22,39 @@ listing, and retrieval of registered building information.
 from core.supabase_helpers import fetch_all, insert_record, update_record, delete_record
 
 
-@router.get("/supabase", tags=["Buildings"])
-def list_buildings_supabase(limit: int = 50):
+@router.get("/supabase", summary="List Buildings Supabase")
+def list_buildings_supabase(
+    limit: int = 50,
+    name: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+):
     """
-    Fetch building data directly from Supabase.
-    This is useful for debugging and verifying Supabase sync.
+    Fetch building data directly from Supabase for verification and debugging.
+    Supports optional filters for name, city, and state.
     """
-    result = fetch_all("buildings", limit=limit)
-    if result["status"] != "ok":
-        raise HTTPException(status_code=500, detail=result["detail"])
-    return result["data"]
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        query = client.table("buildings").select("*").limit(limit)
+
+        # Optional filters
+        if name:
+            query = query.ilike("name", f"%{name}%")
+        if city:
+            query = query.ilike("city", f"%{city}%")
+        if state:
+            query = query.ilike("state", f"%{state}%")
+
+        result = query.execute()
+        return result.data or []
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase fetch error: {e}")
+
 
 
 @router.post("/supabase", response_model=BuildingRead, summary="Create Building Supabase")
