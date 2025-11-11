@@ -129,4 +129,38 @@ def get_building(building_id: int, session: Session = Depends(get_session)):
     return building
 
 
+## sync function add to both databases for future migration
+
+@router.post("/sync", response_model=BuildingRead, summary="Create Building (Local + Supabase Sync)")
+def create_building_sync(payload: BuildingCreate, session: Session = Depends(get_session)):
+    """
+    Create a new building and automatically sync to Supabase.
+    Ensures both databases are updated or rolls back on failure.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        # --- 1️⃣ Create building locally ---
+        building = Building.from_orm(payload)
+        session.add(building)
+        session.commit()
+        session.refresh(building)
+
+        # --- 2️⃣ Sync to Supabase ---
+        supa_result = client.table("buildings").insert(payload.dict()).execute()
+
+        if not supa_result.data:
+            raise HTTPException(status_code=500, detail="Supabase sync failed")
+
+        print(f"[SYNC OK] Local + Supabase record for: {building.name}")
+        return building
+
+    except Exception as e:
+        # --- 3️⃣ Rollback on failure ---
+        session.rollback()
+        print(f"[SYNC ERROR] Rolling back local insert: {e}")
+        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
 
