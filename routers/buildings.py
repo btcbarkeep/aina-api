@@ -147,7 +147,7 @@ def compare_building_sync(session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"Sync comparison failed: {e}")
 
 
-## sync auto fix
+## sync fix
 
 @router.post("/sync/fix", summary="Auto-sync missing buildings to Supabase")
 def fix_building_sync(session: Session = Depends(get_session)):
@@ -203,6 +203,66 @@ def fix_building_sync(session: Session = Depends(get_session)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Auto-sync failed: {e}")
+
+
+## reverse sync (from supabase to local)
+
+@router.post("/sync/reverse", summary="Pull missing buildings from Supabase into local DB")
+def reverse_building_sync(session: Session = Depends(get_session)):
+    """
+    Pull any building records that exist in Supabase but not in the local DB.
+    Useful for keeping your local data mirror up to date.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        # --- 1️⃣ Fetch from local DB ---
+        local_buildings = session.exec(select(Building)).all()
+        local_names = {b.name for b in local_buildings}
+
+        # --- 2️⃣ Fetch from Supabase ---
+        supa_result = client.table("buildings").select("*").execute()
+        supa_data = supa_result.data or []
+        supa_names = {row["name"] for row in supa_data}
+
+        # --- 3️⃣ Identify records missing locally ---
+        missing = [row for row in supa_data if row["name"] not in local_names]
+
+        if not missing:
+            return {
+                "status": "ok",
+                "message": "Local DB is already up to date with Supabase.",
+                "added": 0
+            }
+
+        # --- 4️⃣ Insert missing buildings into local DB ---
+        added = []
+        for row in missing:
+            new_building = Building(
+                name=row.get("name"),
+                address=row.get("address"),
+                city=row.get("city"),
+                state=row.get("state"),
+                zip=row.get("zip"),
+            )
+            session.add(new_building)
+            added.append(row.get("name"))
+
+        session.commit()
+
+        # --- 5️⃣ Return summary ---
+        return {
+            "status": "ok",
+            "message": f"Inserted {len(added)} buildings from Supabase into local DB.",
+            "inserted": added
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reverse sync failed: {e}")
+
 
 
 
