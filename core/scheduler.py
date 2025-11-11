@@ -5,44 +5,30 @@ from datetime import datetime
 import time
 import traceback
 
-from core.notifications import send_email, send_webhook_message
-from routers.buildings import full_building_sync
-from database import get_session
-
+from core.notifications import send_email
 
 def scheduled_full_sync():
-    """
-    Daily scheduled sync job.
-    Pulls data from local + Supabase and syncs both directions.
-    Sends a summary notification after each run.
-    """
-    print(f"[SYNC JOB] Running scheduled sync at {datetime.utcnow().isoformat()}")
+    from routers.sync import run_full_sync  # local import to avoid circular deps
     try:
-        # Open session
-        with next(get_session()) as session:
-            result = full_building_sync(session=session)
+        summary = run_full_sync()
+        print("✅ Sync completed successfully:", summary)
 
-        # Create readable summary
-        summary = (
-            f"✅ **Aina Protocol Daily Sync Completed**\n\n"
-            f"**Local Total:** {result['summary']['local_total']}\n"
-            f"**Supabase Total:** {result['summary']['supa_total']}\n"
-            f"**Added → Supabase:** {len(result['summary']['inserted_to_supabase'])}\n"
-            f"**Added → Local:** {len(result['summary']['inserted_to_local'])}\n"
-            f"\n🕒 Timestamp: {datetime.utcnow().isoformat()} UTC"
-        )
+        # Send email summary
+        subject = "Aina Protocol – Daily Sync Summary"
+        body = f"""
+        ✅ Sync Completed Successfully!
 
-        print("[SYNC JOB] ✅ Sync successful. Sending notifications...")
-        send_webhook_message(summary)
-        send_email("Aina Protocol Sync ✅", summary)
+        Local Records Updated: {summary.get('local_updated', 0)}
+        Supabase Records Updated: {summary.get('supabase_updated', 0)}
+        New Records: {summary.get('new_records', 0)}
+        Errors: {summary.get('errors', 0)}
+        """
+        send_email(subject, body)
 
     except Exception as e:
-        print("[SYNC JOB] ❌ Sync failed:", e)
-        traceback.print_exc()
+        print("❌ Sync failed:", e)
+        send_email("❌ Aina Protocol Sync Failed", str(e))
 
-        error_summary = f"❌ Aina Protocol Sync Failed:\n\n{e}"
-        send_webhook_message(error_summary)
-        send_email("Aina Protocol Sync ❌ FAILED", error_summary)
 
 
 def start_scheduler():
