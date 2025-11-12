@@ -3,12 +3,12 @@ from sqlmodel import Session, select
 from database import get_session
 from core.supabase_client import get_supabase_client
 from models import Building, BuildingCreate, BuildingRead
-from typing import Optional
-import traceback
 from dependencies.auth import get_current_user
-
+from typing import List, Optional
+import traceback
 
 router = APIRouter(prefix="/api/v1/buildings", tags=["Buildings"])
+
 
 """
 Building endpoints manage property data for AOAOs and complexes, including creation,
