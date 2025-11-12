@@ -67,7 +67,7 @@ def create_building_supabase(payload: BuildingCreate):
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     try:
-        result = client.table("buildings").insert(payload.dict()).execute()
+        result = client.table("buildings").upsert(payload, on_conflict="id").execute()
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
 
