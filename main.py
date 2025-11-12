@@ -6,6 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.scheduler import start_scheduler
+
+
 # Local imports
 from core.config import settings
 from core.logging_config import logger
@@ -49,6 +52,9 @@ def create_app() -> FastAPI:
                 methods = ",".join(route.methods or [])
                 print(f"➡️  {methods:10s} {route.path}")
         print("\n✅ Route log complete.\n")
+
+        start_scheduler()
+
 
     # -------------------------------------------------
     # Centralized error logging
