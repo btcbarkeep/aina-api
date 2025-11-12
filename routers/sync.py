@@ -1,7 +1,7 @@
 # routers/sync.py
 from fastapi import APIRouter, Depends, HTTPException
 from dependencies.auth import get_current_user, CurrentUser
-from core.scheduler import scheduled_full_sync
+
 
 router = APIRouter(
     prefix="/sync",
