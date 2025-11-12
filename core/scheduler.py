@@ -8,17 +8,25 @@ import asyncio
 
 from core.notifications import send_email
 
+
+async def perform_sync_logic():
+    """
+    Centralized sync logic. This is called by both the scheduler and the API endpoint.
+    """
+    from routers.sync import trigger_full_sync  # lazy import to prevent circular dependency
+    print("[SCHEDULER] Running sync logic via perform_sync_logic()")
+    result = await trigger_full_sync()  # trigger_full_sync handles actual syncing
+    return result
+
+
 def run_scheduled_sync():
     """Runs the sync and emails the results."""
     start_time = datetime.utcnow()
     try:
         print("[SCHEDULER] Starting full sync...")
 
-        # ✅ Lazy import to avoid circular dependency
-        from routers import sync  
-
         # Run the async sync function properly
-        result = asyncio.run(sync.run_sync())
+        result = asyncio.run(perform_sync_logic())
 
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
@@ -49,6 +57,7 @@ def run_scheduled_sync():
             body=f"Error: {e}\n\nTraceback:\n{traceback.format_exc()}",
         )
 
+
 def start_scheduler():
     """
     Initialize the APScheduler background process.
@@ -58,7 +67,7 @@ def start_scheduler():
 
     # Schedule job daily at 03:00 UTC (midnight HST = 13:00 UTC)
     scheduler.add_job(
-        run_scheduled_sync,  # ✅ corrected function name
+        run_scheduled_sync,
         trigger=CronTrigger(hour=3, minute=0),
         id="daily_sync_job",
         replace_existing=True,
@@ -66,6 +75,7 @@ def start_scheduler():
 
     scheduler.start()
     print("⏰ Scheduler started. Daily sync set for 03:00 UTC.")
+
 
 if __name__ == "__main__":
     # Manual run mode (for testing)
