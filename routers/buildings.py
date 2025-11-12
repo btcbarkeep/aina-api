@@ -264,25 +264,12 @@ def reverse_building_sync(session: Session = Depends(get_session)):
 
 # master sync endpoint
 
-@router.post("/sync/full", summary="Fully synchronize buildings between local DB and Supabase")
-async def full_building_sync(session: Session = Depends(get_session)):
-
+def run_full_building_sync(session: Session):
     """
-    Perform a full bi-directional sync:
-      1. Compare local and Supabase.
-      2. Push missing local buildings → Supabase.
-      3. Pull missing Supabase buildings → local DB.
-    Returns a combined summary of changes.
+    Internal helper for performing full sync.
+    Can be safely called by scheduler or API route.
     """
-
-    # ✅ Create session manually if not injected (scheduler calls)
-    if session is None:
-        try:
-            session_gen = get_session()
-            session = next(session_gen)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
-
+    from core.supabase_client import get_supabase_client
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
@@ -331,17 +318,14 @@ async def full_building_sync(session: Session = Depends(get_session)):
         session.commit()
 
         # --- 5️⃣ Return unified summary ---
-        summary = {
-            "local_total": len(local_buildings),
-            "supa_total": len(supa_data),
-            "inserted_to_supabase": inserted_to_supa,
-            "inserted_to_local": inserted_to_local,
-        }
-
-        print("[BUILDING SYNC] ✅ Sync complete.")
         return {
             "status": "ok",
-            "summary": summary,
+            "summary": {
+                "local_total": len(local_buildings),
+                "supa_total": len(supa_data),
+                "inserted_to_supabase": inserted_to_supa,
+                "inserted_to_local": inserted_to_local,
+            },
             "message": f"Sync complete — {len(inserted_to_supa)} added to Supabase, {len(inserted_to_local)} added to local DB."
         }
 
@@ -349,13 +333,15 @@ async def full_building_sync(session: Session = Depends(get_session)):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Full sync failed: {e}")
 
-    finally:
-        # ✅ Clean up session when manually created
-        if session is not None:
-            try:
-                session.close()
-            except Exception:
-                pass
+
+
+@router.post("/sync/full", summary="Fully synchronize buildings between local DB and Supabase")
+async def full_building_sync(session: Session = Depends(get_session)):
+    """
+    API route version of the full sync.
+    Simply wraps the internal sync logic for Swagger/manual calls.
+    """
+    return run_full_building_sync(session)
 
 
 
