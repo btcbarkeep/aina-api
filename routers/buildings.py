@@ -5,6 +5,8 @@ from core.supabase_client import get_supabase_client
 from models import Building, BuildingCreate, BuildingRead
 from typing import Optional
 import traceback
+from dependencies.auth import get_current_user
+
 
 router = APIRouter(prefix="/api/v1/buildings", tags=["Buildings"])
 
