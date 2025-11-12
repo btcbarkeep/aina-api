@@ -11,22 +11,33 @@ from core.notifications import send_email
 
 async def perform_sync_logic():
     """
-    Centralized sync logic. This is called by both the scheduler and the API endpoint.
+    Centralized sync logic. Called by both the scheduler and /sync/run endpoint.
     """
-    from routers.sync import trigger_full_sync  # lazy import to prevent circular dependency
+    from routers.sync import trigger_full_sync  # lazy import to prevent circular import
     print("[SCHEDULER] Running sync logic via perform_sync_logic()")
-    result = await trigger_full_sync()  # trigger_full_sync handles actual syncing
+    result = await trigger_full_sync()
     return result
 
 
 def run_scheduled_sync():
-    """Runs the sync and emails the results."""
+    """Runs the sync and emails the results (safe for async contexts)."""
     start_time = datetime.utcnow()
     try:
         print("[SCHEDULER] Starting full sync...")
 
-        # Run the async sync function properly
-        result = asyncio.run(perform_sync_logic())
+        # Get current event loop if running, otherwise create a new one
+        try:
+            loop = asyncio.get_running_loop()
+            print("[SCHEDULER] Using existing asyncio loop...")
+            result = loop.create_task(perform_sync_logic())
+        except RuntimeError:
+            print("[SCHEDULER] Creating new asyncio loop...")
+            result = asyncio.run(perform_sync_logic())
+
+        # If a task object is returned (running inside FastAPI loop), wait for completion
+        if asyncio.isfuture(result) or isinstance(result, asyncio.Task):
+            loop = asyncio.get_event_loop()
+            result = loop.run_until_complete(result)
 
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
@@ -65,7 +76,6 @@ def start_scheduler():
     """
     scheduler = BackgroundScheduler(timezone="UTC")
 
-    # Schedule job daily at 03:00 UTC (midnight HST = 13:00 UTC)
     scheduler.add_job(
         run_scheduled_sync,
         trigger=CronTrigger(hour=3, minute=0),
@@ -78,11 +88,10 @@ def start_scheduler():
 
 
 if __name__ == "__main__":
-    # Manual run mode (for testing)
+    # Manual run mode (for local testing)
     print("🧪 Running scheduler manually...")
     start_scheduler()
 
-    # Keep process alive for testing local runs
     try:
         while True:
             time.sleep(60)
