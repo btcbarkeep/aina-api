@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from jose import JWTError
 from datetime import datetime
 
-from core.auth import get_current_user  # if you already use this
+from dependencies.auth import get_current_user
 from core.notifications import send_email
 from core.scheduler import run_scheduled_sync  # ✅ FIXED IMPORT
 
