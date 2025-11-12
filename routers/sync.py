@@ -18,7 +18,7 @@ async def run_sync(current_user: CurrentUser = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin access required.")
 
     try:
-        summary = scheduled_full_sync()
+        summary = run_scheduled_sync()
         return {
             "status": "success",
             "message": "Manual sync completed successfully.",
