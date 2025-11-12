@@ -29,17 +29,20 @@ def run_scheduled_sync():
         # ✅ Build formatted summary text
         summary_data = result.get("summary", {})
         summary_text = (
-            f"🗓️ **Sync Summary**\n"
-            f"- Start Time (UTC): {start_time}\n"
-            f"- End Time (UTC): {end_time}\n"
-            f"- Duration: {duration:.2f} seconds\n\n"
-            f"📊 **Details:**\n"
-            f"Local total: {summary_data.get('local_total', 'N/A')}\n"
-            f"Supabase total: {summary_data.get('supa_total', 'N/A')}\n"
-            f"Inserted to Supabase: {len(summary_data.get('inserted_to_supabase', []))}\n"
-            f"Inserted to Local: {len(summary_data.get('inserted_to_local', []))}\n\n"
-            f"💬 **Message:**\n{result.get('message', 'No message returned')}\n"
+            f"📋 **Aina Protocol Sync Report**\n\n"
+            f"🕒 **Summary**\n"
+            f"• Start: {start_time}\n"
+            f"• End: {end_time}\n"
+            f"• Duration: {duration:.2f} seconds\n\n"
+            f"📊 **Details**\n"
+            f"• Local Buildings: {summary_data.get('local_total', 'N/A')}\n"
+            f"• Supabase Buildings: {summary_data.get('supa_total', 'N/A')}\n"
+            f"• Added → Supabase: {len(summary_data.get('inserted_to_supabase', []))}\n"
+            f"• Added → Local: {len(summary_data.get('inserted_to_local', []))}\n\n"
+            f"💬 **Message**\n"
+            f"{result.get('message', 'No message returned')}\n"
         )
+
 
         send_email(
             subject="[Aina Protocol] Daily Sync Completed ✅",
