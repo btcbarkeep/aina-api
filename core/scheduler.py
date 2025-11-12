@@ -30,32 +30,39 @@ def run_scheduled_sync():
     is_sync_running = True
     start_time = datetime.utcnow()
 
-    async def _inner():
-        try:
-            print("[SCHEDULER] Starting full sync...")
+    # core/scheduler.py  (update _inner function)
+async def _inner():
+    try:
+        print("[SCHEDULER] Starting full sync...")
 
-            result = await perform_sync_logic()
+        result = await perform_sync_logic()
 
-            end_time = datetime.utcnow()
-            duration = (end_time - start_time).total_seconds()
+        # 🧩 Handle both FastAPI JSONResponse and dict outputs
+        if hasattr(result, "body"):
+            import json
+            result = json.loads(result.body.decode())
 
-            summary_text = (
-                f"🗓️ **Sync Summary**\n"
-                f"- Start Time (UTC): {start_time}\n"
-                f"- End Time (UTC): {end_time}\n"
-                f"- Duration: {duration:.2f} seconds\n\n"
-                f"📊 **Details:**\n"
-                f"{result.get('summary', 'No summary provided')}\n\n"
-                f"💬 **Message:**\n"
-                f"{result.get('message', 'No message returned')}\n"
-            )
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
 
-            send_email(
-                subject="[Aina Protocol] Daily Sync Completed ✅",
-                body=f"✅ Sync completed successfully.\n\n{summary_text}",
-            )
+        summary_text = (
+            f"🗓️ **Sync Summary**\n"
+            f"- Start Time (UTC): {start_time}\n"
+            f"- End Time (UTC): {end_time}\n"
+            f"- Duration: {duration:.2f} seconds\n\n"
+            f"📊 **Details:**\n"
+            f"{result.get('summary', 'No summary provided')}\n\n"
+            f"💬 **Message:**\n"
+            f"{result.get('message', 'No message returned')}\n"
+        )
 
-            print("[SCHEDULER] ✅ Sync completed successfully and email sent.")
+        send_email(
+            subject="[Aina Protocol] Daily Sync Completed ✅",
+            body=f"✅ Sync completed successfully.\n\n{summary_text}",
+        )
+
+        print("[SCHEDULER] ✅ Sync completed successfully and email sent.")
+
 
         except Exception as e:
             print("[SCHEDULER] ❌ Sync failed:", e)
