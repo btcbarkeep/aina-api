@@ -26,22 +26,43 @@ def run_scheduled_sync():
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
 
-        # ✅ Build formatted summary text
+        # ✅ Build HTML-formatted summary text
         summary_data = result.get("summary", {})
-        summary_text = (
-            f"📋 **Aina Protocol Sync Report**\n\n"
-            f"🕒 **Summary**\n"
-            f"• Start: {start_time}\n"
-            f"• End: {end_time}\n"
-            f"• Duration: {duration:.2f} seconds\n\n"
-            f"📊 **Details**\n"
-            f"• Local Buildings: {summary_data.get('local_total', 'N/A')}\n"
-            f"• Supabase Buildings: {summary_data.get('supa_total', 'N/A')}\n"
-            f"• Added → Supabase: {len(summary_data.get('inserted_to_supabase', []))}\n"
-            f"• Added → Local: {len(summary_data.get('inserted_to_local', []))}\n\n"
-            f"💬 **Message**\n"
-            f"{result.get('message', 'No message returned')}\n"
-        )
+        summary_html = f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; color: #222; background-color: #f8f9fa; padding: 16px;">
+            <div style="max-width: 600px; margin: auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.1);">
+              <h2 style="color: #2b7a78;">📋 Aina Protocol Sync Report</h2>
+              <hr style="border: none; border-top: 1px solid #ddd;" />
+      
+              <h3 style="color: #17252a;">🕒 Summary</h3>
+              <ul style="line-height: 1.6;">
+                <li><b>Start (UTC):</b> {start_time}</li>
+                <li><b>End (UTC):</b> {end_time}</li>
+                <li><b>Duration:</b> {duration:.2f} seconds</li>
+              </ul>
+
+              <h3 style="color: #17252a;">📊 Details</h3>
+              <table style="border-collapse: collapse; width: 100%; font-size: 14px;">
+                <tr><td style="padding: 6px;">🏠 Local Buildings:</td><td style="padding: 6px;"><b>{summary_data.get('local_total', 'N/A')}</b></td></tr>
+                <tr><td style="padding: 6px;">☁️ Supabase Buildings:</td><td style="padding: 6px;"><b>{summary_data.get('supa_total', 'N/A')}</b></td></tr>
+                <tr><td style="padding: 6px;">➡️ Added to Supabase:</td><td style="padding: 6px;"><b>{len(summary_data.get('inserted_to_supabase', []))}</b></td></tr>
+                <tr><td style="padding: 6px;">⬅️ Added to Local DB:</td><td style="padding: 6px;"><b>{len(summary_data.get('inserted_to_local', []))}</b></td></tr>
+              </table>
+
+              <h3 style="color: #17252a; margin-top: 20px;">💬 Message</h3>
+              <p style="background-color: #eef; padding: 12px; border-radius: 6px;">
+                {result.get('message', 'No message returned')}
+              </p>
+
+              <hr style="border: none; border-top: 1px solid #ddd;" />
+              <p style="font-size: 12px; color: #666; text-align: center;">
+                Sent automatically by Aina Protocol Sync Scheduler 🕊️
+              </p>
+            </div>
+          </body>
+        </html>
+
 
 
         send_email(
