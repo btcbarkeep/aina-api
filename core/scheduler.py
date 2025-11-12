@@ -9,7 +9,7 @@ import asyncio
 from core.notifications import send_email
 
 
-async def perform_sync_logic():
+async def perform_sync_  logic():
     """
     Centralized sync logic. Called by both the scheduler and /sync/run endpoint.
     """
