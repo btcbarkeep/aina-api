@@ -10,7 +10,7 @@ from core.notifications import send_email
 def scheduled_full_sync():
     from routers.sync import run_sync  # local import to avoid circular deps
     try:
-        summary = run_full_sync()
+        summary = run_sync()
         print("✅ Sync completed successfully:", summary)
 
         # Send email summary
