@@ -7,27 +7,36 @@ import traceback
 
 from core.notifications import send_email
 
-def scheduled_full_sync():
-    from routers.sync import run_sync  # local import to avoid circular deps
+import asyncio
+from routers.sync import run_sync
+
+def run_scheduled_sync():
+    """Runs the sync and emails the results."""
     try:
-        summary = run_sync()
-        print("✅ Sync completed successfully:", summary)
+        print("[SCHEDULER] Starting full sync...")
+        
+        # ✅ Run the async sync function properly
+        summary = asyncio.run(run_sync())
 
-        # Send email summary
-        subject = "Aina Protocol – Daily Sync Summary"
-        body = f"""
-        ✅ Sync Completed Successfully!
+        message = (
+            f"✅ Sync completed successfully.\n"
+            f"Message: {summary.get('message', 'No message')}\n"
+            f"Summary: {summary.get('summary', 'No summary')}"
+        )
 
-        Local Records Updated: {summary.get('local_updated', 0)}
-        Supabase Records Updated: {summary.get('supabase_updated', 0)}
-        New Records: {summary.get('new_records', 0)}
-        Errors: {summary.get('errors', 0)}
-        """
-        send_email(subject, body)
+        send_email(
+            subject="[Aina Protocol] Daily Sync Completed ✅",
+            body=message,
+        )
+
+        print("[SCHEDULER] Sync email sent successfully.")
 
     except Exception as e:
-        print("❌ Sync failed:", e)
-        send_email("❌ Aina Protocol Sync Failed", str(e))
+        print("[SCHEDULER] Sync failed:", e)
+        send_email(
+            subject="[Aina Protocol] Sync Failed ❌",
+            body=f"Error: {e}",
+        )
 
 
 
