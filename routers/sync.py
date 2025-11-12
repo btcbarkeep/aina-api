@@ -7,6 +7,7 @@ import traceback
 
 from dependencies.auth import get_current_user
 from core.notifications import send_email
+from database import get_session  # ✅ add this
 
 router = APIRouter(
     prefix="/api/v1/sync",
@@ -22,13 +23,15 @@ async def perform_sync_logic():
     try:
         print("[SYNC] Running full sync logic...")
 
-        # ✅ Import here to avoid circular import
-        from routers.buildings import full_building_sync  
+        from routers.buildings import run_full_building_sync  # ✅ use the non-async version
 
-        # Example sync process
-        summary = await full_building_sync()
+        # ✅ Create a real session (not Depends)
+        session_gen = get_session()
+        session = next(session_gen)
 
-        print("[SYNC] Sync completed successfully.")
+        summary = run_full_building_sync(session)
+
+        print("[SYNC] ✅ Sync completed successfully.")
 
         return {
             "status": "success",
@@ -37,12 +40,19 @@ async def perform_sync_logic():
         }
 
     except Exception as e:
-        print("[SYNC] Sync failed:", e)
+        print("[SYNC] ❌ Sync failed:", e)
         return {
             "status": "error",
-            "message": str(e),
+            "message": f"500: {str(e)}",
             "summary": traceback.format_exc(),
         }
+
+    finally:
+        # ✅ Always close the session
+        try:
+            session.close()
+        except Exception:
+            pass
 
 
 @router.post("/run")
@@ -54,10 +64,9 @@ async def trigger_full_sync(current_user: dict = Depends(get_current_user)):
     try:
         print("[SYNC] Manual sync triggered at", datetime.utcnow())
 
-        # Run the main logic directly
         result = await perform_sync_logic()
 
-        # Send email notification
+        # ✅ Email summary
         if result["status"] == "success":
             send_email(
                 subject="[Aina Protocol] Manual Sync Completed ✅",
