@@ -263,7 +263,8 @@ def reverse_building_sync(session: Session = Depends(get_session)):
 # master sync endpoint
 
 @router.post("/sync/full", summary="Fully synchronize buildings between local DB and Supabase")
-async def full_building_sync(session: Optional[Session] = None):
+async def full_building_sync(session: Session = Depends(get_session)):
+
     """
     Perform a full bi-directional sync:
       1. Compare local and Supabase.
