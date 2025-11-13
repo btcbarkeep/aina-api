@@ -70,7 +70,7 @@ def create_building_supabase(payload: BuildingCreate):
         # ✅ Convert to plain dict for Supabase
         data = payload.dict()
 
-        result = client.table("buildings").upsert(data, on_conflict="id").execute()
+        result = client.table("buildings").upsert(data, on_conflict="name").execute()
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
 
