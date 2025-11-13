@@ -67,7 +67,7 @@ def run_scheduled_sync():
 
         send_email(
             subject="[Aina Protocol] Daily Sync Completed ✅",
-            body=f"✅ Sync completed successfully.\n\n{summary_text}",
+            body=f"✅ Sync completed successfully.\n\n{summary_html}",
         )
 
         print("[SCHEDULER] ✅ Sync completed successfully and email sent.")
