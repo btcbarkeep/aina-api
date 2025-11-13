@@ -6,6 +6,7 @@ import time
 import traceback
 
 from core.notifications import send_email
+from core.utils.sync_formatter import format_sync_summary  # ✅ NEW IMPORT
 from database import get_session
 from routers.buildings import run_full_building_sync
 from routers.events import run_full_event_sync
@@ -23,65 +24,44 @@ def run_scheduled_sync():
         session = next(session_gen)
 
         # -------------------------------------------------
-        # 1️⃣ Run Buildings Sync
+        # Run each sync module
         # -------------------------------------------------
         building_result = run_full_building_sync(session)
-        building_summary = building_result.get("summary", {})
-
-        # -------------------------------------------------
-        # 2️⃣ Run Events Sync
-        # -------------------------------------------------
         event_result = run_full_event_sync(session)
-        event_summary = event_result.get("summary", {})
-
-        # -------------------------------------------------
-        # 3️⃣ Run Documents Sync
-        # -------------------------------------------------
         document_result = run_full_document_sync(session)
-        document_summary = document_result.get("summary", {})
 
         # -------------------------------------------------
-        # 4️⃣ Build Unified Summary Report
+        # Build summary dictionary
+        # -------------------------------------------------
+        summary = {
+            "buildings": building_result.get("summary", {}),
+            "events": event_result.get("summary", {}),
+            "documents": document_result.get("summary", {}),
+        }
+
+        # -------------------------------------------------
+        # Build unified report using shared formatter
         # -------------------------------------------------
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
 
-        summary_text = (
-            f"📋 **Aina Protocol Daily Sync Report**\n\n"
-            f"🕒 **Summary**\n"
-            f"• Start: {start_time}\n"
-            f"• End: {end_time}\n"
-            f"• Duration: {duration:.2f} seconds\n\n"
-            f"🏢 **Buildings Sync**\n"
-            f"• Local: {building_summary.get('local_total', 'N/A')}\n"
-            f"• Supabase: {building_summary.get('supa_total', 'N/A')}\n"
-            f"• Added → Supabase: {len(building_summary.get('inserted_to_supabase', []))}\n"
-            f"• Added → Local: {len(building_summary.get('inserted_to_local', []))}\n\n"
-            f"📅 **Events Sync**\n"
-            f"• Local: {event_summary.get('local_total', 'N/A')}\n"
-            f"• Supabase: {event_summary.get('supa_total', 'N/A')}\n"
-            f"• Added → Supabase: {len(event_summary.get('inserted_to_supabase', []))}\n"
-            f"• Added → Local: {len(event_summary.get('inserted_to_local', []))}\n\n"
-            f"📄 **Documents Sync**\n"
-            f"• Local: {document_summary.get('local_total', 'N/A')}\n"
-            f"• Supabase: {document_summary.get('supa_total', 'N/A')}\n"
-            f"• Added → Supabase: {len(document_summary.get('inserted_to_supabase', []))}\n"
-            f"• Added → Local: {len(document_summary.get('inserted_to_local', []))}\n\n"
-            f"💬 **Messages**\n"
-            f"• Buildings: {building_result.get('message', 'No message returned')}\n"
-            f"• Events: {event_result.get('message', 'No message returned')}\n"
-            f"• Documents: {document_result.get('message', 'No message returned')}\n"
+        formatted_summary = format_sync_summary(
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            duration=duration,
+            title="Daily Sync"
         )
 
         # -------------------------------------------------
-        # 5️⃣ Send Report Email
+        # Send Report Email
         # -------------------------------------------------
         send_email(
             subject="[Aina Protocol] Daily Sync Completed ✅",
-            body=f"✅ Daily sync completed successfully.\n\n{summary_text}",
+            body=f"✅ Daily sync completed successfully.\n\n{formatted_summary}",
         )
 
-        print("[SCHEDULER] ✅ Full sync completed successfully and email sent.")
+        print("[SCHEDULER] ✅ Daily sync completed successfully and email sent.")
 
     except Exception as e:
         print("[SCHEDULER] ❌ Sync failed:", e)
