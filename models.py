@@ -7,6 +7,10 @@ from sqlmodel import SQLModel, Field
 # =====================================================
 # 🏢 BUILDING MODELS
 # =====================================================
+from sqlmodel import SQLModel, Field, UniqueConstraint
+from datetime import datetime
+from typing import Optional
+
 class BuildingBase(SQLModel):
     """Shared building fields used across models."""
     name: str = Field(index=True)
@@ -18,19 +22,11 @@ class BuildingBase(SQLModel):
 
 class Building(BuildingBase, table=True):
     """Database table model for buildings."""
+    __tablename__ = "buildings"
+    __table_args__ = (UniqueConstraint("name", name="uq_building_name"),)  # ✅ Prevent duplicate names
+
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
-
-
-class BuildingCreate(BuildingBase):
-    """Fields allowed when creating a building."""
-    pass
-
-
-class BuildingRead(BuildingBase):
-    """Fields returned when reading a building."""
-    id: int
-    created_at: datetime
 
 
 # =====================================================
