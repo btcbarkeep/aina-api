@@ -7,6 +7,7 @@ import traceback
 
 from dependencies.auth import get_current_user
 from core.notifications import send_email
+from core.utils.sync_formatter import format_sync_summary  # ✅ NEW IMPORT
 from database import get_session
 
 router = APIRouter(
@@ -21,7 +22,7 @@ async def perform_sync_logic():
     Returns unified summary used by both scheduler and manual trigger.
     """
     try:
-        print("[SYNC] Running full sync logic (buildings + events + documents)...")
+        print("[SYNC] Running full sync logic (Buildings + Events + Documents)...")
 
         from routers.buildings import run_full_building_sync
         from routers.events import run_full_event_sync
@@ -82,33 +83,12 @@ async def trigger_full_sync(current_user: dict = Depends(get_current_user)):
         if result["status"] == "success":
             summary = result.get("summary", {})
 
-            building_summary = summary.get("buildings", {})
-            event_summary = summary.get("events", {})
-            document_summary = summary.get("documents", {})
-
-            formatted_summary = (
-                f"📋 **Aina Protocol Manual Sync Report**\n\n"
-                f"🕒 **Summary**\n"
-                f"• Start: {start_time}\n"
-                f"• End: {end_time}\n"
-                f"• Duration: {duration:.2f} seconds\n\n"
-                f"🏢 **Buildings Sync**\n"
-                f"• Local: {building_summary.get('local_total', 'N/A')}\n"
-                f"• Supabase: {building_summary.get('supa_total', 'N/A')}\n"
-                f"• Added → Supabase: {len(building_summary.get('inserted_to_supabase', []))}\n"
-                f"• Added → Local: {len(building_summary.get('inserted_to_local', []))}\n\n"
-                f"📅 **Events Sync**\n"
-                f"• Local: {event_summary.get('local_total', 'N/A')}\n"
-                f"• Supabase: {event_summary.get('supa_total', 'N/A')}\n"
-                f"• Added → Supabase: {len(event_summary.get('inserted_to_supabase', []))}\n"
-                f"• Added → Local: {len(event_summary.get('inserted_to_local', []))}\n\n"
-                f"📄 **Documents Sync**\n"
-                f"• Local: {document_summary.get('local_total', 'N/A')}\n"
-                f"• Supabase: {document_summary.get('supa_total', 'N/A')}\n"
-                f"• Added → Supabase: {len(document_summary.get('inserted_to_supabase', []))}\n"
-                f"• Added → Local: {len(document_summary.get('inserted_to_local', []))}\n\n"
-                f"💬 **Message**\n"
-                f"{result.get('message', 'Sync completed successfully.')}\n"
+            formatted_summary = format_sync_summary(
+                summary=summary,
+                start_time=start_time,
+                end_time=end_time,
+                duration=duration,
+                title="Manual Sync"
             )
 
             send_email(
