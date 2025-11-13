@@ -8,6 +8,9 @@ from database import get_session
 from dependencies.auth import get_current_user
 from models import Document, DocumentCreate, DocumentRead
 from core.supabase_client import get_supabase_client
+from core.auth_helpers import verify_user_building_access
+from models import Event  # needed to check which building the document’s event belongs to
+
 
 router = APIRouter(
     prefix="/api/v1/documents",
@@ -37,12 +40,23 @@ def list_documents_supabase(limit: int = 50):
         raise HTTPException(status_code=500, detail=f"Supabase fetch error: {e}")
 
 
-@router.post("/supabase", response_model=DocumentRead, summary="Create Document (Supabase)")
-def create_document_supabase(payload: DocumentCreate):
-    """Insert a new document record into Supabase."""
+@router.post("/supabase", response_model=DocumentRead, summary="Create Document (Supabase + Permissions)")
+def create_document_supabase(
+    payload: DocumentCreate,
+    session: Session = Depends(get_session),
+    current_user: str = Depends(get_current_user),
+):
+    """Insert a new document record into Supabase with building access enforcement."""
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    # ✅ Verify the event and its building
+    event = session.get(Event, payload.event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Associated event not found")
+
+    verify_user_building_access(session, current_user, event.building_id)
 
     try:
         result = client.table("documents").upsert(payload.dict(), on_conflict="id").execute()
@@ -51,6 +65,36 @@ def create_document_supabase(payload: DocumentCreate):
         return result.data[0]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
+
+
+# =====================================================
+# 🧱 LOCAL DOCUMENT CREATION (Protected + Permission Aware)
+# =====================================================
+@router.post("/", response_model=DocumentRead, summary="Attach Document (Local DB + Permissions)")
+def attach_document(
+    payload: DocumentCreate,
+    session: Session = Depends(get_session),
+    current_user: str = Depends(get_current_user),
+):
+    """
+    Upload or attach a new AOAO document (protected).
+    Enforces event + building-level permission using the event’s building_id.
+    """
+    # ✅ 1. Ensure event exists
+    event = session.get(Event, payload.event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Associated event not found")
+
+    # ✅ 2. Enforce permission check
+    verify_user_building_access(session, current_user, event.building_id)
+
+    # ✅ 3. Create document record
+    document = Document.from_orm(payload)
+    session.add(document)
+    session.commit()
+    session.refresh(document)
+    return document
+
 
 
 # =====================================================
