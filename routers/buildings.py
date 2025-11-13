@@ -55,11 +55,11 @@ def list_buildings_supabase(
 
 
 
-@router.post("/supabase", response_model=BuildingRead, summary="Create Building Supabase")
+@router.post("/supabase", response_model=BuildingRead, summary="Create or Upsert Building in Supabase")
 def create_building_supabase(payload: BuildingCreate):
     """
-    Insert a new building record directly into Supabase.
-    Uses the same BuildingCreate schema for consistent input.
+    Insert or update a building record directly into Supabase.
+    Prevents duplicates and provides clear feedback.
     """
     from core.supabase_client import get_supabase_client
     client = get_supabase_client()
@@ -67,17 +67,34 @@ def create_building_supabase(payload: BuildingCreate):
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     try:
-        # ✅ Convert to plain dict for Supabase
         data = payload.dict()
 
+        # ✅ Use upsert on "name" to prevent duplicates
         result = client.table("buildings").upsert(data, on_conflict="name").execute()
-        if not result.data:
-            raise HTTPException(status_code=500, detail="Insert failed")
 
-        return result.data[0]
+        if not result.data:
+            return {
+                "status": "warning",
+                "message": f"Building '{payload.name}' already exists or no changes detected.",
+            }
+
+        inserted = result.data[0]
+        print(f"[SUPABASE] ✅ Building synced: {inserted['name']} (ID: {inserted.get('id', 'unknown')})")
+
+        return inserted
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
+        error_msg = str(e)
+        print(f"[SUPABASE] ❌ Error upserting building: {error_msg}")
+
+        if "duplicate key value" in error_msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Building '{payload.name}' already exists in Supabase."
+            )
+
+        raise HTTPException(status_code=500, detail=f"Supabase upsert error: {error_msg}")
+
 
 
 @router.put("/supabase/{building_id}", tags=["Buildings"])
