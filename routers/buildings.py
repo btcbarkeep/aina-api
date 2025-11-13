@@ -354,12 +354,23 @@ async def full_building_sync(session: Session = Depends(get_session)):
 
 @router.post("/", response_model=BuildingRead, dependencies=[Depends(get_current_user)])
 def create_building(payload: BuildingCreate, session: Session = Depends(get_session)):
-    """Create a new building (protected)."""
+    """Create a new building (protected). Prevents duplicates by name."""
+    # ✅ Check if a building with the same name already exists
+    existing = session.exec(
+        select(Building).where(Building.name == payload.name)
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Building '{payload.name}' already exists."
+        )
+
     building = Building.from_orm(payload)
     session.add(building)
     session.commit()
     session.refresh(building)
     return building
+
 
 @router.put("/{building_id}", response_model=BuildingRead, summary="Update Building (Local DB)")
 def update_building_local(building_id: int, payload: dict, session: Session = Depends(get_session)):
