@@ -97,6 +97,17 @@ class DocumentRead(DocumentBase):
 
 
 # =====================================================
+# 👤 USER ACCESS MODEL
+# =====================================================
+class UserBuildingAccess(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    building_id: int = Field(foreign_key="building.id", index=True)
+    role: str = Field(default="hoa", description="hoa, manager, contractor")
+
+
+
+# =====================================================
 # 🔐 AUTH MODELS
 # =====================================================
 class LoginRequest(SQLModel):
