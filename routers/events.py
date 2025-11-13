@@ -6,6 +6,7 @@ from core.supabase_client import get_supabase_client
 from models import Event
 from dependencies.auth import get_current_user
 from typing import List
+from core.auth_helpers import verify_user_building_access
 import traceback
 
 router = APIRouter(prefix="/api/v1/events", tags=["Events"])
@@ -36,19 +37,32 @@ def list_events_supabase(limit: int = 50):
 
 
 @router.post("/supabase", summary="Create Event in Supabase")
-def create_event_supabase(payload: dict):
+def create_event_supabase(
+    payload: dict,
+    session: Session = Depends(get_session),
+    current_user: str = Depends(get_current_user),
+):
     """
     Insert a new event record directly into Supabase.
+    Enforces building-level access before writing.
     """
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    # ✅ Enforce building permissions before insert
+    building_id = payload.get("building_id")
+    if building_id is None:
+        raise HTTPException(status_code=400, detail="Missing building_id in payload")
+
+    verify_user_building_access(session, current_user, building_id)
 
     try:
         result = client.table("events").insert(payload).execute()
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
         return result.data[0]
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
 
@@ -183,13 +197,22 @@ async def full_event_sync(session: Session = Depends(get_session)):
 # LOCAL EVENT CRUD
 # -----------------------------------------------------
 
-@router.post("/", response_model=Event, dependencies=[Depends(get_current_user)])
-def create_event(payload: Event, session: Session = Depends(get_session)):
-    """Create a new event (protected)."""
+@router.post("/", response_model=Event)
+def create_event(
+    payload: Event,
+    session: Session = Depends(get_session),
+    current_user: str = Depends(get_current_user),
+):
+    """Create a new event (protected and building-access aware)."""
+
+    # ✅ Enforce building-level permissions
+    verify_user_building_access(session, current_user, payload.building_id)
+
     session.add(payload)
     session.commit()
     session.refresh(payload)
     return payload
+
 
 
 @router.put("/{event_id}", response_model=Event, summary="Update Event (Local DB)")
