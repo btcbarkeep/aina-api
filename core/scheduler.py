@@ -9,13 +9,14 @@ from core.notifications import send_email
 from database import get_session
 from routers.buildings import run_full_building_sync
 from routers.events import run_full_event_sync
-from routers.documents import run_full_document_sync  # ✅ Added
+from routers.documents import run_full_document_sync
+
 
 def run_scheduled_sync():
-    """Runs full sync for buildings, events, and documents, then emails the results."""
+    """Runs full sync for Buildings, Events, and Documents, then emails the results."""
     start_time = datetime.utcnow()
     try:
-        print("[SCHEDULER] Starting full sync (buildings + events + documents)...")
+        print("[SCHEDULER] Starting full sync (Buildings + Events + Documents)...")
 
         # ✅ Create a database session manually
         session_gen = get_session()
@@ -40,36 +41,32 @@ def run_scheduled_sync():
         document_summary = document_result.get("summary", {})
 
         # -------------------------------------------------
-        # 4️⃣ Build Summary Report
+        # 4️⃣ Build Unified Summary Report
         # -------------------------------------------------
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
 
         summary_text = (
-            f"📋 **Aina Protocol Sync Report**\n\n"
+            f"📋 **Aina Protocol Daily Sync Report**\n\n"
             f"🕒 **Summary**\n"
             f"• Start: {start_time}\n"
             f"• End: {end_time}\n"
             f"• Duration: {duration:.2f} seconds\n\n"
-
             f"🏢 **Buildings Sync**\n"
             f"• Local: {building_summary.get('local_total', 'N/A')}\n"
             f"• Supabase: {building_summary.get('supa_total', 'N/A')}\n"
             f"• Added → Supabase: {len(building_summary.get('inserted_to_supabase', []))}\n"
             f"• Added → Local: {len(building_summary.get('inserted_to_local', []))}\n\n"
-
             f"📅 **Events Sync**\n"
             f"• Local: {event_summary.get('local_total', 'N/A')}\n"
             f"• Supabase: {event_summary.get('supa_total', 'N/A')}\n"
             f"• Added → Supabase: {len(event_summary.get('inserted_to_supabase', []))}\n"
             f"• Added → Local: {len(event_summary.get('inserted_to_local', []))}\n\n"
-
             f"📄 **Documents Sync**\n"
             f"• Local: {document_summary.get('local_total', 'N/A')}\n"
             f"• Supabase: {document_summary.get('supa_total', 'N/A')}\n"
             f"• Added → Supabase: {len(document_summary.get('inserted_to_supabase', []))}\n"
             f"• Added → Local: {len(document_summary.get('inserted_to_local', []))}\n\n"
-
             f"💬 **Messages**\n"
             f"• Buildings: {building_result.get('message', 'No message returned')}\n"
             f"• Events: {event_result.get('message', 'No message returned')}\n"
@@ -81,15 +78,15 @@ def run_scheduled_sync():
         # -------------------------------------------------
         send_email(
             subject="[Aina Protocol] Daily Sync Completed ✅",
-            body=f"✅ Sync completed successfully.\n\n{summary_text}",
+            body=f"✅ Daily sync completed successfully.\n\n{summary_text}",
         )
 
-        print("[SCHEDULER] ✅ Buildings + Events + Documents sync completed successfully and email sent.")
+        print("[SCHEDULER] ✅ Full sync completed successfully and email sent.")
 
     except Exception as e:
         print("[SCHEDULER] ❌ Sync failed:", e)
         send_email(
-            subject="[Aina Protocol] Sync Failed ❌",
+            subject="[Aina Protocol] Daily Sync Failed ❌",
             body=f"Error: {e}\n\nTraceback:\n{traceback.format_exc()}",
         )
 
