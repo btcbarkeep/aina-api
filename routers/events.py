@@ -15,7 +15,10 @@ from models import Event, EventCreate, EventRead
 import traceback
 
 
-router = APIRouter(prefix="/events")
+router = APIRouter(
+    prefix="/events",
+    tags=["Events"]
+)
 
 
 """
