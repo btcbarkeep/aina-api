@@ -38,7 +38,7 @@ def list_events_supabase(limit: int = 50):
 
 @router.post("/supabase", summary="Create Event in Supabase")
 def create_event_supabase(
-    payload: dict,
+    payload: EventCreate,
     session: Session = Depends(get_session),
     current_user: str = Depends(get_current_user),
 ):
@@ -50,21 +50,23 @@ def create_event_supabase(
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
-    # ✅ Enforce building permissions before insert
-    building_id = payload.get("building_id")
-    if building_id is None:
-        raise HTTPException(status_code=400, detail="Missing building_id in payload")
+    # Convert model → dict (Supabase wants a raw dict)
+    data = payload.dict()
 
-    verify_user_building_access(session, current_user, building_id)
+    # Enforce permissions
+    verify_user_building_access(session, current_user, data["building_id"])
 
     try:
-        result = client.table("events").insert(payload).execute()
+        result = client.table("events").insert(data).execute()
+
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
+
         return result.data[0]
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
+
 
 
 # -----------------------------------------------------
