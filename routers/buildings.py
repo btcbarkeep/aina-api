@@ -112,7 +112,7 @@ def update_building_supabase(building_id: str, payload: dict):
 def delete_building_supabase(building_id: str):
     """
     Delete a building record from Supabase by ID.
-    """buildings"    result = delete_record("buildings", buildings"_id)
+    """building"    result = delete_record("building", buildings"_id)
     if result["status"] != "ok":
         raise HTTPException(status_code=500, detail=result["detail"])
     return {"status": "deleted", "id": building_id}
