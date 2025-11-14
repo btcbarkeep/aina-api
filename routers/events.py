@@ -259,3 +259,30 @@ def delete_event(event_id: int, session: Session = Depends(get_session)):
     session.delete(event)
     session.commit()
     return {"message": f"Event {event_id} deleted successfully"}
+
+
+@router.get("/building-options", summary="List buildings the user can post events for")
+def get_user_building_options(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
+):
+    username = current_user["username"]
+
+    access_rows = session.exec(
+        select(UserBuildingAccess).where(UserBuildingAccess.username == username)
+    ).all()
+
+    building_ids = [row.building_id for row in access_rows]
+
+    if not building_ids:
+        return []
+
+    buildings = session.exec(
+        select(Building).where(Building.id.in_(building_ids))
+    ).all()
+
+    return [
+        {"id": b.id, "name": b.name}
+        for b in buildings
+    ]
+
