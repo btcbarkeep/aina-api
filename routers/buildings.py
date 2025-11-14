@@ -108,14 +108,18 @@ def update_building_supabase(building_id: str, payload: dict):
     return result["data"]
 
 
-@router.delete("/supabase/{buildings_id}", tags=["Buildings"])
+@router.delete("/supabase/{building_id}", tags=["Buildings"])
 def delete_building_supabase(building_id: str):
     """
     Delete a building record from Supabase by ID.
-    """building"    result = delete_record("building", buildings"_id)
+    """
+    result = delete_record("buildings", building_id)
+    
     if result["status"] != "ok":
         raise HTTPException(status_code=500, detail=result["detail"])
+    
     return {"status": "deleted", "id": building_id}
+
 
 
 ## sync checker
