@@ -79,7 +79,7 @@ def create_building_supabase(payload: BuildingCreate):
             }
 
         inserted = result.data[0]
-        print(f"[SUPABASE] ✅ Building synced: {inserted['name']} (ID: {inserted.get('id', 'unknown')})")
+        print(f"[SUPABASE] ✅ Buildings synced: {inserted['name']} (ID: {inserted.get('id', 'unknown')})")
 
         return inserted
 
@@ -97,7 +97,7 @@ def create_building_supabase(payload: BuildingCreate):
 
 
 
-@router.put("/supabase/{building_id}", tags=["Buildings"])
+@router.put("/supabase/{buildings_id}", tags=["Buildings"])
 def update_building_supabase(building_id: str, payload: dict):
     """
     Update a building record in Supabase by ID.
@@ -108,12 +108,12 @@ def update_building_supabase(building_id: str, payload: dict):
     return result["data"]
 
 
-@router.delete("/supabase/{building_id}", tags=["Buildings"])
+@router.delete("/supabase/{buildings_id}", tags=["Buildings"])
 def delete_building_supabase(building_id: str):
     """
     Delete a building record from Supabase by ID.
     """
-    result = delete_record("buildings", building_id)
+buildings"    result = delete_record("buildings", buildings"_id)
     if result["status"] != "ok":
         raise HTTPException(status_code=500, detail=result["detail"])
     return {"status": "deleted", "id": building_id}
