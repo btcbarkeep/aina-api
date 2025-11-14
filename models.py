@@ -42,7 +42,7 @@ class BuildingRead(BuildingBase):
 
 class EventBase(SQLModel):
     """Shared event fields used across models."""
-    building_id: int = Field(foreign_key="building.id", index=True)
+    building_id: int = Field(foreign_key="buildings.id", index=True)
     unit_number: Optional[str] = Field(default=None, index=True)
     event_type: str
     title: str
@@ -101,7 +101,7 @@ class DocumentRead(DocumentBase):
 class UserBuildingAccess(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True)
-    building_id: int = Field(foreign_key="building.id", index=True)
+    building_id: int = Field(foreign_key="buildings.id", index=True)
     role: str = Field(default="hoa", description="hoa, manager, contractor")
 
 
