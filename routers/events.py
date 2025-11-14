@@ -15,7 +15,8 @@ from models import Event, EventCreate, EventRead
 import traceback
 
 
-router = APIRouter(prefix="/api/v1/events", tags=["Events"])
+router = APIRouter(prefix="/events")
+
 
 """
 Event endpoints manage building and AOAO-related events, maintenance logs,
