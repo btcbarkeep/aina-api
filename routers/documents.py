@@ -56,7 +56,7 @@ def create_document_supabase(
     if not event:
         raise HTTPException(status_code=404, detail="Associated event not found")
 
-    verify_user_building_access(session, current_user, event.building_id)
+    verify_user_building_access(session, current_user, event.buildings_id)
 
     try:
         result = client.table("documents").upsert(payload.dict(), on_conflict="id").execute()
@@ -78,7 +78,7 @@ def attach_document(
 ):
     """
     Upload or attach a new AOAO document (protected).
-    Enforces event + building-level permission using the event’s building_id.
+    Enforces event + building-level permission using the event’s buildings_id.
     """
     # ✅ 1. Ensure event exists
     event = session.get(Event, payload.event_id)
@@ -86,7 +86,7 @@ def attach_document(
         raise HTTPException(status_code=404, detail="Associated event not found")
 
     # ✅ 2. Enforce permission check
-    verify_user_building_access(session, current_user, event.building_id)
+    verify_user_building_access(session, current_user, event.buildings_id)
 
     # ✅ 3. Create document record
     document = Document.from_orm(payload)
