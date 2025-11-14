@@ -1,9 +1,14 @@
 # models.py
 from datetime import datetime
 from typing import Optional
+from enum import Enum
+
 from sqlmodel import SQLModel, Field, UniqueConstraint
 
-from enum import Enum
+
+# =====================================================
+# 🔧 ENUMS
+# =====================================================
 
 class EventType(str, Enum):
     maintenance = "maintenance"
@@ -51,31 +56,31 @@ class BuildingRead(BuildingBase):
 # 📅 EVENT MODELS
 # =====================================================
 
-class EventCreate(SQLModel):
-    building_id: int
-    unit_number: Optional[str] = None
-    event_type: str
-    title: str
-    body: Optional[str] = None
-    occurred_at: datetime
-
-
-
 class EventBase(SQLModel):
+    """Shared event fields."""
     building_id: int = Field(foreign_key="buildings.id", index=True)
     unit_number: Optional[str] = Field(default=None, index=True)
-    event_type: EventType  # <-- Dropdown in Swagger
+    event_type: EventType
     title: str
     body: Optional[str] = None
     occurred_at: datetime
 
+
+class Event(EventBase, table=True):
+    """Database table for events."""
+    __tablename__ = "events"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
 
 class EventCreate(EventBase):
+    """Fields required when creating an event."""
     pass
 
 
 class EventRead(EventBase):
+    """Fields returned when reading an event."""
     id: int
     created_at: datetime
 
@@ -85,7 +90,7 @@ class EventRead(EventBase):
 # =====================================================
 
 class DocumentBase(SQLModel):
-    event_id: int = Field(foreign_key="event.id", index=True)
+    event_id: int = Field(foreign_key="events.id", index=True)
     s3_key: str
     filename: str
     content_type: Optional[str] = None
@@ -93,16 +98,14 @@ class DocumentBase(SQLModel):
 
 
 class Document(DocumentBase, table=True):
+    __tablename__ = "documents"
+
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
 
-class DocumentCreate(SQLModel):
-    event_id: int
-    s3_key: str
-    filename: str
-    content_type: Optional[str] = None
-    size_bytes: Optional[int] = None
+class DocumentCreate(DocumentBase):
+    pass
 
 
 class DocumentRead(DocumentBase):
@@ -115,6 +118,8 @@ class DocumentRead(DocumentBase):
 # =====================================================
 
 class UserBuildingAccess(SQLModel, table=True):
+    __tablename__ = "user_building_access"
+
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True)
     building_id: int = Field(foreign_key="buildings.id", index=True)
