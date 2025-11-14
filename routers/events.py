@@ -40,32 +40,37 @@ def list_events_supabase(limit: int = 50):
 def create_event_supabase(
     payload: EventCreate,
     session: Session = Depends(get_session),
-    current_user: str = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Insert a new event record directly into Supabase.
-    Enforces building-level access before writing.
-    """
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
-    # Convert model → dict (Supabase wants a raw dict)
-    data = payload.dict()
+    # Permission check
+    access = session.exec(
+        select(UserBuildingAccess)
+        .where(
+            UserBuildingAccess.username == current_user["username"],
+            UserBuildingAccess.building_id == payload.building_id
+        )
+    ).first()
 
-    # Enforce permissions
-    verify_user_building_access(session, current_user, data["building_id"])
+    if not access:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You do not have permission to create an event for building {payload.building_id}"
+        )
 
     try:
-        result = client.table("events").insert(data).execute()
-
+        result = client.table("events").insert(payload.dict()).execute()
         if not result.data:
-            raise HTTPException(status_code=500, detail="Insert failed")
+            raise HTTPException(status_code=500, detail="Supabase insert failed")
 
         return result.data[0]
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
+
 
 
 
