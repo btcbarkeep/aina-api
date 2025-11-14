@@ -97,7 +97,7 @@ def create_building_supabase(payload: BuildingCreate):
 
 
 
-@router.put("/supabase/{buildings_id}", tags=["Buildings"])
+@router.put("/supabase/{building_id}", tags=["Buildings"])
 def update_building_supabase(building_id: str, payload: dict):
     """
     Update a building record in Supabase by ID.
