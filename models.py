@@ -3,6 +3,17 @@ from datetime import datetime
 from typing import Optional
 from sqlmodel import SQLModel, Field, UniqueConstraint
 
+from enum import Enum
+
+class EventType(str, Enum):
+    maintenance = "maintenance"
+    notice = "notice"
+    assessment = "assessment"
+    plumbing = "plumbing"
+    electrical = "electrical"
+    general = "general"
+
+
 # =====================================================
 # 🏢 BUILDING MODELS
 # =====================================================
@@ -50,9 +61,14 @@ class EventCreate(SQLModel):
 
 
 
-class Event(EventBase, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+class EventBase(SQLModel):
+    building_id: int = Field(foreign_key="buildings.id", index=True)
+    unit_number: Optional[str] = Field(default=None, index=True)
+    event_type: EventType  # <-- Dropdown in Swagger
+    title: str
+    body: Optional[str] = None
+    occurred_at: datetime
+
 
 
 class EventCreate(EventBase):
