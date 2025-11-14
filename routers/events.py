@@ -51,9 +51,9 @@ def create_event_supabase(
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     # ✅ Enforce building permissions before insert
-    building_id = payload.get("buildings_id")
+    building_id = payload.get("building_id")
     if building_id is None:
-        raise HTTPException(status_code=400, detail="Missing buildings_id in payload")
+        raise HTTPException(status_code=400, detail="Missing building_id in payload")
 
     verify_user_building_access(session, current_user, building_id)
 
@@ -206,7 +206,7 @@ def create_event(
     """Create a new event (protected and building-access aware)."""
 
     # ✅ Enforce building-level permissions
-    verify_user_building_access(session, current_user, payload.buildings_id)
+    verify_user_building_access(session, current_user, payload.building_id)
 
     session.add(payload)
     session.commit()
