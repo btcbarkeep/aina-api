@@ -12,7 +12,10 @@ from core.auth_helpers import verify_user_building_access
 from models import Event  # needed to check which building the document’s event belongs to
 
 
-router = APIRouter(prefix="/documents")
+router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"]
+)
 
 
 """
