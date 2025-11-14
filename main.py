@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
                 print(f"➡️  {methods:10s} {route.path}")
         print("\n✅ Route log complete.\n")
 
-        start_scheduler()
+        
 
 
     # -------------------------------------------------
