@@ -1,13 +1,15 @@
 # routers/events.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-from database import get_session
-from core.supabase_client import get_supabase_client
-from models import Event
-from dependencies.auth import get_current_user
 from typing import List
+
+from database import get_session
+from dependencies.auth import get_current_user
 from core.auth_helpers import verify_user_building_access
-import traceback
+
+# Import models properly
+from models import Event, EventCreate, EventRead
+
 
 router = APIRouter(prefix="/api/v1/events", tags=["Events"])
 
