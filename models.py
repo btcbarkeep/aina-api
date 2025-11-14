@@ -40,14 +40,14 @@ class BuildingRead(BuildingBase):
 # 📅 EVENT MODELS
 # =====================================================
 
-class EventBase(SQLModel):
-    """Shared event fields used across models."""
-    building_id: int = Field(foreign_key="buildings.id", index=True)
-    unit_number: Optional[str] = Field(default=None, index=True)
+class EventCreate(SQLModel):
+    building_id: int
+    unit_number: Optional[str] = None
     event_type: str
     title: str
     body: Optional[str] = None
     occurred_at: datetime
+
 
 
 class Event(EventBase, table=True):
