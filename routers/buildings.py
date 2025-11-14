@@ -7,7 +7,10 @@ from dependencies.auth import get_current_user
 from typing import List, Optional
 import traceback
 
-router = APIRouter(prefix="/buildings")
+router = APIRouter(
+    prefix="/buildings",
+    tags=["Buildings"]
+)
 
 
 """
