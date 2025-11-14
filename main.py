@@ -86,9 +86,9 @@ def create_app() -> FastAPI:
      # -------------------------------------------------
     # Versioned API: everything under /api/v1
     # -------------------------------------------------
-    app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+    app.include_router(api_router, prefix="/api/v1")
 
-    app.include_router(user_access.router, prefix="/api/v1/user-access")
+    app.include_router(user_access.router, prefix="/api/v1")
 
 
     # -------------------------------------------------
