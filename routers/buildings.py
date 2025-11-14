@@ -100,7 +100,7 @@ def create_building_supabase(payload: BuildingCreate):
 
 
 
-@router.put("/supabase/{building_id}", tags=["Buildings"])
+@router.put("/supabase/{building_id}")
 def update_building_supabase(building_id: str, payload: dict):
     """
     Update a building record in Supabase by ID.
@@ -111,7 +111,7 @@ def update_building_supabase(building_id: str, payload: dict):
     return result["data"]
 
 
-@router.delete("/supabase/{building_id}", tags=["Buildings"])
+@router.delete("/supabase/{building_id}")
 def delete_building_supabase(building_id: str):
     """
     Delete a building record from Supabase by ID.
