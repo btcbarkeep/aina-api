@@ -7,7 +7,7 @@ from database import get_session
 from models import UserBuildingAccess
 from dependencies.auth import get_current_user
 
-router = APIRouter(tags=["User Access"])
+router = APIRouter(prefix="/user-access")
 
 @router.get("/", response_model=List[UserBuildingAccess])
 def list_user_access(session: Session = Depends(get_session)):
