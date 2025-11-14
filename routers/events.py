@@ -199,21 +199,37 @@ async def full_event_sync(session: Session = Depends(get_session)):
 # LOCAL EVENT CRUD
 # -----------------------------------------------------
 
-@router.post("/", response_model=Event)
+@router.post("/", response_model=EventRead, summary="Create Event (Local DB)")
 def create_event(
-    payload: Event,
+    payload: EventCreate,
     session: Session = Depends(get_session),
-    current_user: str = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user)
 ):
-    """Create a new event (protected and building-access aware)."""
+    username = current_user["username"]
 
-    # ✅ Enforce building-level permissions
-    verify_user_building_access(session, current_user, payload.building_id)
+    # Verify building permissions
+    access = session.exec(
+        select(UserBuildingAccess)
+        .where(
+            UserBuildingAccess.username == username,
+            UserBuildingAccess.building_id == payload.building_id
+        )
+    ).first()
 
-    session.add(payload)
+    if not access:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You do not have permission to create an event for building {payload.building_id}"
+        )
+
+    # Create event
+    event = Event.from_orm(payload)
+    session.add(event)
     session.commit()
-    session.refresh(payload)
-    return payload
+    session.refresh(event)
+
+    return event
+
 
 
 
