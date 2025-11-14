@@ -12,6 +12,8 @@ from core.supabase_client import get_supabase_client
 # Import models properly
 from models import Event, EventCreate, EventRead
 
+import traceback
+
 
 router = APIRouter(prefix="/api/v1/events", tags=["Events"])
 
