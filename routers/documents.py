@@ -12,10 +12,8 @@ from core.auth_helpers import verify_user_building_access
 from models import Event  # needed to check which building the document’s event belongs to
 
 
-router = APIRouter(
-    prefix="/api/v1/documents",
-    tags=["Documents"],
-)
+router = APIRouter(prefix="/documents")
+
 
 """
 Documents sync with Supabase handles file metadata (event attachments, HOA files, etc.).
