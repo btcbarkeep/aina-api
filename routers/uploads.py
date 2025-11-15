@@ -6,6 +6,7 @@ from fastapi import (
 from datetime import datetime
 import boto3
 import os
+import re
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import get_current_user, CurrentUser
@@ -18,16 +19,40 @@ router = APIRouter(
 )
 
 """
-UPLOAD ROUTER
+UPLOAD ROUTER (SANITIZED + PRODUCTION READY)
 
 Rules:
-- Any authenticated user may upload IF they have building access.
-- Admin/Manager bypass building access checks.
+- Admin/Manager bypass building access.
+- Regular users: must have building access.
+- Prevent unsafe file names.
+- Ensure documents always return row data (.select("*"))
 """
 
 
 # -----------------------------------------------------
-#  AWS CONFIGURATION
+# Helper — Sanitize dict ("" → None)
+# -----------------------------------------------------
+def sanitize(data: dict) -> dict:
+    clean = {}
+    for k, v in data.items():
+        if isinstance(v, str) and v.strip() == "":
+            clean[k] = None
+        else:
+            clean[k] = v
+    return clean
+
+
+# -----------------------------------------------------
+# Helper — Validate & sanitize filename
+# -----------------------------------------------------
+def safe_filename(filename: str) -> str:
+    # Remove dangerous characters
+    filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+    return filename
+
+
+# -----------------------------------------------------
+# AWS CONFIGURATION
 # -----------------------------------------------------
 def get_s3_client():
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -48,12 +73,11 @@ def get_s3_client():
 
 
 # -----------------------------------------------------
-# Helper: Building Access
+# Helper: Check building access
 # -----------------------------------------------------
 def verify_user_building_access(user: CurrentUser, building_id: str):
-    """Admins & managers bypass. Others must have building access."""
     if user.role in ["admin", "manager"]:
-        return
+        return  # bypass
 
     client = get_supabase_client()
     result = (
@@ -65,14 +89,34 @@ def verify_user_building_access(user: CurrentUser, building_id: str):
     )
 
     if not result.data:
-        raise HTTPException(
-            status_code=403,
-            detail="User does not have access to this building."
-        )
+        raise HTTPException(403, "User does not have access to this building.")
 
 
 # -----------------------------------------------------
-#  UPLOAD FILE + CREATE DOCUMENT RECORD
+# Helper: Event → building
+# -----------------------------------------------------
+def get_event_building_id(event_id: str | None):
+    if not event_id:
+        return None
+
+    client = get_supabase_client()
+
+    result = (
+        client.table("events")
+        .select("building_id")
+        .eq("id", event_id)
+        .single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(404, "Event not found")
+
+    return result.data["building_id"]
+
+
+# -----------------------------------------------------
+# UPLOAD DOCUMENT
 # -----------------------------------------------------
 @router.post("/", summary="Upload a document file")
 async def upload_document(
@@ -80,36 +124,49 @@ async def upload_document(
     building_id: str = Form(...),
     event_id: str | None = Form(None),
     category: str | None = Form(None),
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
-    Uploads a file to S3 and creates a matching Supabase document record.
-
-    Access:
-      - Admin / manager: allowed for any building.
-      - Regular users: only if they have building access.
+    Uploads to S3 and creates a Supabase document row.
     """
+    # -------------------------------------------------
+    # Validate event → building relationship
+    # -------------------------------------------------
+    event_building = get_event_building_id(event_id)
+    if event_building and event_building != building_id:
+        raise HTTPException(
+            400,
+            "Event does not belong to the specified building.",
+        )
+
+    # -------------------------------------------------
+    # Building access check
+    # -------------------------------------------------
     verify_user_building_access(current_user, building_id)
 
     try:
         s3, bucket, region = get_s3_client()
 
-        # ------------------------------
-        # Build S3 path
-        # ------------------------------
+        # -------------------------------------------------
+        # Safe inputs
+        # -------------------------------------------------
+        clean_filename = safe_filename(file.filename)
         safe_category = (
             category.strip().replace(" ", "_").lower()
             if category else "general"
         )
 
+        # -------------------------------------------------
+        # Create S3 key
+        # -------------------------------------------------
         if event_id:
-            s3_key = f"events/{event_id}/documents/{safe_category}/{file.filename}"
+            s3_key = f"events/{event_id}/documents/{safe_category}/{clean_filename}"
         else:
-            s3_key = f"buildings/{building_id}/documents/{safe_category}/{file.filename}"
+            s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
 
-        # ------------------------------
+        # -------------------------------------------------
         # Upload to S3
-        # ------------------------------
+        # -------------------------------------------------
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -117,38 +174,43 @@ async def upload_document(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # ------------------------------
-        # Generate presigned URL
-        # ------------------------------
+        # -------------------------------------------------
+        # Presigned URL
+        # -------------------------------------------------
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=86400,  # 24 hours
+            ExpiresIn=86400,
         )
 
-        # ------------------------------
-        # Create Supabase document
-        # ------------------------------
-        payload = {
+        # -------------------------------------------------
+        # Insert into Supabase
+        # -------------------------------------------------
+        payload = sanitize({
             "event_id": event_id,
             "building_id": building_id,
             "s3_key": s3_key,
-            "filename": file.filename,
+            "filename": clean_filename,
             "content_type": file.content_type,
-            "size_bytes": file.spool_max_size or None,
+            "size_bytes": getattr(file, "size", None),
             "created_at": datetime.utcnow().isoformat(),
             "uploaded_by": current_user.user_id,
-        }
+        })
 
         client = get_supabase_client()
-        result = client.table("documents").insert(payload).execute()
+        result = (
+            client.table("documents")
+            .insert(payload)
+            .select("*")
+            .execute()
+        )
 
         if not result.data:
-            raise HTTPException(500, "Failed to insert Supabase document record")
+            raise HTTPException(500, "Supabase insert failed")
 
         return {
             "upload": {
-                "filename": file.filename,
+                "filename": clean_filename,
                 "s3_key": s3_key,
                 "presigned_url": presigned_url,
                 "uploaded_at": datetime.utcnow().isoformat(),
@@ -157,4 +219,4 @@ async def upload_document(
         }
 
     except (NoCredentialsError, ClientError) as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, detail=str(e))
