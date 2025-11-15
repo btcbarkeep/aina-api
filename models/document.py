@@ -4,8 +4,8 @@ from pydantic import BaseModel
 
 
 class DocumentBase(BaseModel):
-    event_id: str
-    s3_key: str
+    event_id: str          # UUID of the event
+    s3_key: str            # Supabase storage key or S3 path
     filename: str
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
