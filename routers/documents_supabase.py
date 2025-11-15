@@ -6,8 +6,8 @@ from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record
 from models.document import DocumentCreate, DocumentUpdate, DocumentRead
 
-from core.auth_helpers import (
-    require_role,                    # NEW: RBAC helper
+from dependencies.auth import requires_role
+
 )
 
 
