@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 class AdminCreateAccountRequest(BaseModel):
     full_name: str
     email: EmailStr
-    organization_name
+    organization_name: str
     role: str = "hoa"         # "hoa", "manager", "contractor"
     building_id: int | None = None  # optional; can be assigned later
 
