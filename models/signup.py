@@ -10,7 +10,7 @@ class SignupRequestCreate(SQLModel):
     full_name: str
     email: str
     phone: Optional[str] = None
-    hoa_name: str
+    organization_name: Optional[str]
     notes: Optional[str] = None
 
 
