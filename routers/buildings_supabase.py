@@ -1,7 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 
-from dependencies.auth import get_current_user, requires_role, CurrentUser
+from dependencies.auth import (
+    get_current_user,
+    requires_role,
+    CurrentUser,
+)
+
 
 from core.supabase_client import get_supabase_client
 from models.building import BuildingCreate, BuildingUpdate, BuildingRead
