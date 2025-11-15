@@ -7,118 +7,280 @@ import traceback
 
 from dependencies.auth import get_current_user
 from core.notifications import send_email
-from core.utils.sync_formatter import format_sync_summary  # ✅ NEW IMPORT
+from core.utils.sync_formatter import format_sync_summary
 from database import get_session
+
+from sqlmodel import Session, select
+from models import Building
 
 router = APIRouter(
     prefix="/api/v1/sync",
     tags=["Sync"],
 )
 
+# --------------------------------------------------------
+# BUILDING SYNC ENDPOINTS
+# --------------------------------------------------------
 
-async def perform_sync_logic():
+@router.get("/buildings", summary="Compare Local vs Supabase Buildings")
+def compare_building_sync(session: Session = Depends(get_session)):
     """
-    Runs full sync for Buildings, Events, and Documents.
-    Returns unified summary used by both scheduler and manual trigger.
+    Compare the local buildings table versus Supabase.
     """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
     try:
-        print("[SYNC] Running full sync logic (Buildings + Events + Documents)...")
+        local = session.exec(select(Building)).all()
+        local_names = {b.name for b in local}
 
-        from routers.buildings import run_full_building_sync
-        from routers.events import run_full_event_sync
-        from routers.documents import run_full_document_sync
-
-        # ✅ Create a real session (not Depends)
-        session_gen = get_session()
-        session = next(session_gen)
-
-        # --- Run all syncs ---
-        building_result = run_full_building_sync(session)
-        event_result = run_full_event_sync(session)
-        document_result = run_full_document_sync(session)
-
-        print("[SYNC] ✅ Full sync (all modules) completed successfully.")
+        supabase = client.table("buildings").select("name").execute()
+        supa_names = {row["name"] for row in supabase.data or []}
 
         return {
-            "status": "success",
-            "message": "Full sync completed successfully.",
+            "status": "ok",
             "summary": {
-                "buildings": building_result.get("summary", {}),
-                "events": event_result.get("summary", {}),
-                "documents": document_result.get("summary", {}),
+                "local_only": sorted(list(local_names - supa_names)),
+                "supabase_only": sorted(list(supa_names - local_names)),
+                "synced": sorted(list(local_names & supa_names)),
+            },
+            "local_total": len(local_names),
+            "supabase_total": len(supa_names),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync comparison failed: {e}")
+
+
+@router.post("/buildings/fix", summary="Push missing local buildings to Supabase")
+def fix_building_sync(session: Session = Depends(get_session)):
+    """
+    Push missing buildings from local DB to Supabase.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        local_rows = session.exec(select(Building)).all()
+        local_names = {b.name for b in local_rows}
+
+        supabase_rows = client.table("buildings").select("name").execute()
+        supa_names = {row["name"] for row in supabase_rows.data or []}
+
+        missing = [b for b in local_rows if b.name not in supa_names]
+
+        inserted = []
+        for b in missing:
+            payload = {
+                "name": b.name,
+                "address": b.address,
+                "city": b.city,
+                "state": b.state,
+                "zip": b.zip,
+                "created_at": b.created_at.isoformat(),
+            }
+            result = client.table("buildings").insert(payload).execute()
+            if result.data:
+                inserted.append(b.name)
+
+        return {
+            "status": "ok",
+            "inserted": inserted,
+            "count": len(inserted),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Auto-sync failed: {e}")
+
+
+@router.post("/buildings/reverse", summary="Pull missing Supabase buildings → local DB")
+def reverse_building_sync(session: Session = Depends(get_session)):
+    """
+    Pull missing buildings from Supabase into local DB.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        local_rows = session.exec(select(Building)).all()
+        local_names = {b.name for b in local_rows}
+
+        supa_result = client.table("buildings").select("*").execute()
+        supa_rows = supa_result.data or []
+        supa_names = {row["name"] for row in supa_rows}
+
+        missing = [row for row in supa_rows if row["name"] not in local_names]
+
+        added = []
+        for row in missing:
+            new_bld = Building(
+                name=row["name"],
+                address=row.get("address"),
+                city=row.get("city"),
+                state=row.get("state"),
+                zip=row.get("zip"),
+            )
+            session.add(new_bld)
+            added.append(row["name"])
+
+        session.commit()
+
+        return {
+            "status": "ok",
+            "inserted": added,
+            "count": len(added),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reverse sync failed: {e}")
+
+
+# --------------------------------------------------------
+# INTERNAL MASTER SYNC FOR BUILDINGS
+# --------------------------------------------------------
+
+def run_full_building_sync(session: Session):
+    """
+    Shared building sync logic for scheduler and API.
+    """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        local_rows = session.exec(select(Building)).all()
+        local_names = {b.name for b in local_rows}
+
+        supa_result = client.table("buildings").select("*").execute()
+        supa_rows = supa_result.data or []
+        supa_names = {row["name"] for row in supa_rows}
+
+        missing_supa = [b for b in local_rows if b.name not in supa_names]
+        missing_local = [row for row in supa_rows if row["name"] not in local_names]
+
+        inserted_supa, inserted_local = [], []
+
+        # push to supabase
+        for b in missing_supa:
+            payload = {
+                "name": b.name,
+                "address": b.address,
+                "city": b.city,
+                "state": b.state,
+                "zip": b.zip,
+                "created_at": b.created_at.isoformat(),
+            }
+            result = client.table("buildings").insert(payload).execute()
+            if result.data:
+                inserted_supa.append(b.name)
+
+        # pull into local
+        for row in missing_local:
+            new_b = Building(
+                name=row["name"],
+                address=row.get("address"),
+                city=row.get("city"),
+                state=row.get("state"),
+                zip=row.get("zip"),
+            )
+            session.add(new_b)
+            inserted_local.append(row["name"])
+
+        session.commit()
+
+        return {
+            "status": "ok",
+            "summary": {
+                "inserted_to_supabase": inserted_supa,
+                "inserted_to_local": inserted_local,
             },
         }
 
     except Exception as e:
-        print("[SYNC] ❌ Sync failed:", e)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Full sync failed: {e}")
+
+
+# --------------------------------------------------------
+# GLOBAL FULL SYNC (BUILDINGS + EVENTS + DOCUMENTS)
+# --------------------------------------------------------
+
+async def perform_sync_logic():
+    """
+    Runs full sync for all modules.
+    """
+    try:
+        print("[SYNC] Running full sync logic...")
+
+        from routers.events import run_full_event_sync
+        from routers.documents import run_full_document_sync
+
+        session_gen = get_session()
+        session = next(session_gen)
+
+        building_result = run_full_building_sync(session)
+        event_result = run_full_event_sync(session)
+        document_result = run_full_document_sync(session)
+
         return {
-            "status": "error",
-            "message": f"500: {str(e)}",
-            "summary": traceback.format_exc(),
+            "status": "success",
+            "summary": {
+                "buildings": building_result.get("summary", {}),
+                "events": event_result.get("summary", {}),
+                "documents": document_result.get("summary", {}),
+            }
         }
 
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "summary": traceback.format_exc(),
+        }
     finally:
-        # ✅ Always close the session
         try:
             session.close()
-        except Exception:
+        except:
             pass
 
 
-@router.post("/run")
+@router.post("/run", summary="Trigger full sync (All modules)")
 async def trigger_full_sync(current_user: dict = Depends(get_current_user)):
-    """
-    Manually trigger the Supabase ↔ local database sync.
-    Returns a unified summary and sends a formatted email like the daily sync.
-    """
-    try:
-        start_time = datetime.utcnow()
-        print("[SYNC] Manual sync triggered at", start_time)
+    start_time = datetime.utcnow()
+    result = await perform_sync_logic()
+    end_time = datetime.utcnow()
 
-        result = await perform_sync_logic()
-        end_time = datetime.utcnow()
-        duration = (end_time - start_time).total_seconds()
+    duration = (end_time - start_time).total_seconds()
 
-        # --- Success Case ---
-        if result["status"] == "success":
-            summary = result.get("summary", {})
+    if result["status"] == "success":
+        formatted = format_sync_summary(
+            summary=result["summary"],
+            start_time=start_time,
+            end_time=end_time,
+            duration=duration,
+            title="Manual Sync",
+        )
 
-            formatted_summary = format_sync_summary(
-                summary=summary,
-                start_time=start_time,
-                end_time=end_time,
-                duration=duration,
-                title="Manual Sync"
-            )
+        send_email(
+            subject="[Aina Protocol] Manual Sync Completed",
+            body=f"Sync completed successfully.\n\n{formatted}",
+        )
 
-            send_email(
-                subject="[Aina Protocol] Manual Sync Completed ✅",
-                body=f"✅ Manual sync completed successfully.\n\n{formatted_summary}",
-            )
-
-            print("[SYNC] ✅ Manual sync email sent successfully.")
-
-        # --- Failure Case ---
-        else:
-            send_email(
-                subject="[Aina Protocol] Manual Sync Failed ❌",
-                body=(
-                    f"❌ Manual sync failed.\n\n"
-                    f"Error: {result.get('message', 'Unknown error')}\n\n"
-                    f"Traceback:\n{result.get('summary', '')}"
-                ),
-            )
-            print("[SYNC] ❌ Manual sync failed — email sent with error details.")
-
-        return JSONResponse(content=result, status_code=200)
-
-    except JWTError:
-        raise HTTPException(status_code=403, detail="Not authenticated")
-
-    except Exception as e:
-        print("[SYNC] 💥 Unexpected error:", e)
+    else:
         send_email(
             subject="[Aina Protocol] Sync Failed ❌",
-            body=f"Manual sync failed unexpectedly.\n\nError: {e}",
+            body=f"Error: {result.get('message')}\n\nTraceback:\n{result.get('summary')}",
         )
-        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+
+    return JSONResponse(content=result)
