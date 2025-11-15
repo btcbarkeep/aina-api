@@ -34,6 +34,7 @@ from .user import (
 )
 
 from .auth import LoginRequest, TokenResponse
+
 from .signup import SignupRequest
 
 
@@ -68,7 +69,7 @@ __all__ = [
     "UserBuildingAccess",
     "PasswordResetToken",
 
-    # auth models
+    # auth
     "LoginRequest",
     "TokenResponse",
 
