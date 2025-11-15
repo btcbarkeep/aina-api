@@ -1,23 +1,35 @@
 # routers/uploads.py
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter, UploadFile, File, Form,
+    Depends, HTTPException, Query
+)
 from datetime import datetime
-import boto3, os
+import boto3
+import os
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from dependencies.auth import get_current_user, requires_role
+from dependencies.auth import get_current_user, requires_role, CurrentUser
+from core.supabase_client import get_supabase_client
+
 
 router = APIRouter(
     prefix="/uploads",
     tags=["Uploads"],
 )
 
-"""
-Upload endpoints handle S3 file uploads, secure file listing, and admin-level
-file management across complexes, units, and categories.
 
-NOTE:
-- This router does NOT touch Supabase anymore.
-- Document metadata is handled in /documents.
+"""
+UPLOAD ROUTER (Option A)
+------------------------
+This router:
+
+1. Uploads a file to S3
+2. Creates a Supabase "documents" row with:
+   - event_id (nullable)
+   - building_id (required)
+3. Returns BOTH the upload result and the Supabase metadata
+
+This replaces the old “complex/unit/category” approach.
 """
 
 
@@ -44,178 +56,120 @@ def get_s3_client():
 
 
 # -----------------------------------------------------
-#  UPLOAD FILE (Protected)
+# Helper — Check building access
+# -----------------------------------------------------
+def verify_user_building_access(user: CurrentUser, building_id: str):
+    """Raise 403 if user does not have access to the building."""
+    if user.role in ["admin", "manager"]:
+        return  # bypass
+
+    client = get_supabase_client()
+    result = (
+        client.table("user_building_access")
+        .select("*")
+        .eq("user_id", user.user_id)
+        .eq("building_id", building_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=403,
+            detail="User does not have access to this building."
+        )
+
+
+# -----------------------------------------------------
+#  UPLOAD FILE + CREATE DOCUMENT RECORD
 # -----------------------------------------------------
 @router.post("/", dependencies=[Depends(get_current_user)])
-async def upload_file(
+async def upload_document(
     file: UploadFile = File(...),
-    complex_name: str = Form(...),
-    category: str = Form(...),
-    scope: str = Form("complex"),
-    unit_name: str | None = Form(None)
+    building_id: str = Form(...),
+    event_id: str | None = Form(None),
+    category: str | None = Form(None),
+    current_user: CurrentUser = Depends(get_current_user)
 ):
-    """Upload a file to S3 (private) and return a presigned download URL."""
+    """
+    Uploads a file to S3 and creates a Supabase document record.
+
+    Required:
+        - building_id
+        - file
+
+    Optional:
+        - event_id
+        - category (S3 folder organization)
+    """
+    # RBAC for building access
+    verify_user_building_access(current_user, building_id)
+
     try:
         s3, bucket, region = get_s3_client()
 
-        safe_complex = complex_name.strip().replace(" ", "_").upper()
-        safe_category = category.strip().replace(" ", "_").lower()
+        # ----------------------------------------------
+        # Build S3 KEY
+        # ----------------------------------------------
+        safe_category = category.strip().replace(" ", "_").lower() if category else "general"
 
-        if scope == "unit":
-            if not unit_name:
-                raise HTTPException(status_code=400, detail="unit_name required when scope='unit'")
-            safe_unit = unit_name.strip().replace(" ", "_").upper()
-            key = f"complexes/{safe_complex}/units/{safe_unit}/{safe_category}/{file.filename}"
+        if event_id:
+            s3_key = f"events/{event_id}/documents/{safe_category}/{file.filename}"
         else:
-            key = f"complexes/{safe_complex}/complex/{safe_category}/{file.filename}"
+            s3_key = f"buildings/{building_id}/documents/{safe_category}/{file.filename}"
 
+        # ----------------------------------------------
+        # Upload to S3
+        # ----------------------------------------------
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
-            Key=key,
+            Key=s3_key,
             ExtraArgs={"ContentType": file.content_type},
         )
 
+        # ----------------------------------------------
+        # Presigned URL
+        # ----------------------------------------------
         presigned_url = s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={"Bucket": bucket, "Key": key},
+            "get_object",
+            Params={"Bucket": bucket, "Key": s3_key},
             ExpiresIn=86400,
         )
 
-        return {
+        # ----------------------------------------------
+        # Insert into Supabase
+        # ----------------------------------------------
+        client = get_supabase_client()
+
+        doc_payload = {
+            "event_id": event_id,
+            "building_id": building_id,
+            "s3_key": s3_key,
             "filename": file.filename,
-            "s3_key": key,
-            "presigned_url": presigned_url,
-            "scope": scope,
-            "complex": safe_complex,
-            "category": safe_category,
-            "uploaded_at": datetime.utcnow().isoformat(),
+            "content_type": file.content_type,
+            "size_bytes": file.spool_max_size or None,
+            "created_at": datetime.utcnow().isoformat()
+        }
+
+        result = client.table("documents").insert(doc_payload).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to insert Supabase document record")
+
+        supabase_document = result.data[0]
+
+        # ----------------------------------------------
+        # FINAL RETURN
+        # ----------------------------------------------
+        return {
+            "upload": {
+                "filename": file.filename,
+                "s3_key": s3_key,
+                "presigned_url": presigned_url,
+                "uploaded_at": datetime.utcnow().isoformat()
+            },
+            "document": supabase_document
         }
 
     except (NoCredentialsError, ClientError) as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# -----------------------------------------------------
-#  LIST FILES BY COMPLEX / CATEGORY (Protected)
-# -----------------------------------------------------
-@router.get("/", dependencies=[Depends(get_current_user)])
-def list_files(
-    complex_name: str = Query(...),
-    unit_name: str | None = Query(None),
-    category: str | None = Query(None),
-    expires_in: int = Query(86400, ge=60, le=604800)
-):
-    """List uploaded files for a complex, optionally filtered by unit or category."""
-    try:
-        s3, bucket, _ = get_s3_client()
-
-        safe_complex = complex_name.strip().replace(" ", "_").upper()
-        prefix = f"complexes/{safe_complex}/"
-
-        if unit_name:
-            safe_unit = unit_name.strip().replace(" ", "_").upper()
-            prefix += f"units/{safe_unit}/"
-        else:
-            prefix += "complex/"
-
-        if category:
-            prefix += f"{category.strip().replace(' ', '_').lower()}/"
-
-        response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-        files = []
-
-        if "Contents" not in response:
-            return {"files": [], "message": "No files found"}
-
-        for obj in response["Contents"]:
-            key = obj["Key"]
-            filename = key.split("/")[-1]
-            last_modified = obj.get("LastModified")
-            size_kb = round(obj.get("Size", 0) / 1024, 2)
-
-            presigned_url = s3.generate_presigned_url(
-                ClientMethod="get_object",
-                Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=expires_in,
-            )
-
-            files.append({
-                "filename": filename,
-                "s3_key": key,
-                "size_kb": size_kb,
-                "last_modified": last_modified.isoformat() if last_modified else None,
-                "presigned_url": presigned_url
-            })
-
-        return {
-            "complex": safe_complex,
-            "category": category or "all",
-            "file_count": len(files),
-            "files": sorted(files, key=lambda x: x["filename"]),
-        }
-
-    except ClientError as e:
-        raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
-
-
-# -----------------------------------------------------
-#  LIST ALL FILES (Admin-only)
-# -----------------------------------------------------
-@router.get("/all", dependencies=[Depends(requires_role("admin"))])
-def list_all_files(
-    expires_in: int = Query(86400, ge=60, le=604800),
-):
-    """Admin-only endpoint to list *all* files in the S3 bucket."""
-    try:
-        s3, bucket, _ = get_s3_client()
-        paginator = s3.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=bucket)
-        all_files = []
-
-        for page in pages:
-            if "Contents" not in page:
-                continue
-            for obj in page["Contents"]:
-                key = obj["Key"]
-                filename = key.split("/")[-1]
-                last_modified = obj.get("LastModified")
-                size_kb = round(obj.get("Size", 0) / 1024, 2)
-
-                presigned_url = s3.generate_presigned_url(
-                    ClientMethod="get_object",
-                    Params={"Bucket": bucket, "Key": key},
-                    ExpiresIn=expires_in,
-                )
-
-                all_files.append({
-                    "filename": filename,
-                    "s3_key": key,
-                    "size_kb": size_kb,
-                    "last_modified": last_modified.isoformat() if last_modified else None,
-                    "presigned_url": presigned_url
-                })
-
-        return {
-            "total_files": len(all_files),
-            "files": sorted(all_files, key=lambda x: x["s3_key"]),
-        }
-
-    except ClientError as e:
-        raise HTTPException(status_code=500, detail=f"Error listing all files: {str(e)}")
-
-
-# -----------------------------------------------------
-#  DELETE FILE (Protected)
-# -----------------------------------------------------
-@router.delete("/", dependencies=[Depends(get_current_user)])
-def delete_file(
-    s3_key: str = Query(...)
-):
-    """Delete a file from the S3 bucket using its key."""
-    try:
-        s3, bucket, _ = get_s3_client()
-        s3.delete_object(Bucket=bucket, Key=s3_key)
-        return {"message": f"✅ File '{s3_key}' deleted successfully"}
-    except ClientError as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
