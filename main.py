@@ -6,25 +6,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-# Ensure relative imports work
+# Ensure local imports resolve correctly
 sys.path.append(os.path.dirname(__file__))
 
-# Core / DB
+# Core / DB / Config
 from core.config import settings
 from core.logging_config import logger
 from database import create_db_and_tables
 
-# Routers (Supabase-only + Auth)
+# Routers — Supabase only
 from routers.buildings_supabase import router as buildings_router
 from routers.events_supabase import router as events_router
 from routers.documents_supabase import router as documents_router
-from routers.admin import router as admin_router
-from routers.user_access import router as user_access_router
+
+# Auth / Admin
 from routers.auth import router as auth_router
 from routers.signup import router as signup_router
-from routers.admin_daily import router as admin_daily_router   # NEW DAILY REPORT
+from routers.admin import router as admin_router
+from routers.user_access import router as user_access_router
+from routers.admin_daily import router as admin_daily_router  # NEW DAILY ADMIN UPDATE
 
 
+# -------------------------------------------------
+# Create Application
+# -------------------------------------------------
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.PROJECT_NAME,
@@ -33,24 +38,18 @@ def create_app() -> FastAPI:
     )
 
     # -------------------------------------------------
-    # CORS — Updated for Cloudflare Pages & AinaReports
+    # CORS (Auto-built from settings.BACKEND_CORS_ORIGINS)
     # -------------------------------------------------
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "https://ainaprotocol.com",
-            "https://www.ainaprotocol.com",
-            "https://ainareports.com",
-            "https://www.ainareports.com",
-            settings.CLOUDFLARE_PAGES_DOMAIN,   # *.pages.dev
-        ],
+        allow_origins=settings.BACKEND_CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # -------------------------------------------------
-    # Startup
+    # Startup Logic
     # -------------------------------------------------
     @app.on_event("startup")
     async def on_startup():
@@ -61,11 +60,11 @@ def create_app() -> FastAPI:
         for route in app.routes:
             if route.path.startswith("/api/v1"):
                 methods = ",".join(route.methods or [])
-                print(f"➡️  {methods:10s} {route.path}")
+                print(f"➡️ {methods:12s} {route.path}")
         print("\n✅ Route log complete.\n")
 
     # -------------------------------------------------
-    # Centralized error handling
+    # Error Handling
     # -------------------------------------------------
     @app.exception_handler(StarletteHTTPException)
     async def handle_http(request: Request, exc: StarletteHTTPException):
@@ -84,30 +83,30 @@ def create_app() -> FastAPI:
         )
 
     # -------------------------------------------------
-    # Register Routers
+    # Register All Versioned Routers
     # -------------------------------------------------
     app.include_router(auth_router,        prefix="/api/v1")
     app.include_router(signup_router,      prefix="/api/v1")
     app.include_router(admin_router,       prefix="/api/v1")
     app.include_router(user_access_router, prefix="/api/v1")
 
-    # New Supabase-only routers
+    # Supabase Routers (canonical)
     app.include_router(buildings_router,   prefix="/api/v1")
     app.include_router(events_router,      prefix="/api/v1")
     app.include_router(documents_router,   prefix="/api/v1")
 
-    # New daily admin email report
+    # NEW: Daily Admin Update Email
     app.include_router(admin_daily_router, prefix="/api/v1")
 
     # -------------------------------------------------
-    # Root Route (redirect to Cloudflare auth page)
+    # Root — Redirect to Cloudflare login
     # -------------------------------------------------
     @app.get("/", include_in_schema=False)
     async def root():
-        return RedirectResponse(url="https://ainaprotocol.com/auth/login.html")
+        return RedirectResponse("https://ainaprotocol.com/auth/login.html")
 
     return app
 
 
-# Create API instance
+# Create the application instance
 app = create_app()
