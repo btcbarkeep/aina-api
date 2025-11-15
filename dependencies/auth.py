@@ -13,7 +13,7 @@ bearer_scheme = HTTPBearer()
 
 
 # -----------------------------------------------------
-# Shape of the authenticated user
+# Authenticated user object
 # -----------------------------------------------------
 class CurrentUser(BaseModel):
     user_id: str
@@ -24,7 +24,7 @@ class CurrentUser(BaseModel):
 
 
 # -----------------------------------------------------
-# Decode JWT → Fetch user from Supabase
+# Decode JWT → Validate user (with bootstrap override)
 # -----------------------------------------------------
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
@@ -38,41 +38,60 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    # -------------------------
+    # Decode JWT
+    # -------------------------
     try:
-        # Decode JWT
         payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
         )
-
-        email = payload.get("sub")
-        role = payload.get("role")
-        user_id = payload.get("user_id")
-
-        if not email or not user_id:
-            raise unauthorized
-
     except JWTError:
         raise unauthorized
 
-    # -----------------------------------------------------
-    # Fetch user from Supabase to validate + enrich object
-    # -----------------------------------------------------
-    client = get_supabase_client()
+    email = payload.get("sub")
+    role = payload.get("role")
+    user_id = payload.get("user_id")
 
-    result = (
-        client.table("users")
-        .select("*")
-        .eq("id", user_id)
-        .maybe_single()
-        .execute()
-    )
-
-    if result.error or not result.data:
+    if not email or not user_id:
         raise unauthorized
 
-    user = result.data
+    # -------------------------
+    # Allow bootstrap admin
+    # -------------------------
+    if user_id == "bootstrap" and role == "admin":
+        return CurrentUser(
+            user_id="bootstrap",
+            email=email,
+            role="admin",
+            full_name="Bootstrap Admin",
+            organization_name="System"
+        )
+
+    # -------------------------
+    # Look up user in Supabase
+    # -------------------------
+    client = get_supabase_client()
+
+    try:
+        result = (
+            client.table("users")
+            .select("*")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase error during user lookup: {str(e)}"
+        )
+
+    if not result.data:
+        raise unauthorized
+
+    user = result.data[0]
 
     return CurrentUser(
         user_id=user["id"],
@@ -84,7 +103,7 @@ def get_current_user(
 
 
 # -----------------------------------------------------
-# Role-based decorator
+# Role-based guard
 # -----------------------------------------------------
 def requires_role(required_role: str):
     def checker(current_user: CurrentUser = Depends(get_current_user)):
