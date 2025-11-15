@@ -196,6 +196,56 @@ def get_building(building_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Building not found")
     return building
 
+@router.delete("/{building_id}", summary="Delete Building (Local DB)")
+def delete_building_local(
+    building_id: int,
+    session: Session = Depends(get_session),
+    current_user: str = Depends(get_current_user),
+):
+    """
+    Delete a building record from the local database.
+    Prevents deletion if the building still has related events or documents.
+    """
+
+    # 1️⃣ Fetch building
+    building = session.get(Building, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    # 2️⃣ Optional integrity checks
+    # (Prevents deleting buildings that still have event/doc child records)
+    from models import Event, Document
+
+    # Check for child events
+    event_exists = session.exec(
+        select(Event).where(Event.building_id == building_id)
+    ).first()
+    if event_exists:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete building: events exist for this building."
+        )
+
+    # Check for documents via events
+    document_exists = session.exec(
+        select(Document).join(Event, Document.event_id == Event.id)
+        .where(Event.building_id == building_id)
+    ).first()
+    if document_exists:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete building: documents exist for this building."
+        )
+
+    # 3️⃣ Delete building
+    session.delete(building)
+    session.commit()
+
+    return {
+        "status": "deleted",
+        "id": building_id,
+        "message": f"Building '{building.name}' was deleted from the local database."
+    }
 
 # -----------------------------------------------------
 # SYNC ENTRYPOINT FOR FUTURE USE (clean + optional)
