@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from database import get_session
 from core.supabase_client import get_supabase_client
-from models import Building, BuildingCreate, BuildingRead
+from models import Building, BuildingCreate, BuildingRead, BuildingUpdate
 from dependencies.auth import get_current_user
 from typing import List, Optional
 import traceback
