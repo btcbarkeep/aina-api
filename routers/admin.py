@@ -6,9 +6,9 @@ from pydantic import BaseModel, EmailStr
 
 from database import get_session
 from dependencies.auth import get_current_user
-from models import User, UserBuildingAccess
-from models.user_create import AdminCreateUser
+from models import UserBuildingAccess
 
+from core.supabase_client import get_supabase_client
 from core.auth_helpers import (
     create_user_no_password,
     generate_password_setup_token,
@@ -17,7 +17,7 @@ from core.email_utils import send_password_setup_email
 
 
 # ---------------------------------------------------------
-# 🔐 PROTECT ALL ADMIN ROUTES
+# 🔐 PROTECT ENTIRE ROUTER WITH AUTH
 # ---------------------------------------------------------
 router = APIRouter(
     prefix="/api/v1/admin",
@@ -27,7 +27,7 @@ router = APIRouter(
 
 
 # ---------------------------------------------------------
-# UTILITY: Require admin role
+# UTILITY: ADMIN CHECK
 # ---------------------------------------------------------
 def require_admin(user):
     if getattr(user, "role", None) not in ("admin", "super_admin"):
@@ -35,19 +35,17 @@ def require_admin(user):
 
 
 # ---------------------------------------------------------
-# 1️⃣ CREATE USER (No password) + password setup email
+# 1️⃣ CREATE USER — stored in Supabase
 # ---------------------------------------------------------
 @router.post("/create-account", summary="Admin: Create a user account")
 def admin_create_account(
-    payload: AdminCreateUser,
-    current_user = Depends(get_current_user)
+    payload,
+    current_user=Depends(get_current_user),
 ):
-    # Only admins
-    if getattr(current_user, "role", None) != "admin":
-        raise HTTPException(status_code=403, detail="Admins only")
+    require_admin(current_user)
 
-    # 1. Create user in Supabase instead of internal DB
-    user = create_user_no_password(
+    # 1. Create user in Supabase
+    supa_user = create_user_no_password(
         full_name=payload.full_name,
         email=payload.email,
         organization_name=payload.organization_name,
@@ -55,137 +53,147 @@ def admin_create_account(
         role=payload.role,
     )
 
-    # 2. Create password setup token
+    # 2. Create token
     token = generate_password_setup_token(payload.email)
 
-    # 3. Email the token
+    # 3. Send email
     send_password_setup_email(payload.email, token)
 
     return {
         "status": "success",
         "message": f"Account created for {payload.email}. Password setup email sent.",
-        "debug_token": token
+        "debug_token": token,
     }
 
 
-
 # ---------------------------------------------------------
-# 2️⃣ LIST ALL USERS
+# 2️⃣ LIST ALL USERS (Supabase)
 # ---------------------------------------------------------
 @router.get("/users", summary="Admin: List all users")
-def list_users(
-    session: Session = Depends(get_session),
-    current_user=Depends(get_current_user),
-):
+def list_users(current_user=Depends(get_current_user)):
     require_admin(current_user)
 
-    users = session.exec(select(User)).all()
-    return users
+    client = get_supabase_client()
+
+    result = client.table("users").select("*").execute()
+
+    if result.error:
+        raise HTTPException(status_code=500, detail="Supabase error fetching users")
+
+    return result.data
 
 
 # ---------------------------------------------------------
-# 3️⃣ LIST BUILDING ACCESS FOR A USER
+# 3️⃣ LIST BUILDING ACCESS FOR USER (local table)
 # ---------------------------------------------------------
 @router.get("/users/{user_id}/access", summary="Admin: Get building access for a user")
 def get_user_access(
-    user_id: int,
+    user_id: str,
     session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
     require_admin(current_user)
 
-    user = session.get(User, user_id)
-    if not user:
+    # Fetch Supabase user by id
+    client = get_supabase_client()
+    user_res = client.table("users").select("*").eq("id", user_id).maybe_single().execute()
+
+    if not user_res.data:
         raise HTTPException(status_code=404, detail="User not found")
 
+    email = user_res.data["email"]
+
+    # Fetch access rows from local DB
     rows = session.exec(
-        select(UserBuildingAccess).where(UserBuildingAccess.username == user.email)
+        select(UserBuildingAccess).where(UserBuildingAccess.username == email)
     ).all()
 
     return rows
 
 
 # ---------------------------------------------------------
-# 4️⃣ UPDATE USER (name, organization, etc.)
+# 4️⃣ UPDATE USER (Supabase)
 # ---------------------------------------------------------
 class AdminUpdateUser(BaseModel):
     full_name: str | None = None
     organization_name: str | None = None
-    role: str | None = None   # admin, hoa, contractor, owner, etc.
+    role: str | None = None
+    phone: str | None = None
 
 
 @router.patch("/users/{user_id}", summary="Admin: Update user")
 def update_user(
-    user_id: int,
+    user_id: str,
     payload: AdminUpdateUser,
-    session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
     require_admin(current_user)
 
-    user = session.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    client = get_supabase_client()
 
-    if payload.full_name:
-        user.full_name = payload.full_name
+    update_data = {k: v for k, v in payload.dict().items() if v is not None}
+    update_data["updated_at"] = "now()"
 
-    if payload.organization_name:
-        user.organization_name = payload.organization_name
+    result = client.table("users").update(update_data).eq("id", user_id).execute()
 
-    if payload.role:
-        user.role = payload.role
+    if result.error:
+        raise HTTPException(status_code=500, detail=f"Supabase error: {result.error}")
 
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-
-    return {"status": "updated", "user": user}
+    return {"status": "updated", "user": result.data}
 
 
 # ---------------------------------------------------------
-# 5️⃣ DELETE USER
+# 5️⃣ DELETE USER (Supabase + clear access locally)
 # ---------------------------------------------------------
 @router.delete("/users/{user_id}", summary="Admin: Delete user")
 def delete_user(
-    user_id: int,
+    user_id: str,
     session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
     require_admin(current_user)
+    client = get_supabase_client()
 
-    user = session.get(User, user_id)
-    if not user:
+    # Fetch email to clean local access
+    res = client.table("users").select("*").eq("id", user_id).maybe_single().execute()
+    if not res.data:
         raise HTTPException(status_code=404, detail="User not found")
 
-    session.delete(user)
+    email = res.data["email"]
+
+    # Delete user from Supabase
+    delete_res = client.table("users").delete().eq("id", user_id).execute()
+    if delete_res.error:
+        raise HTTPException(status_code=500, detail=f"Supabase error: {delete_res.error}")
+
+    # Cleanup building access locally
+    session.exec(
+        select(UserBuildingAccess).where(UserBuildingAccess.username == email)
+    )
     session.commit()
 
-    # cleanup building access
-    session.exec(
-        select(UserBuildingAccess)
-        .where(UserBuildingAccess.username == user.email)
-    )
-
-    return {"status": "deleted", "email": user.email}
+    return {"status": "deleted", "email": email}
 
 
 # ---------------------------------------------------------
-# 6️⃣ RESEND PASSWORD SETUP EMAIL
+# 6️⃣ RESEND PASSWORD SETUP EMAIL (Supabase)
 # ---------------------------------------------------------
 @router.post("/users/{user_id}/resend-password", summary="Admin: Re-send password setup email")
 def resend_password_setup(
-    user_id: int,
-    session: Session = Depends(get_session),
+    user_id: str,
     current_user=Depends(get_current_user),
 ):
     require_admin(current_user)
 
-    user = session.get(User, user_id)
-    if not user:
+    client = get_supabase_client()
+    user_res = client.table("users").select("*").eq("id", user_id).maybe_single().execute()
+
+    if not user_res.data:
         raise HTTPException(status_code=404, detail="User not found")
 
-    token = generate_password_setup_token(user.email)
-    send_password_setup_email(user.email, token)
+    email = user_res.data["email"]
 
-    return {"status": "email_sent", "email": user.email, "debug_token": token}
+    token = generate_password_setup_token(email)
+    send_password_setup_email(email, token)
+
+    return {"status": "email_sent", "email": email, "debug_token": token}
