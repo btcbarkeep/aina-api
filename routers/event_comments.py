@@ -1,7 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
-from dependencies.auth import get_current_user, requires_role
+from dependencies.auth import (
+    get_current_user,
+    requires_role,
+    CurrentUser,
+)
+
 from core.supabase_client import get_supabase_client
 from models.event_comment import (
     EventCommentCreate,
@@ -18,8 +23,8 @@ router = APIRouter(
 EVENT COMMENTS ROUTER (SUPABASE)
 
 Rules:
-- Any authenticated user with building access may CREATE comments
-- Any authenticated user may LIST comments for an event
+- Any authenticated user WITH BUILDING ACCESS may LIST comments
+- Any authenticated user WITH BUILDING ACCESS may CREATE comments
 - Only ADMINS may UPDATE or DELETE comments
 """
 
@@ -44,7 +49,7 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
-# Helper: check if user has access to building
+# Helper: check building access
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
@@ -65,7 +70,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# LIST COMMENTS FOR AN EVENT
+# LIST COMMENTS (must have building access)
 # -----------------------------------------------------
 @router.get(
     "/supabase/{event_id}",
@@ -74,13 +79,12 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 )
 def list_event_comments(
     event_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
-    # Users must have building access to VIEW comments too
     building_id = get_event_building_id(event_id)
-    verify_user_building_access_supabase(current_user["id"], building_id)
+    verify_user_building_access_supabase(current_user.user_id, building_id)
 
     result = (
         client.table("event_comments")
@@ -94,7 +98,7 @@ def list_event_comments(
 
 
 # -----------------------------------------------------
-# CREATE COMMENT
+# CREATE COMMENT (must have building access)
 # -----------------------------------------------------
 @router.post(
     "/supabase",
@@ -103,26 +107,20 @@ def list_event_comments(
 )
 def create_event_comment(
     payload: EventCommentCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
-    # Determine building access
     building_id = get_event_building_id(payload.event_id)
-    verify_user_building_access_supabase(current_user["id"], building_id)
+    verify_user_building_access_supabase(current_user.user_id, building_id)
 
-    # Auto-attach user_id
     comment_data = {
         "event_id": payload.event_id,
-        "user_id": current_user["id"],
+        "user_id": current_user.user_id,
         "comment_text": payload.comment_text,
     }
 
-    result = (
-        client.table("event_comments")
-        .insert(comment_data)
-        .execute()
-    )
+    result = client.table("event_comments").insert(comment_data).execute()
 
     if not result.data:
         raise HTTPException(status_code=500, detail="Supabase insert failed")
@@ -136,19 +134,16 @@ def create_event_comment(
 @router.put(
     "/supabase/{comment_id}",
     response_model=EventCommentRead,
-    summary="Update a comment (admin only)"
+    summary="Update a comment (admin only)",
+    dependencies=[Depends(requires_role(["admin"]))],
 )
 def update_event_comment(
     comment_id: str,
     payload: EventCommentUpdate,
-    current_user: dict = Depends(get_current_user)
 ):
-    # Role guard
-    requires_role(current_user, ["admin"])
-
     client = get_supabase_client()
 
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
 
     result = (
         client.table("event_comments")
@@ -168,15 +163,12 @@ def update_event_comment(
 # -----------------------------------------------------
 @router.delete(
     "/supabase/{comment_id}",
-    summary="Delete a comment (admin only)"
+    summary="Delete a comment (admin only)",
+    dependencies=[Depends(requires_role(["admin"]))],
 )
 def delete_event_comment(
     comment_id: str,
-    current_user: dict = Depends(get_current_user)
 ):
-    # Role guard
-    requires_role(current_user, ["admin"])
-
     client = get_supabase_client()
 
     result = (
