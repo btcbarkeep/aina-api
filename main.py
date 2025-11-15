@@ -92,6 +92,17 @@ def create_app() -> FastAPI:
     app.include_router(signup.router, prefix="/api/v1")       # future: public signup flow
 
     # -------------------------------------------------
+    # Static Frontend (Admin UI + Auth UI)
+    # -------------------------------------------------
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/admin", StaticFiles(directory="admin"), name="admin")
+    app.mount("/auth", StaticFiles(directory="auth"), name="auth")
+    app.mount("/css", StaticFiles(directory="css"), name="css")
+    app.mount("/js", StaticFiles(directory="js"), name="js")
+    app.mount("/img", StaticFiles(directory="img"), name="img")
+
+    # -------------------------------------------------
     # Root endpoint
     # -------------------------------------------------
     @app.get("/", tags=["Health"], summary="API Uptime & Version Check")
