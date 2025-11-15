@@ -25,12 +25,14 @@ def send_webhook_message(message: str):
 # -----------------------------------------------------
 # 📧 Send email (SMTP)
 # -----------------------------------------------------
-def send_email(subject: str, body: str):
+def send_email(subject: str, body: str, to: str = None):
     smtp_host = settings.SMTP_HOST
     smtp_port = settings.SMTP_PORT
     smtp_user = settings.SMTP_USER
     smtp_pass = settings.SMTP_PASS
-    recipient = settings.SMTP_TO
+
+    # If a specific recipient isn't provided, fall back to default
+    recipient = to or settings.SMTP_TO
 
     if not all([smtp_host, smtp_port, smtp_user, smtp_pass, recipient]):
         print("[NOTIFY] Email credentials missing — skipping email.")
@@ -46,6 +48,7 @@ def send_email(subject: str, body: str):
         with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
+
         print(f"[NOTIFY] Email sent to {recipient}")
 
     except Exception as e:
