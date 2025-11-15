@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-from jose import jwt
+from jose import jwt, JWTError
 from passlib.context import CryptContext
 
 from core.config import settings
@@ -17,14 +17,13 @@ from dependencies.auth import get_current_user, CurrentUser
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"],
-    responses={401: {"description": "Unauthorized"}},
 )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # -----------------------------------------------------
-# Request / Response Models
+# Models
 # -----------------------------------------------------
 class LoginRequest(BaseModel):
     email: str
@@ -70,38 +69,38 @@ def _create_access_token(email: str, role: str, user_id: str):
 def login(payload: LoginRequest):
     client = get_supabase_client()
 
-    # 1️⃣ Fetch user by email
+    # Fetch user
     try:
-        result = (
+        query = (
             client.table("users")
             .select("*")
             .eq("email", payload.email)
-            .limit(1)
+            .single()
             .execute()
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Supabase query failed: {str(e)}",
+            500,
+            f"Supabase query failed: {e}"
         )
 
-    if not result.data:
+    user = query.data
+
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            401,
+            "Invalid email or password"
         )
 
-    user = result.data[0]
-
-    # 2️⃣ Validate password
+    # Validate password
     hashed_pw = user.get("hashed_password")
     if not hashed_pw or not verify_password(payload.password, hashed_pw):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            401,
+            "Invalid email or password"
         )
 
-    # 3️⃣ JWT response
+    # Generate token
     token = _create_access_token(
         email=user["email"],
         role=user.get("role", "hoa"),
@@ -112,10 +111,13 @@ def login(payload: LoginRequest):
 
 
 # -----------------------------------------------------
-# DEV ADMIN LOGIN (for bootstrapping ONLY)
+# DEV ADMIN LOGIN — DISABLED IN PRODUCTION
 # -----------------------------------------------------
-@router.post("/dev-login", summary="Temporary admin login")
+@router.post("/dev-login", summary="Temporary admin login (development only)")
 def dev_login():
+    if settings.ENV == "production":
+        raise HTTPException(403, "dev-login disabled in production")
+
     token = jwt.encode(
         {
             "sub": "bootstrap-admin",
@@ -131,52 +133,65 @@ def dev_login():
 
 
 # -----------------------------------------------------
-# AUTH CHECK — returns CurrentUser (email, role, user_id)
+# AUTH CHECK (returns current user)
 # -----------------------------------------------------
-@router.get("/me", response_model=CurrentUser, summary="Return authenticated user")
+@router.get("/me", response_model=CurrentUser, summary="Current authenticated user")
 def read_me(current_user: CurrentUser = Depends(get_current_user)):
-    """
-    This is what the dashboard uses to check if the user is logged in.
-    """
     return current_user
 
 
 # -----------------------------------------------------
-# SET PASSWORD (after clicking email link)
+# SET PASSWORD (secure)
 # -----------------------------------------------------
 @router.post("/set-password", summary="Finish account setup by creating password")
 def set_password(payload: SetPasswordRequest):
     client = get_supabase_client()
 
-    # 1️⃣ Decode the email from token
+    # 1️⃣ Decode the reset token
     try:
-        email = jwt.decode(
+        decoded = jwt.decode(
             payload.token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
-        )["sub"]
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
+        )
+        email = decoded.get("sub")
+        if not email:
+            raise Exception("No email in token")
+    except JWTError:
+        raise HTTPException(400, "Invalid or expired token")
 
-    # 2️⃣ Hash password
+    # 2️⃣ Fetch user record to verify reset token
+    result = (
+        client.table("users")
+        .select("*")
+        .eq("email", email)
+        .single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(404, "User not found")
+
+    user = result.data
+
+    # 3️⃣ Verify token matches DB & is not expired
+    if not user.get("reset_token") or user["reset_token"] != payload.token:
+        raise HTTPException(400, "Invalid password reset token")
+
+    expires = user.get("reset_token_expires")
+    if expires and datetime.fromisoformat(expires) < datetime.utcnow():
+        raise HTTPException(400, "Reset token expired")
+
+    # 4️⃣ Update password
     hashed_pw = hash_password(payload.password)
 
-    # 3️⃣ Save to Supabase
-    try:
-        result = (
-            client.table("users")
-            .update({
-                "hashed_password": hashed_pw,
-                "reset_token": None,
-                "reset_token_expires": None,
-            })
-            .eq("email", email)
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to set password: {e}")
+    client.table("users").update({
+        "hashed_password": hashed_pw,
+        "reset_token": None,
+        "reset_token_expires": None,
+    }).eq("email", email).execute()
 
     return {
         "status": "success",
-        "message": "Password created successfully!"
+        "message": "Password created successfully!",
     }
