@@ -91,31 +91,17 @@ def create_app() -> FastAPI:
     app.include_router(auth_password.router, prefix="/api/v1")# password setup
     app.include_router(signup.router, prefix="/api/v1")       # future: public signup flow
 
-    # -------------------------------------------------
-    # Static Frontend (Admin UI + Auth UI)
-    # -------------------------------------------------
-    
-    from fastapi.staticfiles import StaticFiles
-
-    app.mount("/admin", StaticFiles(directory="admin"), name="admin")
-    app.mount("/auth", StaticFiles(directory="auth"), name="auth")
-    app.mount("/css", StaticFiles(directory="css"), name="css")
-    app.mount("/js", StaticFiles(directory="js"), name="js")
-    app.mount("/img", StaticFiles(directory="img"), name="img")
 
     # -------------------------------------------------
     # Root endpoint → redirect to login UI
     # -------------------------------------------------
     
-    from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse
 
     @app.get("/", include_in_schema=False)
     async def root():
-        return RedirectResponse(url="/auth/login.html")
+        return RedirectResponse(url="https://your-cloudflare-domain/auth/login.html")
 
-
-
-    return app
 
 
 # --------------------------------------------------------
