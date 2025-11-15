@@ -3,37 +3,27 @@
 from fastapi import HTTPException
 from datetime import datetime, timedelta
 from uuid import uuid4
-from sqlmodel import Session, select
-
-# Use python-jose, NOT plain jwt
 from jose import jwt
-
-
-from models import (
-    UserBuildingAccess,
-    User,
-    PasswordResetToken
-)
+from passlib.context import CryptContext
 
 from core.config import settings
+from core.supabase_client import get_supabase_client
 
-SECRET_KEY = settings.JWT_SECRET_KEY       # ✅ correct
-ALGORITHM = settings.JWT_ALGORITHM         # ✅ correct (HS256)
 
+SECRET_KEY = settings.JWT_SECRET_KEY
+ALGORITHM = settings.JWT_ALGORITHM
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ============================================================
-# 🔐 VERIFY USER HAS ACCESS TO A BUILDING
+# 🔐 BUILDING ACCESS CHECK (still uses SQLModel access table)
 # ============================================================
-def verify_user_building_access(session: Session, username: str, building_id: int) -> None:
+def verify_user_building_access(session, username: str, building_id: int) -> None:
     """
-    Verify that a user has permission to access a specific building.
-
-    Rules:
-    - Contractors → full access
-    - HOA Manager/Board → only assigned buildings
-    - If no match → 403
+    Building permissions are still stored locally for now.
     """
+    from models import UserBuildingAccess
 
     # Contractor = global access
     contractor = session.exec(
@@ -43,9 +33,9 @@ def verify_user_building_access(session: Session, username: str, building_id: in
     ).first()
 
     if contractor:
-        return  # ✔ global access
+        return
 
-    # Check access to a specific building
+    # Standard building access check
     allowed = session.exec(
         select(UserBuildingAccess)
         .where(UserBuildingAccess.username == username)
@@ -60,93 +50,111 @@ def verify_user_building_access(session: Session, username: str, building_id: in
 
 
 # ============================================================
-# 👤 CREATE USER *WITHOUT* A PASSWORD
+# 👤 CREATE USER *IN SUPABASE* (NO PASSWORD)
 # ============================================================
 def create_user_no_password(
-    session: Session,
     full_name: str,
     email: str,
-    organization_name: str
-
+    organization_name: str,
+    phone: str | None = None,
+    role: str = "hoa",
 ):
     """
-    Creates a user in the local database with NO password.
-    Used for:
-    - Admin-created HOA accounts
-    - Approved signup requests
+    Creates a user *in Supabase*, not in the local database.
     """
 
-    # Prevent duplicate email accounts
-    existing = session.exec(select(User).where(User.email == email)).first()
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="A user with this email already exists."
-        )
+    client = get_supabase_client()
 
-    user = User(
-        username=email,
-        email=email,
-        full_name=full_name,
-        organization_name=organization_name,
-        hashed_password=None,   # User sets password later
-        created_at=datetime.utcnow(),
-    )
+    # Check if email already exists
+    existing = client.table("users").select("*").eq("email", email).maybe_single().execute()
 
-    session.add(user)
-    session.commit()
-    session.refresh(user)
+    if existing.data:
+        raise HTTPException(status_code=400, detail="A user with this email already exists.")
 
-    return user
+    user_id = str(uuid4())
+    now = datetime.utcnow().isoformat()
+
+    # Create Supabase user row
+    result = client.table("users").insert({
+        "id": user_id,
+        "username": email,
+        "email": email,
+        "full_name": full_name,
+        "organization_name": organization_name,
+        "phone": phone,
+        "role": role,
+        "hashed_password": None,
+        "created_at": now,
+        "updated_at": now,
+    }).execute()
+
+    if result.error:
+        raise HTTPException(status_code=500, detail=f"Supabase error: {result.error}")
+
+    return {"id": user_id, "email": email}
 
 
 # ============================================================
-# 🔑 CREATE PASSWORD-RESET TOKEN ENTRY (DB STORED)
+# 🔑 CREATE PASSWORD RESET TOKEN (IN SUPABASE)
 # ============================================================
-def create_password_token(
-    session: Session,
-    user_id: int,
-    expires_minutes: int = 60
-) -> str:
+def create_password_token(email: str, expires_minutes: int = 60):
     """
-    Creates a unique token stored in the DB.
-    Used for password setup via emailed link.
+    Store a password reset token in the Supabase users table.
     """
+
+    client = get_supabase_client()
 
     token = uuid4().hex
     expires_at = datetime.utcnow() + timedelta(minutes=expires_minutes)
 
-    reset_entry = PasswordResetToken(
-        user_id=user_id,
-        token=token,
-        created_at=datetime.utcnow(),
-        expires_at=expires_at,
-    )
+    result = client.table("users").update({
+        "reset_token": token,
+        "reset_token_expires": expires_at.isoformat()
+    }).eq("email", email).execute()
 
-    session.add(reset_entry)
-    session.commit()
-    session.refresh(reset_entry)
+    if result.error:
+        raise HTTPException(status_code=500, detail=f"Supabase error: {result.error}")
 
     return token
 
 
 # ============================================================
-# 📧 JWT TOKEN FOR PASSWORD SETUP (emailed link)
+# 🔍 FETCH USER FROM SUPABASE
+# ============================================================
+def get_user_by_email(email: str):
+    client = get_supabase_client()
+
+    result = client.table("users").select("*").eq("email", email).maybe_single().execute()
+
+    if result.error:
+        raise HTTPException(status_code=500, detail="Supabase query failed.")
+
+    return result.data
+
+
+# ============================================================
+# 🔐 PASSWORD HASHING / VERIFYING
+# ============================================================
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    if not hashed:
+        return False
+    return pwd_context.verify(plain, hashed)
+
+
+# ============================================================
+# 📧 JWT — PASSWORD SETUP TOKEN (emailed)
 # ============================================================
 def generate_password_setup_token(email: str) -> str:
-    """
-    Creates a signed JWT the user clicks to set a password.
-    This token is NOT stored in the database.
-    """
     expire = datetime.utcnow() + timedelta(hours=24)
-    data = {"sub": email, "exp": expire}
-    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+    payload = {"sub": email, "exp": expire}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def verify_password_setup_token(token: str) -> str:
-    """
-    Verifies JWT token → returns email.
-    """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload["sub"]
