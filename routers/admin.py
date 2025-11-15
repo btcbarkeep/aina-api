@@ -5,7 +5,7 @@ from pydantic import BaseModel, EmailStr
 from sqlmodel import Session
 
 from database import get_session
-from models import UserBuildingAccess
+from models import SignupRequest, UserBuildingAccess
 from core.auth_helpers import (
     create_user_no_password,
     generate_password_setup_token,
