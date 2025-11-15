@@ -15,7 +15,7 @@ from models.document import (
 
 from models.event import Event
 from models.building import Building
-from models.user_access import UserBuildingAccess
+from models.user import UserBuildingAccess
 
 
 from core.supabase_client import get_supabase_client
