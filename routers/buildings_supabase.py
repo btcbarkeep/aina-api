@@ -141,13 +141,13 @@ def update_building_supabase(
     client = get_supabase_client()
 
     # Only send fields user actually provided
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
 
     try:
         result = (
             client.table("buildings")
             .update(update_data)
-            .eq("id", building_id)
+            .eq("building_id", building_id)
             .execute()
         )
 
