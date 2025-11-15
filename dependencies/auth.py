@@ -12,9 +12,9 @@ from core.supabase_client import get_supabase_client
 bearer_scheme = HTTPBearer()
 
 
-# -----------------------------------------------------
-# Authenticated user object
-# -----------------------------------------------------
+# ============================================================
+# Current User object returned to the frontend
+# ============================================================
 class CurrentUser(BaseModel):
     user_id: str
     email: str
@@ -23,24 +23,23 @@ class CurrentUser(BaseModel):
     organization_name: Optional[str] = None
 
 
-# -----------------------------------------------------
-# Decode JWT → Validate user (with bootstrap override)
-# -----------------------------------------------------
+# ============================================================
+# Decode + Validate the JWT and lookup user in Supabase
+# ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ) -> CurrentUser:
 
     token = credentials.credentials
-
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired authentication token",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # -------------------------
-    # Decode JWT
-    # -------------------------
+    # -------------------------------------------------
+    # Decode token
+    # -------------------------------------------------
     try:
         payload = jwt.decode(
             token,
@@ -51,27 +50,27 @@ def get_current_user(
         raise unauthorized
 
     email = payload.get("sub")
-    role = payload.get("role")
     user_id = payload.get("user_id")
+    role_from_token = payload.get("role")
 
     if not email or not user_id:
         raise unauthorized
 
-    # -------------------------
-    # Allow bootstrap admin
-    # -------------------------
-    if user_id == "bootstrap" and role == "admin":
+    # -------------------------------------------------
+    # Bootstrap Admin Override
+    # -------------------------------------------------
+    if user_id == "bootstrap" and role_from_token == "admin":
         return CurrentUser(
             user_id="bootstrap",
             email=email,
             role="admin",
             full_name="Bootstrap Admin",
-            organization_name="System"
+            organization_name="System",
         )
 
-    # -------------------------
-    # Look up user in Supabase
-    # -------------------------
+    # -------------------------------------------------
+    # Lookup user in Supabase
+    # -------------------------------------------------
     client = get_supabase_client()
 
     try:
@@ -79,32 +78,35 @@ def get_current_user(
             client.table("users")
             .select("*")
             .eq("id", user_id)
-            .limit(1)
+            .single()
             .execute()
         )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Supabase error during user lookup: {str(e)}"
+            detail=f"Supabase error during user lookup: {str(e)}",
         )
 
     if not result.data:
         raise unauthorized
 
-    user = result.data[0]
+    user = result.data
 
+    # -------------------------------------------------
+    # Build CurrentUser object
+    # -------------------------------------------------
     return CurrentUser(
         user_id=user["id"],
         email=user["email"],
-        role=user.get("role", role),
+        role=user.get("role", "hoa"),
         full_name=user.get("full_name"),
         organization_name=user.get("organization_name"),
     )
 
 
-# -----------------------------------------------------
-# Role-based guard
-# -----------------------------------------------------
+# ============================================================
+# Role Requirement Wrapper
+# ============================================================
 def requires_role(required_role: str):
     def checker(current_user: CurrentUser = Depends(get_current_user)):
         if current_user.role != required_role:
@@ -113,5 +115,19 @@ def requires_role(required_role: str):
                 detail=f"Requires '{required_role}' role",
             )
         return current_user
-
     return checker
+
+
+# ============================================================
+# Admin Requirement Wrapper (shortcut)
+# ============================================================
+def require_admin(current_user: CurrentUser = Depends(get_current_user)):
+    """
+    Shortcut dependency used in admin routes.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required",
+        )
+    return current_user
