@@ -4,12 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
 from core.supabase_client import get_supabase_client
-from dependencies.auth import get_current_user, CurrentUser
-from dependencies.auth import requires_role
-
-
+from dependencies.auth import get_current_user, CurrentUser, requires_role
 from pydantic import BaseModel
-
 
 router = APIRouter(
     prefix="/user-access",
@@ -34,10 +30,12 @@ class UserBuildingAccessRead(BaseModel):
 # ============================================================
 # Admin — List all user access entries
 # ============================================================
-@router.get("/", summary="Admin: List all user access records")
-def list_user_access(
-    current_user: CurrentUser = Depends(require_admin)
-):
+@router.get(
+    "/", 
+    summary="Admin: List all user access records",
+    dependencies=[Depends(requires_role("admin"))]
+)
+def list_user_access():
     client = get_supabase_client()
 
     try:
@@ -50,10 +48,13 @@ def list_user_access(
 # ============================================================
 # Admin — Grant user access to a building
 # ============================================================
-@router.post("/", summary="Admin: Add user → building access")
+@router.post(
+    "/", 
+    summary="Admin: Add user → building access",
+    dependencies=[Depends(requires_role("admin"))]
+)
 def add_user_access(
     payload: UserBuildingAccessCreate,
-    current_user: CurrentUser = Depends(require_admin),
 ):
     client = get_supabase_client()
 
@@ -66,20 +67,21 @@ def add_user_access(
             })
             .execute()
         )
+        return result.data[0]
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert failed: {e}")
-
-    return result.data[0]
 
 
 # ============================================================
 # Admin — Remove a user’s building access
 # ============================================================
-@router.delete("/{access_id}", summary="Admin: Delete an access entry")
-def delete_user_access(
-    access_id: str,
-    current_user: CurrentUser = Depends(require_admin)
-):
+@router.delete(
+    "/{access_id}",
+    summary="Admin: Delete a user access entry",
+    dependencies=[Depends(requires_role("admin"))]
+)
+def delete_user_access(access_id: str):
     client = get_supabase_client()
 
     try:
@@ -107,7 +109,6 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
     """
     Returns all building IDs that the authenticated user can manage.
     """
-
     client = get_supabase_client()
 
     try:
