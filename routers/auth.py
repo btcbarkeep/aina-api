@@ -8,7 +8,11 @@ from passlib.context import CryptContext
 
 from core.config import settings
 from core.supabase_client import get_supabase_client
-from dependencies.auth import CurrentUser
+from core.auth_helpers import (
+    hash_password,
+    verify_password,
+)
+from dependencies.auth import get_current_user, CurrentUser
 
 router = APIRouter(
     prefix="/auth",
@@ -20,7 +24,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # -----------------------------------------------------
-# Request/Response Models
+# Request / Response Models
 # -----------------------------------------------------
 class LoginRequest(BaseModel):
     email: str
@@ -30,6 +34,11 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class SetPasswordRequest(BaseModel):
+    token: str
+    password: str
 
 
 # -----------------------------------------------------
@@ -55,12 +64,13 @@ def _create_access_token(email: str, role: str, user_id: str):
 
 
 # -----------------------------------------------------
-# LOGIN (Supabase-native)
+# LOGIN (Supabase)
 # -----------------------------------------------------
 @router.post("/login", response_model=TokenResponse, summary="Authenticate user")
 def login(payload: LoginRequest):
     client = get_supabase_client()
 
+    # 1️⃣ Fetch user by email
     try:
         result = (
             client.table("users")
@@ -75,33 +85,35 @@ def login(payload: LoginRequest):
             detail=f"Supabase query failed: {str(e)}",
         )
 
-    # result.data will be a list or None
     if not result.data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
-    # Get the first user (maybe_single no longer works the same)
     user = result.data[0]
 
-    # Validate password
+    # 2️⃣ Validate password
     hashed_pw = user.get("hashed_password")
-    if not hashed_pw or not pwd_context.verify(payload.password, hashed_pw):
+    if not hashed_pw or not verify_password(payload.password, hashed_pw):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
-    # Generate JWT
+    # 3️⃣ JWT response
     token = _create_access_token(
         email=user["email"],
-        role=user.get("role", "user"),
+        role=user.get("role", "hoa"),
         user_id=user["id"],
     )
 
     return TokenResponse(access_token=token)
 
+
+# -----------------------------------------------------
+# DEV ADMIN LOGIN (for bootstrapping ONLY)
+# -----------------------------------------------------
 @router.post("/dev-login", summary="Temporary admin login")
 def dev_login():
     token = jwt.encode(
@@ -119,25 +131,24 @@ def dev_login():
 
 
 # -----------------------------------------------------
-# VALIDATE TOKEN → returns CurrentUser
+# AUTH CHECK — returns CurrentUser (email, role, user_id)
 # -----------------------------------------------------
-@router.get("/me", response_model=CurrentUser)
-def read_me(current_user: CurrentUser = Depends(lambda: None)):
+@router.get("/me", response_model=CurrentUser, summary="Return authenticated user")
+def read_me(current_user: CurrentUser = Depends(get_current_user)):
+    """
+    This is what the dashboard uses to check if the user is logged in.
+    """
     return current_user
 
 
-## password backend endpoint
-
-class SetPasswordRequest(BaseModel):
-    token: str
-    password: str
-
-
+# -----------------------------------------------------
+# SET PASSWORD (after clicking email link)
+# -----------------------------------------------------
 @router.post("/set-password", summary="Finish account setup by creating password")
 def set_password(payload: SetPasswordRequest):
     client = get_supabase_client()
 
-    # Decode email from token
+    # 1️⃣ Decode the email from token
     try:
         email = jwt.decode(
             payload.token,
@@ -147,23 +158,25 @@ def set_password(payload: SetPasswordRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
 
-    # Hash the password
-    hashed_pw = pwd_context.hash(payload.password)
+    # 2️⃣ Hash password
+    hashed_pw = hash_password(payload.password)
 
-    # Save password to Supabase
-    result = (
-        client.table("users")
-        .update({
-            "hashed_password": hashed_pw,
-            "reset_token": None,
-            "reset_token_expires": None,
-        })
-        .eq("email", email)
-        .execute()
-    )
+    # 3️⃣ Save to Supabase
+    try:
+        result = (
+            client.table("users")
+            .update({
+                "hashed_password": hashed_pw,
+                "reset_token": None,
+                "reset_token_expires": None,
+            })
+            .eq("email", email)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set password: {e}")
 
-    if result.error:
-        raise HTTPException(status_code=500, detail="Failed to set password")
-
-    return {"status": "success", "message": "Password created successfully!"}
-
+    return {
+        "status": "success",
+        "message": "Password created successfully!"
+    }
