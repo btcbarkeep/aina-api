@@ -3,26 +3,31 @@ from sqlmodel import Session, select
 from datetime import datetime
 
 from database import get_session
-from dependencies.auth import get_current_user   # 👈 ADD THIS
+from dependencies.auth import (
+    get_current_user,
+    requires_role,
+    CurrentUser,
+)
 from core.notifications import send_email
-from models.signup import SignupRequest
-from models.signup import SignupRequestCreate
+from models.signup import SignupRequest, SignupRequestCreate
 
 from core.auth_helpers import create_user_no_password, create_password_token
 
 
 router = APIRouter(
     prefix="/signup",
-    tags=["Signup"]   # 👈 add this
+    tags=["Signup"]
 )
 
 
 # -----------------------------------------------------
-# 1️⃣ PUBLIC REQUEST-ACCESS ENDPOINT (WITH MODEL)
+# 1️⃣ PUBLIC REQUEST-ACCESS ENDPOINT (NO AUTH)
 # -----------------------------------------------------
 @router.post("/request", summary="Public Sign-Up Request")
-def request_access(payload: SignupRequestCreate, session: Session = Depends(get_session)):
-
+def request_access(
+    payload: SignupRequestCreate,
+    session: Session = Depends(get_session)
+):
     req = SignupRequest(
         full_name=payload.full_name,
         email=payload.email,
@@ -36,7 +41,7 @@ def request_access(payload: SignupRequestCreate, session: Session = Depends(get_
     session.commit()
     session.refresh(req)
 
-    # Confirmation email to requester
+    # Notify requester
     send_email(
         subject="Aina Protocol - Signup Request Received",
         body=f"""
@@ -50,7 +55,7 @@ Aina Protocol Team
         to=payload.email,
     )
 
-    # Notify admin
+    # Notify admin(s)
     send_email(
         subject="New Signup Request - Aina Protocol",
         body=f"""
@@ -70,58 +75,54 @@ Notes:
     return {"status": "success", "request_id": req.id}
 
 
-
 # -----------------------------------------------------
-# 2️⃣ LIST ALL SIGNUP REQUESTS (ADMIN ONLY)
+# 2️⃣ LIST ALL SIGNUP REQUESTS — ADMIN ONLY
 # -----------------------------------------------------
-@router.get("/requests", summary="List Signup Requests")
+@router.get(
+    "/requests",
+    summary="List Signup Requests",
+    dependencies=[Depends(requires_role(["admin"]))],
+)
 def list_requests(
-    session: Session = Depends(get_session),
-    current_user=Depends(get_current_user)
+    session: Session = Depends(get_session)
 ):
-    """
-    Admin-only: View all signup requests.
-    """
     return session.exec(select(SignupRequest)).all()
 
 
 # -----------------------------------------------------
-# 3️⃣ APPROVE SIGNUP REQUEST (ADMIN)
+# 3️⃣ APPROVE SIGNUP REQUEST — ADMIN ONLY
 # -----------------------------------------------------
-@router.post("/requests/{request_id}/approve", summary="Approve Signup Request")
+@router.post(
+    "/requests/{request_id}/approve",
+    summary="Approve Signup Request",
+    dependencies=[Depends(requires_role(["admin"]))],
+)
 def approve_request(
     request_id: int,
     session: Session = Depends(get_session),
-    current_user=Depends(get_current_user)
 ):
-    """
-    Approve a signup request, create a user account with NO password,
-    and send password setup link.
-    """
-
     req = session.get(SignupRequest, request_id)
     if not req:
-        raise HTTPException(status_code=404, detail="Signup request not found")
+        raise HTTPException(404, "Signup request not found")
 
     if req.status != "pending":
-        raise HTTPException(status_code=400, detail="Request already processed")
+        raise HTTPException(400, "Request already processed")
 
-    # Create the user with NO password yet
+    # Create user without password
     new_user = create_user_no_password(
         session=session,
         full_name=req.full_name,
         email=req.email,
-        organization_name=req.organization_name,   # 👈 UPDATED
+        organization_name=req.organization_name,
     )
 
-
-    # Mark the request approved
+    # Mark request approved
     req.status = "approved"
     req.approved_at = datetime.utcnow()
     session.add(req)
     session.commit()
 
-    # Generate token for password setup
+    # Password setup token
     token = create_password_token(
         session=session,
         user_id=new_user.id
@@ -149,21 +150,20 @@ Aina Protocol Team
 
 
 # -----------------------------------------------------
-# 4️⃣ REJECT SIGNUP REQUEST (ADMIN)
+# 4️⃣ REJECT SIGNUP REQUEST — ADMIN ONLY
 # -----------------------------------------------------
-@router.post("/requests/{request_id}/reject", summary="Reject Signup Request")
+@router.post(
+    "/requests/{request_id}/reject",
+    summary="Reject Signup Request",
+    dependencies=[Depends(requires_role(["admin"]))],
+)
 def reject_request(
     request_id: int,
     session: Session = Depends(get_session),
-    current_user=Depends(get_current_user)
 ):
-    """
-    Rejects a signup request and emails the user.
-    """
-
     req = session.get(SignupRequest, request_id)
     if not req:
-        raise HTTPException(status_code=404, detail="Signup request not found")
+        raise HTTPException(404, "Signup request not found")
 
     req.status = "rejected"
     req.rejected_at = datetime.utcnow()
@@ -175,7 +175,8 @@ def reject_request(
         body=f"""
 Aloha {req.full_name},
 
-We regret to inform you that your request to join Aina Protocol was not approved.
+We regret to inform you that your request to join Aina Protocol 
+was not approved.
 
 Mahalo,
 Aina Protocol Team
