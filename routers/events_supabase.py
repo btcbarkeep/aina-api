@@ -1,11 +1,11 @@
 # routers/events_supabase.py
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional
+from typing import Optional, List
 
 from dependencies.auth import (
     get_current_user,
     requires_role,
-    CurrentUser
+    CurrentUser,
 )
 
 from core.supabase_client import get_supabase_client
@@ -16,7 +16,7 @@ from models.event import EventCreate, EventUpdate, EventRead
 
 router = APIRouter(
     prefix="/events",
-    tags=["Events"]
+    tags=["Events"],
 )
 
 """
@@ -29,6 +29,19 @@ Roles:
   - Delete: admin or manager
   - Comment: admin or manager
 """
+
+
+# -----------------------------------------------------
+# Helper — sanitize payloads ("" -> None)
+# -----------------------------------------------------
+def sanitize(data: dict) -> dict:
+    clean = {}
+    for k, v in data.items():
+        if isinstance(v, str) and v.strip() == "":
+            clean[k] = None
+        else:
+            clean[k] = v
+    return clean
 
 
 # -----------------------------------------------------
@@ -48,7 +61,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
     if not result.data:
         raise HTTPException(
             status_code=403,
-            detail="You do not have permission for this building."
+            detail="You do not have permission for this building.",
         )
 
 
@@ -77,11 +90,12 @@ def get_event_building_id(event_id: str) -> str:
 # -----------------------------------------------------
 @router.get(
     "/supabase",
-    summary="List Events from Supabase"
+    summary="List Events from Supabase",
+    response_model=List[EventRead],
 )
 def list_events_supabase(
     limit: int = 200,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
@@ -109,17 +123,24 @@ def list_events_supabase(
 )
 def create_event_supabase(
     payload: EventCreate,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
     building_id = payload.building_id
 
-    # Admin / Manager: full access
+    # Admin / Manager: full access; others need building access
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
     try:
-        result = client.table("events").insert(payload.model_dump()).execute()
+        event_data = sanitize(payload.model_dump())
+
+        result = (
+            client.table("events")
+            .insert(event_data)
+            .select("*")
+            .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=500, detail="Supabase insert failed")
@@ -136,13 +157,14 @@ def create_event_supabase(
 @router.put(
     "/supabase/{event_id}",
     summary="Update Event in Supabase",
+    response_model=EventRead,
     dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
 def update_event_supabase(
     event_id: str,
     payload: EventUpdate,
 ):
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     result = update_record("events", event_id, update_data)
 
@@ -176,13 +198,14 @@ def delete_event_supabase(
     if docs.data:
         raise HTTPException(
             status_code=400,
-            detail="Cannot delete event: documents exist for this event."
+            detail="Cannot delete event: documents exist for this event.",
         )
 
     result = (
         client.table("events")
         .delete()
         .eq("id", event_id)
+        .select("*")
         .execute()
     )
 
@@ -210,30 +233,28 @@ def add_event_comment(
     # Confirm event exists & get building
     building_id = get_event_building_id(event_id)
 
-    # Managers must have building access
+    # Managers must have building access (admins bypass)
     if current_user.role != "admin":
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
     try:
         result = (
             client.table("event_comments")
-            .insert({
-                "event_id": event_id,
-                "user_id": current_user.user_id,
-                "comment": comment,
-            })
+            .insert(
+                {
+                    "event_id": event_id,
+                    "user_id": current_user.user_id,
+                    "comment": comment,  # assumes column name is "comment"
+                }
+            )
+            .select("*")
             .execute()
         )
 
         if not result.data:
-            raise HTTPException(500, "Insert failed")
+            raise HTTPException(status_code=500, detail="Insert failed")
 
         return result.data[0]
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase insert error: {e}")
-
-        return result.data[0]
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Insert error: {e}")
+        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
