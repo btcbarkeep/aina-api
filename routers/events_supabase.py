@@ -2,11 +2,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 
-from dependencies.auth import get_current_user
+from dependencies.auth import (
+    get_current_user,
+    requires_role,
+    CurrentUser
+)
+
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record
-from dependencies.auth import requires_role
-
 
 from models.event import EventCreate, EventUpdate, EventRead
 
@@ -21,11 +24,17 @@ EVENTS ROUTER (SUPABASE-ONLY)
 
 Handles all AOAO event logs, maintenance records, notices, etc.
 All data stored directly in Supabase.
+
+Roles:
+  - List: Any authenticated user
+  - Create: admin or manager OR user must have building access
+  - Update: admin or manager OR user must have building access
+  - Delete: admin or manager
 """
 
 
 # -----------------------------------------------------
-# RBAC: Check if user has access to a building
+# HELPER — Check if user has building access
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
@@ -46,7 +55,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper: event_id → building_id
+# HELPER — Get building_id from event_id
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
@@ -71,7 +80,7 @@ def get_event_building_id(event_id: str) -> str:
 @router.get("/supabase", summary="List Events from Supabase")
 def list_events_supabase(
     limit: int = 200,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
     client = get_supabase_client()
 
@@ -99,17 +108,17 @@ def list_events_supabase(
 )
 def create_event_supabase(
     payload: EventCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
     client = get_supabase_client()
 
-    # 1️⃣ RBAC check
-    verify_user_building_access_supabase(
-        current_user["username"],
-        payload.building_id
-    )
+    building_id = payload.building_id
 
-    # 2️⃣ Create record
+    # Admin / manager can always create
+    if current_user.role not in ["admin", "manager"]:
+        # Others must have building access
+        verify_user_building_access_supabase(current_user.user_id, building_id)
+
     try:
         result = client.table("events").insert(payload.dict()).execute()
 
@@ -123,21 +132,16 @@ def create_event_supabase(
 
 
 # -----------------------------------------------------
-# UPDATE EVENT
+# UPDATE EVENT (Admins only)
 # -----------------------------------------------------
 @router.put("/supabase/{event_id}", summary="Update Event in Supabase")
 def update_event_supabase(
     event_id: str,
     payload: EventUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
-    # Confirm user has access to the building that owns this event
-    building_id = get_event_building_id(event_id)
-
-    verify_user_building_access_supabase(
-        current_user["username"],
-        building_id
-    )
+    # Admin only
+    requires_role(current_user, ["admin"])
 
     update_data = payload.dict(exclude_unset=True)
 
@@ -148,57 +152,82 @@ def update_event_supabase(
 
     return result["data"]
 
-
 # -----------------------------------------------------
-# DELETE EVENT (Supabase)
+# DELETE EVENT (Admins only)
 # -----------------------------------------------------
-@router.delete(
-    "/supabase/{event_id}",
-    summary="Delete Event in Supabase"
-)
+@router.delete("/supabase/{event_id}", summary="Delete Event in Supabase")
 def delete_event_supabase(
     event_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    # Admin only
+    requires_role(current_user, ["admin"])
+    
+    client = get_supabase_client()
+
+    # Prevent deleting if docs exist
+    docs = (
+        client.table("documents")
+        .select("id")
+        .eq("event_id", event_id)
+        .execute()
+    )
+
+    if docs.data:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete event: documents exist for this event."
+        )
+
+    result = (
+        client.table("events")
+        .delete()
+        .eq("id", event_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    return {"status": "deleted", "id": event_id}
+
+
+# -----------------------------------------------------
+# ADD COMMENT TO EVENT (Manager or Admin)
+# -----------------------------------------------------
+@router.post(
+    "/supabase/{event_id}/comment",
+    summary="Add a comment/update to an event"
+)
+def add_event_comment(
+    event_id: str,
+    comment: str,
+    current_user: CurrentUser = Depends(get_current_user)
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Role requirement — admin only
-    require_admin_role(current_user)
+    # Must be manager or admin
+    requires_role(current_user, ["admin", "manager"])
 
-    # 2️⃣ Prevent orphaned docs
-    try:
-        docs = (
-            client.table("documents")
-            .select("id")
-            .eq("event_id", event_id)
-            .execute()
-        )
+    # Verify event exists
+    building_id = get_event_building_id(event_id)
 
-        if docs.data:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot delete event: documents exist for this event."
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Document check failed: {e}")
+    # Managers must still have building access
+    if current_user.role != "admin":
+        verify_user_building_access_supabase(current_user.user_id, building_id)
 
-    # 3️⃣ Delete
     try:
         result = (
-            client.table("events")
-            .delete()
-            .eq("id", event_id)
+            client.table("event_comments")
+            .insert({
+                "event_id": event_id,
+                "user_id": current_user.user_id,
+                "comment": comment,
+            })
             .execute()
         )
 
-        if not result.data:
-            raise HTTPException(status_code=404, detail="Event not found")
-
-        return {
-            "status": "deleted",
-            "id": event_id,
-            "message": f"Event {event_id} deleted."
-        }
+        return result.data[0]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase delete error: {e}")
+        raise HTTPException(status_code=500, detail=f"Insert error: {e}")
