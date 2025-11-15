@@ -16,7 +16,9 @@ from models import (
     Building
 )
 
-from core.supabase_client import get_supabase_client, update_record
+from core.supabase_client import get_supabase_client
+from core.supabase_helpers import update_record
+
 from core.auth_helpers import verify_user_building_access
 
 
