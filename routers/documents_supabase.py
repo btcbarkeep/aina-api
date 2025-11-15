@@ -67,9 +67,12 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
-# LIST DOCUMENTS
+# LIST DOCUMENTS (any authenticated user)
 # -----------------------------------------------------
-@router.get("/supabase", summary="List Documents from Supabase")
+@router.get(
+    "/supabase",
+    summary="List Documents from Supabase",
+)
 def list_documents_supabase(
     limit: int = 100,
     current_user: CurrentUser = Depends(get_current_user),
@@ -99,7 +102,7 @@ def list_documents_supabase(
 @router.post(
     "/supabase",
     response_model=DocumentRead,
-    summary="Create Document in Supabase"
+    summary="Create Document in Supabase",
 )
 def create_document_supabase(
     payload: DocumentCreate,
@@ -107,26 +110,23 @@ def create_document_supabase(
 ):
     client = get_supabase_client()
 
-    # A document must belong to a building — either directly or via an event
+    # Determine building ID
     if payload.event_id:
         building_id = get_event_building_id(payload.event_id)
-
     elif payload.building_id:
         building_id = payload.building_id
-
     else:
         raise HTTPException(
             status_code=400,
             detail="Either event_id OR building_id must be provided."
         )
 
-    # Only admins/managers bypass building access
+    # Admins & managers bypass building access restriction
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
-    # Insert into Supabase
     try:
-        result = client.table("documents").insert(payload.dict()).execute()
+        result = client.table("documents").insert(payload.model_dump()).execute()
 
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
@@ -141,17 +141,18 @@ def create_document_supabase(
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT (admin + manager only)
+# UPDATE DOCUMENT — admin + manager
 # -----------------------------------------------------
-@router.put("/supabase/{document_id}", summary="Update Document in Supabase")
+@router.put(
+    "/supabase/{document_id}",
+    summary="Update Document in Supabase",
+    dependencies=[Depends(requires_role(["admin", "manager"]))],
+)
 def update_document_supabase(
     document_id: str,
     payload: DocumentUpdate,
-    current_user: CurrentUser = Depends(get_current_user),
 ):
-    requires_role(current_user, ["admin", "manager"])
-
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
 
     result = update_record("documents", document_id, update_data)
 
@@ -165,15 +166,16 @@ def update_document_supabase(
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT (admin + manager only)
+# DELETE DOCUMENT — admin + manager
 # -----------------------------------------------------
-@router.delete("/supabase/{document_id}", summary="Delete Document in Supabase")
+@router.delete(
+    "/supabase/{document_id}",
+    summary="Delete Document in Supabase",
+    dependencies=[Depends(requires_role(["admin", "manager"]))],
+)
 def delete_document_supabase(
     document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
 ):
-    requires_role(current_user, ["admin", "manager"])
-
     client = get_supabase_client()
 
     try:
