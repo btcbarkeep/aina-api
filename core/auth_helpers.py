@@ -34,3 +34,21 @@ def verify_user_building_access(session: Session, username: str, building_id: in
             status_code=403,
             detail=f"User '{username}' is not authorized to access building {building_id}.",
         )
+def create_user_no_password(session, full_name: str, email: str, hoa_name: str):
+    """
+    Creates a user entry WITHOUT a password.
+    Used for admin-created accounts & approved signup requests.
+    """
+    user = User(
+        username=email,
+        email=email,
+        full_name=full_name,
+        hoa_name=hoa_name,
+        hashed_password=None,   # no password yet!
+    )
+
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    return user
