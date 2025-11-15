@@ -6,16 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.scheduler import start_scheduler
-
-
 # Local imports
 from core.config import settings
 from core.logging_config import logger
 from database import create_db_and_tables
 from routers import api_router
 from routers import user_access
-
 
 # Ensure local imports always resolve correctly
 sys.path.append(os.path.dirname(__file__))
@@ -55,11 +51,8 @@ def create_app() -> FastAPI:
                 print(f"➡️  {methods:10s} {route.path}")
         print("\n✅ Route log complete.\n")
 
-        
-
-
     # -------------------------------------------------
-    # Centralized error logging
+    # Centralized Error Logging
     # -------------------------------------------------
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -83,19 +76,11 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
-     # -------------------------------------------------
+    # -------------------------------------------------
     # Versioned API: everything under /api/v1
     # -------------------------------------------------
     app.include_router(api_router, prefix="/api/v1")
-
     app.include_router(user_access.router, prefix="/api/v1")
-
-
-    # -------------------------------------------------
-    # Health routes (non-versioned)
-    # -------------------------------------------------
-    from routers import health
-    app.include_router(health.router)
 
     # -------------------------------------------------
     # Root endpoint (uptime / info)
@@ -110,7 +95,6 @@ def create_app() -> FastAPI:
         }
 
     return app
-
 
 
 app = create_app()
