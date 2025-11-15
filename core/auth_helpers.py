@@ -16,7 +16,7 @@ from models import (
     PasswordResetToken
 )
 
-SECRET_KEY = settings.SECRET_KEY
+SECRET_KEY = settings.JWT.SECRET_KEY
 ALGORITHM = "HS256"
 
 
