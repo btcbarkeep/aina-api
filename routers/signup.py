@@ -31,7 +31,6 @@ def request_access(payload: SignupRequestCreate, session: Session = Depends(get_
         notes=payload.notes,
     )
 
-
     session.add(req)
     session.commit()
     session.refresh(req)
@@ -50,7 +49,7 @@ Aina Protocol Team
         to=payload.email,
     )
 
-    # Notify admin (Barry)
+    # Notify admin
     send_email(
         subject="New Signup Request - Aina Protocol",
         body=f"""
@@ -68,6 +67,7 @@ Notes:
     )
 
     return {"status": "success", "request_id": req.id}
+
 
 
 # -----------------------------------------------------
