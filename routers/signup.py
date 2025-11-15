@@ -103,8 +103,9 @@ def approve_request(
         session=session,
         full_name=req.full_name,
         email=req.email,
-        hoa_name=req.hoa_name,
+        organization_name=req.organization_name,   # 👈 UPDATED
     )
+
 
     # Mark the request approved
     req.status = "approved"
