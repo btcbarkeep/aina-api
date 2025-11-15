@@ -12,7 +12,10 @@ from core.utils.sync_formatter import format_sync_summary
 from database import get_session
 
 from sqlmodel import Session, select
-from models import Building
+from models.building import Building
+from models.event import Event
+from models.document import Document
+
 
 router = APIRouter(
     prefix="/api/v1/sync",
