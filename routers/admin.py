@@ -11,6 +11,8 @@ from core.auth_helpers import (
     generate_password_setup_token,
 )
 from core.email_utils import send_password_setup_email
+from pydantic import BaseModel
+
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 
