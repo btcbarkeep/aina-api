@@ -101,19 +101,29 @@ def create_document_supabase(
 ):
     client = get_supabase_client()
 
-    # find building_id for event
-    building_id = get_event_building_id(payload.event_id)
+    # Determine building_id for RBAC depending on case
 
-    # admin+manager bypass access checks
+    if payload.event_id:
+        # If document is tied to an event → derive building_id from event
+        building_id = get_event_building_id(payload.event_id)
+    elif payload.building_id:
+        # If document is general (not event specific)
+        building_id = payload.building_id
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Either event_id OR building_id must be provided."
+        )
+
+    # Admin/manager bypass
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
+    # Insert doc
     try:
         result = client.table("documents").insert(payload.dict()).execute()
-
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
-
         return result.data[0]
 
     except Exception as e:
