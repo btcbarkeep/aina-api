@@ -4,10 +4,6 @@ from datetime import datetime
 import boto3, os
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from models.document import Document
-from models.event import Event
-
-
 from dependencies.auth import get_current_user, requires_role
 
 router = APIRouter(
@@ -18,8 +14,11 @@ router = APIRouter(
 """
 Upload endpoints handle S3 file uploads, secure file listing, and admin-level
 file management across complexes, units, and categories.
-"""
 
+NOTE:
+- This router does NOT touch Supabase anymore.
+- Document metadata is handled in /documents.
+"""
 
 
 # -----------------------------------------------------
@@ -47,7 +46,7 @@ def get_s3_client():
 # -----------------------------------------------------
 #  UPLOAD FILE (Protected)
 # -----------------------------------------------------
-@router.post("/", dependencies=[Depends(get_current_user)])  # ✅ updated
+@router.post("/", dependencies=[Depends(get_current_user)])
 async def upload_file(
     file: UploadFile = File(...),
     complex_name: str = Form(...),
@@ -100,7 +99,7 @@ async def upload_file(
 # -----------------------------------------------------
 #  LIST FILES BY COMPLEX / CATEGORY (Protected)
 # -----------------------------------------------------
-@router.get("/", dependencies=[Depends(get_current_user)])  # ✅ updated
+@router.get("/", dependencies=[Depends(get_current_user)])
 def list_files(
     complex_name: str = Query(...),
     unit_name: str | None = Query(None),
@@ -163,7 +162,7 @@ def list_files(
 # -----------------------------------------------------
 #  LIST ALL FILES (Admin-only)
 # -----------------------------------------------------
-@router.get("/all", dependencies=[Depends(requires_role("admin"))])  # ✅ updated
+@router.get("/all", dependencies=[Depends(requires_role("admin"))])
 def list_all_files(
     expires_in: int = Query(86400, ge=60, le=604800),
 ):
@@ -209,7 +208,7 @@ def list_all_files(
 # -----------------------------------------------------
 #  DELETE FILE (Protected)
 # -----------------------------------------------------
-@router.delete("/", dependencies=[Depends(get_current_user)])  # ✅ updated
+@router.delete("/", dependencies=[Depends(get_current_user)])
 def delete_file(
     s3_key: str = Query(...)
 ):
