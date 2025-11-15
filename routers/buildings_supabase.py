@@ -72,37 +72,55 @@ def list_buildings_supabase(
 @router.post(
     "/supabase",
     response_model=BuildingRead,
-    summary="Create or Upsert Building in Supabase"
+    summary="Create Building in Supabase"
 )
 def create_building_supabase(
     payload: BuildingCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
-    require_role(current_user, ["admin"])  # 🔒 Only admins can create
+    # 🔒 Only admins can create buildings
+    requires_role(current_user, ["admin"])
 
     client = get_supabase_client()
     if not client:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase client not configured"
+        )
+
+    # Convert incoming payload → dict
+    data = payload.dict()
 
     try:
-        data = payload.dict()
-
-        result = client.table("buildings").upsert(
-            data,
-            on_conflict="name"
-        ).execute()
+        # Direct INSERT (preferred)
+        result = (
+            client.table("buildings")
+            .insert(data)
+            .execute()
+        )
 
         if not result.data:
             raise HTTPException(
-                status_code=400,
-                detail=f"Building '{payload.name}' already exists."
+                status_code=500,
+                detail="Insert succeeded but no data returned"
             )
 
         return result.data[0]
 
     except Exception as e:
         msg = str(e)
-        raise HTTPException(status_code=500, detail=f"Supabase upsert error: {msg}")
+
+        # Duplicate row / conflict
+        if "duplicate key" in msg or "duplicate" in msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Building '{payload.name}' already exists."
+            )
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase insert error: {msg}"
+        )
 
 
 # -----------------------------------------------------
@@ -115,18 +133,38 @@ def create_building_supabase(
 def update_building_supabase(
     building_id: str,
     payload: BuildingUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
-    require_role(current_user, ["admin", "manager"])  # 🔒 Allowed roles
+    # 🔒 Role protection
+    requires_role(current_user, ["admin", "manager"])
 
+    client = get_supabase_client()
+
+    # Only send fields user actually provided
     update_data = payload.dict(exclude_unset=True)
 
-    result = update_record("buildings", building_id, update_data)
+    try:
+        result = (
+            client.table("buildings")
+            .update(update_data)
+            .eq("id", building_id)
+            .execute()
+        )
 
-    if result["status"] != "ok":
-        raise HTTPException(status_code=500, detail=result["detail"])
+        # No record found
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Building not found"
+            )
 
-    return result["data"]
+        return result.data[0]
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase update failed: {e}"
+        )
 
 
 # -----------------------------------------------------
