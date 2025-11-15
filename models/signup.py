@@ -10,7 +10,8 @@ class SignupRequestCreate(SQLModel):
     full_name: str
     email: str
     phone: Optional[str] = None
-    organization_name: Optional[str]
+    organization_name: Optional[str] = None
+    requester_role: str = "hoa"     # 👈 NEW FIELD
     notes: Optional[str] = None
 
 
