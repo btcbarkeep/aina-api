@@ -66,7 +66,8 @@ def create_user_no_password(
     session: Session,
     full_name: str,
     email: str,
-    hoa_name: str
+    organization_name: str
+
 ):
     """
     Creates a user in the local database with NO password.
@@ -87,7 +88,7 @@ def create_user_no_password(
         username=email,
         email=email,
         full_name=full_name,
-        hoa_name=hoa_name,
+        organization_name=organization_name,
         hashed_password=None,   # User sets password later
         created_at=datetime.utcnow(),
     )
