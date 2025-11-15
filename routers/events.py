@@ -7,7 +7,8 @@ from database import get_session
 from dependencies.auth import get_current_user
 from core.auth_helpers import verify_user_building_access
 from core.supabase_client import get_supabase_client
-from core.supabase_client import update_record
+from core.supabase_helpers import update_record
+
 
 # Import models
 from models import (
