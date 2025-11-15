@@ -5,7 +5,8 @@ from typing import List
 
 from core.supabase_client import get_supabase_client
 from dependencies.auth import get_current_user, CurrentUser
-from core.auth_helpers import require_admin
+from dependencies.auth import requires_role
+
 
 from pydantic import BaseModel
 
