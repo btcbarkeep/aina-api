@@ -5,7 +5,8 @@ from dependencies.auth import get_current_user
 from core.supabase_client import get_supabase_client
 from models.building import BuildingCreate, BuildingUpdate, BuildingRead
 from core.supabase_helpers import update_record, delete_record
-from core.auth_helpers import require_role  # ⬅ NEW: RBAC helper
+from dependencies.auth import requires_role
+
 
 
 router = APIRouter(
