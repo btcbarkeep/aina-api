@@ -2,12 +2,12 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import EmailStr
 
 from database import get_session
-from dependencies.auth import get_current_user       # 👈 PROTECT ENDPOINTS
+from dependencies.auth import get_current_user       # 🔒 Protect entire router
 from models import UserBuildingAccess
-from models.user_create import AdminCreateUser       # 👈 your existing request model
+from models.user_create import AdminCreateUser
 
 from core.auth_helpers import (
     create_user_no_password,
@@ -16,7 +16,14 @@ from core.auth_helpers import (
 from core.email_utils import send_password_setup_email
 
 
-router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
+# ---------------------------------------------------------
+# 🔐 PROTECT THE ENTIRE ADMIN ROUTER
+# ---------------------------------------------------------
+router = APIRouter(
+    prefix="/api/v1/admin",
+    tags=["Admin"],
+    dependencies=[Depends(get_current_user)]          # 👈 every admin route is protected
+)
 
 
 # ---------------------------------------------------------
@@ -26,18 +33,18 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 def admin_create_account(
     payload: AdminCreateUser,
     session: Session = Depends(get_session),
-    current_user=Depends(get_current_user),          # 👈 SECURES ENDPOINT
+    current_user=Depends(get_current_user),  # still available so we can check role
 ):
     """
     Admin creates a user with NO password.
     User receives an email to set their password.
     """
 
-    # OPTIONAL: require admin role
+    # OPTIONAL: enforce only REAL admins can do this
     if getattr(current_user, "role", None) != "admin":
         raise HTTPException(status_code=403, detail="Admins only")
 
-    # 1. Create the user record (no password)
+    # 1. Create the user record with NO password
     user = create_user_no_password(
         session=session,
         full_name=payload.full_name,
@@ -51,7 +58,7 @@ def admin_create_account(
     # 3. Send password setup email
     send_password_setup_email(payload.email, token)
 
-    # 4. Assign initial building + role (optional)
+    # 4. Assign building + role (optional)
     if payload.building_id is not None:
         access = UserBuildingAccess(
             username=payload.email,
@@ -65,5 +72,5 @@ def admin_create_account(
     return {
         "status": "success",
         "message": f"Account created for {payload.email}. Password setup email sent.",
-        "debug_token": token,
+        "debug_token": token,   # remove when email system is fully live
     }
