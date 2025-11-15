@@ -58,6 +58,7 @@ class BuildingUpdate(SQLModel):
     state: Optional[str] = None
     zip: Optional[str] = None
 
+
 # =====================================================
 # 📅 EVENT MODELS
 # =====================================================
