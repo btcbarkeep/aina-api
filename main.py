@@ -39,7 +39,10 @@ def create_app() -> FastAPI:
     # -------------------------------------------------
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS] or ["*"],
+        allow_origins=[
+            "https://ainaprotocol.com",
+            "https://www.ainaprotocol.com",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
