@@ -99,11 +99,9 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root():
-        return RedirectResponse(url="https://<YOUR-CLOUDFLARE-DOMAIN>/auth/login.html")
+        return RedirectResponse(url="https://ainaprotocol.com/auth/login.html")
 
     return app
-
-
 
 
 # --------------------------------------------------------
