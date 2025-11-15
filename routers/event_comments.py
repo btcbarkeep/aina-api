@@ -16,11 +16,11 @@ from models.event_comment import (
 
 router = APIRouter(
     prefix="/event_comments",
-    tags=["Event Comments"]
+    tags=["Event Comments"],
 )
 
 """
-EVENT COMMENTS ROUTER (SUPABASE)
+EVENT COMMENTS ROUTER — SUPABASE
 
 Rules:
 - Any authenticated user WITH BUILDING ACCESS may LIST comments
@@ -29,7 +29,20 @@ Rules:
 """
 
 # -----------------------------------------------------
-# Helper: event_id → building_id
+# Helper — sanitize dict ("" → None)
+# -----------------------------------------------------
+def sanitize(data: dict) -> dict:
+    clean = {}
+    for k, v in data.items():
+        if isinstance(v, str) and v.strip() == "":
+            clean[k] = None
+        else:
+            clean[k] = v
+    return clean
+
+
+# -----------------------------------------------------
+# Helper — event_id → building_id
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
@@ -43,13 +56,13 @@ def get_event_building_id(event_id: str) -> str:
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Event not found")
+        raise HTTPException(404, "Event not found")
 
     return result.data["building_id"]
 
 
 # -----------------------------------------------------
-# Helper: check building access
+# Helper — check building access
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
@@ -64,18 +77,18 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
     if not result.data:
         raise HTTPException(
-            status_code=403,
-            detail="You do not have permission for this building."
+            403,
+            "You do not have permission for this building.",
         )
 
 
 # -----------------------------------------------------
-# LIST COMMENTS (must have building access)
+# LIST COMMENTS — Requires Building Access
 # -----------------------------------------------------
 @router.get(
     "/supabase/{event_id}",
     response_model=List[EventCommentRead],
-    summary="List comments for an event"
+    summary="List comments for an event",
 )
 def list_event_comments(
     event_id: str,
@@ -98,12 +111,12 @@ def list_event_comments(
 
 
 # -----------------------------------------------------
-# CREATE COMMENT (must have building access)
+# CREATE COMMENT — Requires Building Access
 # -----------------------------------------------------
 @router.post(
     "/supabase",
     response_model=EventCommentRead,
-    summary="Create a comment for an event"
+    summary="Create a comment for an event",
 )
 def create_event_comment(
     payload: EventCommentCreate,
@@ -114,16 +127,21 @@ def create_event_comment(
     building_id = get_event_building_id(payload.event_id)
     verify_user_building_access_supabase(current_user.user_id, building_id)
 
-    comment_data = {
+    comment_data = sanitize({
         "event_id": payload.event_id,
         "user_id": current_user.user_id,
         "comment_text": payload.comment_text,
-    }
+    })
 
-    result = client.table("event_comments").insert(comment_data).execute()
+    result = (
+        client.table("event_comments")
+        .insert(comment_data)
+        .select("*")
+        .execute()
+    )
 
     if not result.data:
-        raise HTTPException(status_code=500, detail="Supabase insert failed")
+        raise HTTPException(500, "Supabase insert failed")
 
     return result.data[0]
 
@@ -143,17 +161,18 @@ def update_event_comment(
 ):
     client = get_supabase_client()
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     result = (
         client.table("event_comments")
         .update(update_data)
         .eq("id", comment_id)
+        .select("*")
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Comment not found")
+        raise HTTPException(404, "Comment not found")
 
     return result.data[0]
 
@@ -166,23 +185,23 @@ def update_event_comment(
     summary="Delete a comment (admin only)",
     dependencies=[Depends(requires_role(["admin"]))],
 )
-def delete_event_comment(
-    comment_id: str,
-):
+def delete_event_comment(comment_id: str):
+
     client = get_supabase_client()
 
     result = (
         client.table("event_comments")
         .delete()
         .eq("id", comment_id)
+        .select("*")
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Comment not found")
+        raise HTTPException(404, "Comment not found")
 
     return {
         "status": "deleted",
         "id": comment_id,
-        "message": "Comment deleted successfully."
+        "message": "Comment deleted successfully.",
     }
