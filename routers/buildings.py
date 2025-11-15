@@ -124,10 +124,9 @@ def delete_building_supabase(building_id: str):
     return {"status": "deleted", "id": building_id}
 
 
-
 ## sync checker
 
-@router.get("/sync", summary="Compare Local vs Supabase Buildings")
+@router.get("/sync", summary="Compare Local vs Supabase Buildings", tags=["Sync"])
 def compare_building_sync(session: Session = Depends(get_session)):
     """
     Compare local and Supabase building tables to verify synchronization.
@@ -173,7 +172,7 @@ def compare_building_sync(session: Session = Depends(get_session)):
 
 ## sync fix
 
-@router.post("/sync/fix", summary="Auto-sync missing buildings to Supabase")
+@router.post("/sync/fix", summary="Auto-sync missing buildings to Supabase", tags=["Sync"])
 def fix_building_sync(session: Session = Depends(get_session)):
     """
     Automatically push missing local buildings to Supabase.
@@ -231,7 +230,7 @@ def fix_building_sync(session: Session = Depends(get_session)):
 
 ## reverse sync (from supabase to local)
 
-@router.post("/sync/reverse", summary="Pull missing buildings from Supabase into local DB")
+@router.post("/sync/reverse", summary="Pull missing buildings from Supabase into local DB", tags=["Sync"])
 def reverse_building_sync(session: Session = Depends(get_session)):
     """
     Pull any building records that exist in Supabase but not in the local DB.
@@ -361,7 +360,7 @@ def run_full_building_sync(session: Session):
 
 
 
-@router.post("/sync/full", summary="Fully synchronize buildings between local DB and Supabase")
+@router.post("/sync/full", summary="Fully synchronize buildings between local DB and Supabase", tags=["Sync"])
 async def full_building_sync(session: Session = Depends(get_session)):
     """
     API route version of the full sync.
@@ -436,7 +435,7 @@ def get_building(building_id: int, session: Session = Depends(get_session)):
 
 ## sync function add to both databases for future migration
 
-@router.post("/sync", response_model=BuildingRead, summary="Create Building (Local + Supabase Sync)")
+@router.post("/sync", response_model=BuildingRead, summary="Create Building (Local + Supabase Sync)", tags=["Sync"])
 def create_building_sync(payload: BuildingCreate, session: Session = Depends(get_session)):
     """
     Create a new building and automatically sync to Supabase.
