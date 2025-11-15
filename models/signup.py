@@ -1,14 +1,13 @@
 from sqlmodel import SQLModel, Field
-from datetime import datetime
+from typing import Optional
 
 class SignupRequest(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
+    __tablename__ = "signup_requests"
 
-    hoa_name: str
+    id: Optional[int] = Field(default=None, primary_key=True)
     full_name: str
     email: str
-    message: str | None = None
-
-    status: str = Field(default="pending")  # pending, approved, rejected
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    approved_at: datetime | None = None
+    phone: str
+    hoa_name: str
+    notes: Optional[str] = None
+    created_at: Optional[str] = None
