@@ -94,6 +94,7 @@ def create_app() -> FastAPI:
     # -------------------------------------------------
     # Static Frontend (Admin UI + Auth UI)
     # -------------------------------------------------
+    
     from fastapi.staticfiles import StaticFiles
 
     app.mount("/admin", StaticFiles(directory="admin"), name="admin")
@@ -103,16 +104,15 @@ def create_app() -> FastAPI:
     app.mount("/img", StaticFiles(directory="img"), name="img")
 
     # -------------------------------------------------
-    # Root endpoint
+    # Root endpoint → redirect to login UI
     # -------------------------------------------------
     
-    @app.get("/", tags=["Health"], summary="API Uptime & Version Check")
+    from fastapi.responses import RedirectResponse
+
+    @app.get("/", include_in_schema=False)
     async def root():
-        return {
-            "status": "ok",
-            "message": "Aina Protocol API",
-            "version": app.version,
-        }
+        return RedirectResponse(url="/auth/login.html")
+
 
 
     return app
