@@ -1,14 +1,14 @@
 # routers/uploads.py
 from fastapi import (
     APIRouter, UploadFile, File, Form,
-    Depends, HTTPException, Query
+    Depends, HTTPException
 )
 from datetime import datetime
 import boto3
 import os
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from dependencies.auth import get_current_user, requires_role, CurrentUser
+from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
 
 
@@ -17,19 +17,12 @@ router = APIRouter(
     tags=["Uploads"],
 )
 
-
 """
-UPLOAD ROUTER (Option A)
-------------------------
-This router:
+UPLOAD ROUTER
 
-1. Uploads a file to S3
-2. Creates a Supabase "documents" row with:
-   - event_id (nullable)
-   - building_id (required)
-3. Returns BOTH the upload result and the Supabase metadata
-
-This replaces the old “complex/unit/category” approach.
+Rules:
+- Any authenticated user may upload IF they have building access.
+- Admin/Manager bypass building access checks.
 """
 
 
@@ -37,7 +30,6 @@ This replaces the old “complex/unit/category” approach.
 #  AWS CONFIGURATION
 # -----------------------------------------------------
 def get_s3_client():
-    """Initialize and return an authenticated S3 client."""
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
@@ -56,17 +48,17 @@ def get_s3_client():
 
 
 # -----------------------------------------------------
-# Helper — Check building access
+# Helper: Building Access
 # -----------------------------------------------------
 def verify_user_building_access(user: CurrentUser, building_id: str):
-    """Raise 403 if user does not have access to the building."""
+    """Admins & managers bypass. Others must have building access."""
     if user.role in ["admin", "manager"]:
-        return  # bypass
+        return
 
     client = get_supabase_client()
     result = (
         client.table("user_building_access")
-        .select("*")
+        .select("id")
         .eq("user_id", user.user_id)
         .eq("building_id", building_id)
         .execute()
@@ -82,7 +74,7 @@ def verify_user_building_access(user: CurrentUser, building_id: str):
 # -----------------------------------------------------
 #  UPLOAD FILE + CREATE DOCUMENT RECORD
 # -----------------------------------------------------
-@router.post("/", dependencies=[Depends(get_current_user)])
+@router.post("/", summary="Upload a document file")
 async def upload_document(
     file: UploadFile = File(...),
     building_id: str = Form(...),
@@ -91,35 +83,33 @@ async def upload_document(
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    Uploads a file to S3 and creates a Supabase document record.
+    Uploads a file to S3 and creates a matching Supabase document record.
 
-    Required:
-        - building_id
-        - file
-
-    Optional:
-        - event_id
-        - category (S3 folder organization)
+    Access:
+      - Admin / manager: allowed for any building.
+      - Regular users: only if they have building access.
     """
-    # RBAC for building access
     verify_user_building_access(current_user, building_id)
 
     try:
         s3, bucket, region = get_s3_client()
 
-        # ----------------------------------------------
-        # Build S3 KEY
-        # ----------------------------------------------
-        safe_category = category.strip().replace(" ", "_").lower() if category else "general"
+        # ------------------------------
+        # Build S3 path
+        # ------------------------------
+        safe_category = (
+            category.strip().replace(" ", "_").lower()
+            if category else "general"
+        )
 
         if event_id:
             s3_key = f"events/{event_id}/documents/{safe_category}/{file.filename}"
         else:
             s3_key = f"buildings/{building_id}/documents/{safe_category}/{file.filename}"
 
-        # ----------------------------------------------
+        # ------------------------------
         # Upload to S3
-        # ----------------------------------------------
+        # ------------------------------
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -127,48 +117,43 @@ async def upload_document(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # ----------------------------------------------
-        # Presigned URL
-        # ----------------------------------------------
+        # ------------------------------
+        # Generate presigned URL
+        # ------------------------------
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=86400,
+            ExpiresIn=86400,  # 24 hours
         )
 
-        # ----------------------------------------------
-        # Insert into Supabase
-        # ----------------------------------------------
-        client = get_supabase_client()
-
-        doc_payload = {
+        # ------------------------------
+        # Create Supabase document
+        # ------------------------------
+        payload = {
             "event_id": event_id,
             "building_id": building_id,
             "s3_key": s3_key,
             "filename": file.filename,
             "content_type": file.content_type,
             "size_bytes": file.spool_max_size or None,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.utcnow().isoformat(),
+            "uploaded_by": current_user.user_id,
         }
 
-        result = client.table("documents").insert(doc_payload).execute()
+        client = get_supabase_client()
+        result = client.table("documents").insert(payload).execute()
 
         if not result.data:
-            raise HTTPException(status_code=500, detail="Failed to insert Supabase document record")
+            raise HTTPException(500, "Failed to insert Supabase document record")
 
-        supabase_document = result.data[0]
-
-        # ----------------------------------------------
-        # FINAL RETURN
-        # ----------------------------------------------
         return {
             "upload": {
                 "filename": file.filename,
                 "s3_key": s3_key,
                 "presigned_url": presigned_url,
-                "uploaded_at": datetime.utcnow().isoformat()
+                "uploaded_at": datetime.utcnow().isoformat(),
             },
-            "document": supabase_document
+            "document": result.data[0],
         }
 
     except (NoCredentialsError, ClientError) as e:
