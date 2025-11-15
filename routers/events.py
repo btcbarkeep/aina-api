@@ -11,14 +11,15 @@ from core.supabase_helpers import update_record
 
 
 # Import models
-from models import (
+from models.event import (
     Event,
     EventCreate,
     EventRead,
     EventUpdate,
-    Building,
-    UserBuildingAccess,
 )
+from models.building import Building
+from models.user_access import UserBuildingAccess
+
 
 import traceback
 
