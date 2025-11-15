@@ -5,6 +5,9 @@ from enum import Enum
 
 from sqlmodel import SQLModel, Field, UniqueConstraint
 
+from .models_signup import SignupRequest
+
+
 
 # =====================================================
 # 🔧 ENUMS
