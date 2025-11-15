@@ -135,23 +135,27 @@ def update_building_supabase(
     payload: BuildingUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    # 🔒 Role protection
     requires_role(current_user, ["admin", "manager"])
 
     client = get_supabase_client()
 
-    # Pydantic v2 fix
     update_data = payload.model_dump(exclude_unset=True)
+
+    # 💥 DEBUG LOG — this will print to your Render logs
+    print("UPDATE BUILDING DEBUG:")
+    print("building_id:", building_id)
+    print("update_data:", update_data)
 
     try:
         result = (
             client.table("buildings")
             .update(update_data)
-            .eq("id", building_id)        # 👈 correct column
+            .eq("id", building_id)
             .execute()
         )
 
-        # Supabase returns [] when nothing updated
+        print("SUPABASE RESULT:", result)
+
         if not result.data:
             raise HTTPException(
                 status_code=404,
@@ -161,7 +165,7 @@ def update_building_supabase(
         return result.data[0]
 
     except Exception as e:
-        # Show the REAL Supabase error
+        print("SUPABASE ERROR:", str(e))  # <--- THIS WILL SHOW THE REAL ERROR
         raise HTTPException(
             status_code=500,
             detail=f"Supabase update failed: {str(e)}"
