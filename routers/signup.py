@@ -1,16 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
-from datetime import datetime
-
+from sqlmodel import Session
 from database import get_session
-from dependencies.auth import get_current_user
 from core.notifications import send_email
-
-from models.signup import SignupRequest
-from core.auth_helpers import (
-    create_user_no_password,
-    create_password_token,
-)
+from models.signup import SignupRequest, SignupRequestCreate
 
 router = APIRouter(
     prefix="/api/v1/signup",
@@ -18,24 +10,26 @@ router = APIRouter(
 )
 
 # -----------------------------------------------------
-# 1️⃣ PUBLIC REQUEST-ACCESS ENDPOINT
+# 1️⃣ PUBLIC REQUEST-ACCESS ENDPOINT (WITH MODEL)
 # -----------------------------------------------------
 @router.post("/request", summary="Public Sign-Up Request")
-def request_access(payload: SignupRequest, session: Session = Depends(get_session)):
-    """
-    Public endpoint where HOA managers request access to Aina Protocol.
-    Uses SignupRequest model for full validation.
-    """
+def request_access(payload: SignupRequestCreate, session: Session = Depends(get_session)):
 
     # Save request
-    payload.created_at = datetime.utcnow()
-    payload.status = "pending"
+    req = SignupRequest(
+        full_name=payload.full_name,
+        email=payload.email,
+        phone=payload.phone,
+        hoa_name=payload.hoa_name,
+        notes=payload.notes,
+        message=payload.notes,     # backward compatibility
+    )
 
-    session.add(payload)
+    session.add(req)
     session.commit()
-    session.refresh(payload)
+    session.refresh(req)
 
-    # Confirmation email to requester
+    # Confirmation email to requester (stub)
     send_email(
         subject="Aina Protocol - Signup Request Received",
         body=f"""
@@ -43,32 +37,28 @@ Aloha {payload.full_name},
 
 Your request to access Aina Protocol has been received.
 
-We will review your request shortly and notify you upon approval.
-
 Mahalo,
 Aina Protocol Team
 """,
         to=payload.email,
     )
 
-    # Notify Admin (Barry)
+    # Notify admin (Barry)
     send_email(
-        subject="New Signup Request (Aina Protocol)",
+        subject="New Signup Request - Aina Protocol",
         body=f"""
-New signup request received:
+New signup request:
 
 HOA: {payload.hoa_name}
 Name: {payload.full_name}
 Email: {payload.email}
-
-Message:
-{payload.message or "(none)"}
-
-Request ID: {payload.id}
+Phone: {payload.phone or "(none)"}
+Notes: {payload.notes or "(none)"}
 """,
     )
 
-    return {"status": "success", "request_id": payload.id}
+    return {"status": "success", "request_id": req.id}
+
 
 
 # -----------------------------------------------------
