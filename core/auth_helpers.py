@@ -119,3 +119,52 @@ def create_password_token(
     session.refresh(reset_entry)
 
     return token
+
+## password generator
+
+import jwt
+from datetime import datetime, timedelta
+from core.config import settings
+from models.user_model import User  # Adjust if needed
+from fastapi import HTTPException
+
+SECRET_KEY = settings.SECRET_KEY
+ALGORITHM = "HS256"
+
+def generate_password_setup_token(email: str) -> str:
+    """
+    Creates a short-lived token for password setup.
+    """
+    expire = datetime.utcnow() + timedelta(hours=24)
+    data = {"sub": email, "exp": expire}
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verify_password_setup_token(token: str) -> str:
+    """
+    Decodes the token and returns the email if valid.
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload["sub"]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+
+def create_user_no_password(session, full_name: str, email: str, hoa_name: str):
+    """
+    Creates a user entry WITHOUT a password.
+    Used for admin-created accounts & approved signup requests.
+    """
+    user = User(
+        username=email,
+        email=email,
+        full_name=full_name,
+        hoa_name=hoa_name,
+        hashed_password=None,
+    )
+
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
