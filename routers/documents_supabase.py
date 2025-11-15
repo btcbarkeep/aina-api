@@ -8,8 +8,6 @@ from models.document import DocumentCreate, DocumentUpdate, DocumentRead
 
 from dependencies.auth import requires_role
 
-)
-
 
 router = APIRouter(
     prefix="/documents",
