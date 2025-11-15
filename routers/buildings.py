@@ -6,12 +6,13 @@ import traceback
 from database import get_session
 from dependencies.auth import get_current_user
 
-from models import (
+from models.building import (
     Building,
     BuildingCreate,
     BuildingRead,
     BuildingUpdate,
 )
+
 
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record, delete_record
