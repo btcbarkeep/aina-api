@@ -91,6 +91,14 @@ class EventRead(EventBase):
     id: int
     created_at: datetime
 
+class EventUpdate(SQLModel):
+    building_id: Optional[int] = None
+    unit_number: Optional[str] = None
+    event_type: Optional[EventType] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+
 
 # =====================================================
 # 📄 DOCUMENT MODELS
@@ -118,6 +126,13 @@ class DocumentCreate(DocumentBase):
 class DocumentRead(DocumentBase):
     id: int
     created_at: datetime
+
+class DocumentUpdate(SQLModel):
+    event_id: Optional[int] = None
+    s3_key: Optional[str] = None
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
 
 
 # =====================================================
