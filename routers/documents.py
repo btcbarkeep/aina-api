@@ -94,6 +94,44 @@ def update_document_supabase(document_id: str, payload: DocumentUpdate):
 
     return result["data"]
 
+@router.delete("/supabase/{document_id}", summary="Delete Document (Supabase)", tags=["Documents"])
+def delete_document_supabase(
+    document_id: int,
+    current_user: str = Depends(get_current_user),
+):
+    """
+    Delete a document record from Supabase by ID.
+    Prevents broken relations and ensures clean metadata removal.
+    """
+
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    # --- Delete the record ---
+    try:
+        result = (
+            client
+            .table("documents")
+            .delete()
+            .eq("id", document_id)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Document not found in Supabase")
+
+        return {
+            "status": "deleted",
+            "id": document_id,
+            "message": f"Document {document_id} successfully deleted from Supabase.",
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase delete error: {e}")
+
 
 # -----------------------------------------------------
 # LOCAL DOCUMENT CRUD
