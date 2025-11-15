@@ -15,21 +15,21 @@ router = APIRouter(
 @router.post("/request", summary="Public Sign-Up Request")
 def request_access(payload: SignupRequestCreate, session: Session = Depends(get_session)):
 
-    # Save request
     req = SignupRequest(
         full_name=payload.full_name,
         email=payload.email,
         phone=payload.phone,
-        hoa_name=payload.hoa_name,
+        organization_name=payload.organization_name,
+        requester_role=payload.requester_role,
         notes=payload.notes,
-        message=payload.notes,     # backward compatibility
+        message=payload.notes,   # backward compatibility
     )
 
     session.add(req)
     session.commit()
     session.refresh(req)
 
-    # Confirmation email to requester (stub)
+    # Confirmation email to requester
     send_email(
         subject="Aina Protocol - Signup Request Received",
         body=f"""
@@ -49,16 +49,18 @@ Aina Protocol Team
         body=f"""
 New signup request:
 
-HOA: {payload.hoa_name}
+Organization: {payload.organization_name}
+Role: {payload.requester_role}
 Name: {payload.full_name}
 Email: {payload.email}
 Phone: {payload.phone or "(none)"}
-Notes: {payload.notes or "(none)"}
+
+Notes:
+{payload.notes or "(none)"}
 """,
     )
 
     return {"status": "success", "request_id": req.id}
-
 
 
 # -----------------------------------------------------
