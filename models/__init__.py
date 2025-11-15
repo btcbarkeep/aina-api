@@ -1,6 +1,5 @@
 from .building import (
     BuildingBase,
-    Building,
     BuildingCreate,
     BuildingRead,
     BuildingUpdate,
@@ -9,7 +8,6 @@ from .building import (
 from .event import (
     EventType,
     EventBase,
-    Event,
     EventCreate,
     EventRead,
     EventUpdate,
@@ -17,10 +15,16 @@ from .event import (
 
 from .document import (
     DocumentBase,
-    Document,
     DocumentCreate,
     DocumentRead,
     DocumentUpdate,
+)
+
+from .event_comment import (
+    EventCommentBase,
+    EventCommentCreate,
+    EventCommentRead,
+    EventCommentUpdate,
 )
 
 from .user import (
@@ -30,14 +34,12 @@ from .user import (
 )
 
 from .auth import LoginRequest, TokenResponse
-
 from .signup import SignupRequest
 
 
 __all__ = [
     # buildings
     "BuildingBase",
-    "Building",
     "BuildingCreate",
     "BuildingRead",
     "BuildingUpdate",
@@ -45,17 +47,21 @@ __all__ = [
     # events
     "EventType",
     "EventBase",
-    "Event",
     "EventCreate",
     "EventRead",
     "EventUpdate",
 
     # documents
     "DocumentBase",
-    "Document",
     "DocumentCreate",
     "DocumentRead",
     "DocumentUpdate",
+
+    # event comments
+    "EventCommentBase",
+    "EventCommentCreate",
+    "EventCommentRead",
+    "EventCommentUpdate",
 
     # user + permissions
     "User",
@@ -66,6 +72,6 @@ __all__ = [
     "LoginRequest",
     "TokenResponse",
 
-    # signup / onboarding requests
+    # signup
     "SignupRequest",
 ]
