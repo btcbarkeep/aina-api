@@ -1,5 +1,3 @@
-# routers/buildings.py
-
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 
@@ -7,6 +5,7 @@ from dependencies.auth import get_current_user
 from core.supabase_client import get_supabase_client
 from models.building import BuildingCreate, BuildingUpdate, BuildingRead
 from core.supabase_helpers import update_record, delete_record
+from core.auth_helpers import require_role  # ⬅ NEW: RBAC helper
 
 
 router = APIRouter(
@@ -17,8 +16,13 @@ router = APIRouter(
 """
 BUILDINGS ROUTER (SUPABASE-ONLY)
 
-All building data is stored in Supabase using UUID primary keys.
-This router exposes clean CRUD operations on the 'buildings' table.
+All building data now lives in Supabase only.
+This router exposes CRUD operations on the 'buildings' table.
+Role protection:
+  - List: authenticated users
+  - Create: admin only
+  - Update: admin or manager
+  - Delete: admin only
 """
 
 
@@ -31,8 +35,10 @@ def list_buildings_supabase(
     name: Optional[str] = None,
     city: Optional[str] = None,
     state: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user)
 ):
+    # Any authenticated user is allowed — no RBAC check needed
+
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
@@ -55,17 +61,19 @@ def list_buildings_supabase(
 
 
 # -----------------------------------------------------
-# CREATE BUILDING (Supabase)
+# CREATE (Supabase) — ADMIN ONLY
 # -----------------------------------------------------
 @router.post(
     "/supabase",
     response_model=BuildingRead,
-    summary="Create Building in Supabase"
+    summary="Create or Upsert Building in Supabase"
 )
 def create_building_supabase(
     payload: BuildingCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user)
 ):
+    require_role(current_user, ["admin"])  # 🔒 Only admins can create
+
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
@@ -73,20 +81,26 @@ def create_building_supabase(
     try:
         data = payload.dict()
 
-        # Insert (do NOT upsert by name anymore – now using UUID PK)
-        result = client.table("buildings").insert(data).execute()
+        result = client.table("buildings").upsert(
+            data,
+            on_conflict="name"
+        ).execute()
 
         if not result.data:
-            raise HTTPException(status_code=500, detail="Supabase insert failed")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Building '{payload.name}' already exists."
+            )
 
         return result.data[0]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
+        msg = str(e)
+        raise HTTPException(status_code=500, detail=f"Supabase upsert error: {msg}")
 
 
 # -----------------------------------------------------
-# UPDATE BUILDING (Supabase)
+# UPDATE (Supabase) — ADMIN + MANAGER
 # -----------------------------------------------------
 @router.put(
     "/supabase/{building_id}",
@@ -95,8 +109,10 @@ def create_building_supabase(
 def update_building_supabase(
     building_id: str,
     payload: BuildingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user)
 ):
+    require_role(current_user, ["admin", "manager"])  # 🔒 Allowed roles
+
     update_data = payload.dict(exclude_unset=True)
 
     result = update_record("buildings", building_id, update_data)
@@ -108,7 +124,7 @@ def update_building_supabase(
 
 
 # -----------------------------------------------------
-# DELETE BUILDING (Supabase)
+# DELETE (Supabase) — ADMIN ONLY
 # -----------------------------------------------------
 @router.delete(
     "/supabase/{building_id}",
@@ -116,8 +132,10 @@ def update_building_supabase(
 )
 def delete_building_supabase(
     building_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user)
 ):
+    require_role(current_user, ["admin"])  # 🔒 Only admin may delete
+
     result = delete_record("buildings", building_id)
 
     if result["status"] != "ok":
