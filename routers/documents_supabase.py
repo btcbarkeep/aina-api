@@ -3,12 +3,16 @@ from fastapi import APIRouter, HTTPException, Depends
 from dependencies.auth import (
     get_current_user,
     requires_role,
-    CurrentUser
+    CurrentUser,
 )
 
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record
-from models.document import DocumentCreate, DocumentUpdate, DocumentRead
+from models.document import (
+    DocumentCreate,
+    DocumentUpdate,
+    DocumentRead,
+)
 
 
 router = APIRouter(
@@ -103,7 +107,7 @@ def create_document_supabase(
 ):
     client = get_supabase_client()
 
-    # Determine which building this document belongs to
+    # A document must belong to a building — either directly or via an event
     if payload.event_id:
         building_id = get_event_building_id(payload.event_id)
 
@@ -116,7 +120,7 @@ def create_document_supabase(
             detail="Either event_id OR building_id must be provided."
         )
 
-    # Gate access for non-admin users
+    # Only admins/managers bypass building access
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
