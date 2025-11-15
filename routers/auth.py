@@ -102,6 +102,21 @@ def login(payload: LoginRequest):
 
     return TokenResponse(access_token=token)
 
+@router.post("/dev-login", summary="Temporary admin login")
+def dev_login():
+    token = jwt.encode(
+        {
+            "sub": "bootstrap-admin",
+            "role": "admin",
+            "user_id": "bootstrap",
+            "exp": datetime.utcnow() + timedelta(hours=12),
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+    return {"access_token": token, "token_type": "bearer"}
+
 
 # -----------------------------------------------------
 # VALIDATE TOKEN → returns CurrentUser
