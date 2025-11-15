@@ -6,15 +6,17 @@ import traceback
 
 from database import get_session
 from dependencies.auth import get_current_user
-from models import (
+from models.document import (
     Document,
     DocumentCreate,
     DocumentRead,
     DocumentUpdate,
-    Event,
-    UserBuildingAccess,
-    Building
 )
+
+from models.event import Event
+from models.building import Building
+from models.user_access import UserBuildingAccess
+
 
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record
