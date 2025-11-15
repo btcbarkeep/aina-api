@@ -5,7 +5,8 @@ from typing import Optional
 from dependencies.auth import get_current_user
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record
-from core.auth_helpers import require_admin_role
+from dependencies.auth import requires_role
+
 
 from models.event import EventCreate, EventUpdate, EventRead
 
