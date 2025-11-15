@@ -51,6 +51,12 @@ class BuildingRead(BuildingBase):
     id: int
     created_at: datetime
 
+class BuildingUpdate(SQLModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
 
 # =====================================================
 # 📅 EVENT MODELS
