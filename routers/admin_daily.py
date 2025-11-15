@@ -4,13 +4,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 
-from dependencies.auth import get_current_user
+from dependencies.auth import (
+    get_current_user,
+    requires_role,
+    CurrentUser,
+)
+
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
+
 
 router = APIRouter(
     prefix="/admin-daily",
     tags=["Admin Daily Update"],
+    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
 )
 
 
@@ -39,7 +46,8 @@ def get_daily_snapshot():
 
     snapshot["buildings_total"] = len(buildings)
     snapshot["new_buildings"] = [
-        b for b in buildings if b.get("created_at") and b["created_at"] >= since.isoformat()
+        b for b in buildings
+        if b.get("created_at") and b["created_at"] >= since.isoformat()
     ]
 
     # Events
@@ -54,7 +62,8 @@ def get_daily_snapshot():
 
     snapshot["events_total"] = len(events)
     snapshot["new_events"] = [
-        e for e in events if e.get("created_at") and e["created_at"] >= since.isoformat()
+        e for e in events
+        if e.get("created_at") and e["created_at"] >= since.isoformat()
     ]
 
     # Documents
@@ -69,7 +78,8 @@ def get_daily_snapshot():
 
     snapshot["documents_total"] = len(documents)
     snapshot["new_documents"] = [
-        d for d in documents if d.get("created_at") and d["created_at"] >= since.isoformat()
+        d for d in documents
+        if d.get("created_at") and d["created_at"] >= since.isoformat()
     ]
 
     snapshot["generated_at"] = now.isoformat()
@@ -88,18 +98,24 @@ def format_daily_email(snapshot: dict) -> str:
     lines.append(f"Date: {snapshot['generated_at']}")
     lines.append(f"Range: {snapshot['time_range']}")
     lines.append("")
+
+    # Buildings
     lines.append("=== Buildings ===")
     lines.append(f"Total Buildings: {snapshot['buildings_total']}")
     lines.append(f"New in last 24h: {len(snapshot['new_buildings'])}")
     for b in snapshot["new_buildings"]:
         lines.append(f" • {b['name']} ({b.get('city', '')}, {b.get('state', '')})")
     lines.append("")
+
+    # Events
     lines.append("=== Events ===")
     lines.append(f"Total Events: {snapshot['events_total']}")
     lines.append(f"New in last 24h: {len(snapshot['new_events'])}")
     for e in snapshot["new_events"]:
         lines.append(f" • {e.get('title', 'Untitled')} (building {e['building_id']})")
     lines.append("")
+
+    # Documents
     lines.append("=== Documents ===")
     lines.append(f"Total Documents: {snapshot['documents_total']}")
     lines.append(f"New in last 24h: {len(snapshot['new_documents'])}")
@@ -112,10 +128,12 @@ def format_daily_email(snapshot: dict) -> str:
 
 
 # --------------------------------------------------------
-# POST — Trigger daily email manually
+# POST — Send today's daily report email (ADMIN ONLY)
 # --------------------------------------------------------
 @router.post("/send", summary="Send today's admin daily report email")
-def send_daily_update(current_user: dict = Depends(get_current_user)):
+def send_daily_update(
+    current_user: CurrentUser = Depends(get_current_user)
+):
     snapshot = get_daily_snapshot()
     body = format_daily_email(snapshot)
 
@@ -126,13 +144,15 @@ def send_daily_update(current_user: dict = Depends(get_current_user)):
 
     return JSONResponse({
         "status": "sent",
-        "snapshot": snapshot
+        "snapshot": snapshot,
     })
 
 
 # --------------------------------------------------------
-# GET — Preview daily report JSON
+# GET — Preview daily report JSON (ADMIN ONLY)
 # --------------------------------------------------------
 @router.get("/preview", summary="Preview today's daily report (JSON)")
-def preview_daily_snapshot(current_user: dict = Depends(get_current_user)):
+def preview_daily_snapshot(
+    current_user: CurrentUser = Depends(get_current_user)
+):
     return get_daily_snapshot()
