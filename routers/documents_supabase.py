@@ -4,8 +4,11 @@ from typing import Optional
 from dependencies.auth import get_current_user
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import update_record
-
 from models.document import DocumentCreate, DocumentUpdate, DocumentRead
+
+from core.auth_helpers import (
+    require_role,                    # NEW: RBAC helper
+)
 
 
 router = APIRouter(
@@ -17,25 +20,29 @@ router = APIRouter(
 DOCUMENTS ROUTER (SUPABASE-ONLY)
 
 Manages document metadata for events/HOA records.
-Actual files live in S3 or Supabase Storage.
-Permission checks use Supabase RBAC (user_building_access).
+All IDs use Supabase UUIDs.
+
+Role protection:
+  - List: any authenticated user
+  - Create: authenticated + must have building access (via user_building_access)
+  - Update: admin OR manager
+  - Delete: admin OR manager
 """
 
 
 # -----------------------------------------------------
-# PERMISSION CHECK (RBAC via Supabase)
+# HELPER — Check building access for a user
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     """
     Checks if a user has permission to access a building.
-    Uses Supabase table: user_building_access
+    user_building_access: (user_id uuid, building_id uuid)
     """
 
     client = get_supabase_client()
     if not client:
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
-    # Query the access table
     result = (
         client.table("user_building_access")
         .select("*")
@@ -52,11 +59,11 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# Resolve event → building relationship
+# HELPER — Get building_id from event_id
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     """
-    Returns building_id for a given event.
+    Returns the building_id (uuid) for a given event.
     """
 
     client = get_supabase_client()
@@ -76,7 +83,7 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
-# LIST DOCUMENTS
+# LIST DOCUMENTS (Any authenticated user)
 # -----------------------------------------------------
 @router.get("/supabase", summary="List Documents from Supabase")
 def list_documents_supabase(
@@ -99,7 +106,7 @@ def list_documents_supabase(
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT
+# CREATE DOCUMENT (Authenticated + Building Access)
 # -----------------------------------------------------
 @router.post(
     "/supabase",
@@ -112,13 +119,13 @@ def create_document_supabase(
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Find the building associated with this event
-    building_id = get_event_building_id(payload.event_id)
+    # 1️⃣ Get building_id for event
+    building_id = get_event_building_id(payload.event_id)  # uuid
 
-    # 2️⃣ Permission check
-    verify_user_building_access_supabase(current_user["username"], building_id)
+    # 2️⃣ User must have building access
+    verify_user_building_access_supabase(current_user["id"], building_id)
 
-    # 3️⃣ Insert metadata into Supabase
+    # 3️⃣ Insert metadata
     try:
         result = client.table("documents").insert(payload.dict()).execute()
 
@@ -132,17 +139,18 @@ def create_document_supabase(
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT
+# UPDATE DOCUMENT (Admin + Manager only)
 # -----------------------------------------------------
 @router.put("/supabase/{document_id}", summary="Update Document in Supabase")
 def update_document_supabase(
-    document_id: str,
+    document_id: str,   # UUID
     payload: DocumentUpdate,
     current_user: dict = Depends(get_current_user)
 ):
+    require_role(current_user, ["admin", "manager"])  # 🔒 RBAC
+
     update_data = payload.dict(exclude_unset=True)
 
-    # Update using generic helper
     result = update_record("documents", document_id, update_data)
 
     if result["status"] != "ok":
@@ -152,13 +160,15 @@ def update_document_supabase(
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT
+# DELETE DOCUMENT (Admin + Manager only)
 # -----------------------------------------------------
 @router.delete("/supabase/{document_id}", summary="Delete Document in Supabase")
 def delete_document_supabase(
-    document_id: str,
+    document_id: str,  # UUID
     current_user: dict = Depends(get_current_user)
 ):
+    require_role(current_user, ["admin", "manager"])  # 🔒 RBAC
+
     client = get_supabase_client()
 
     try:
