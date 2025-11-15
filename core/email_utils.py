@@ -1,12 +1,28 @@
+# core/email_utils.py
+from core.notifications import send_email
+
 def send_password_setup_email(email: str, token: str):
     """
-    Email sending stub.
-    Replace with SendGrid / SES soon.
+    Sends the real password setup email using the main SMTP sender.
     """
     link = f"https://ainaprotocol.com/set-password?token={token}"
 
-    print("\n📧 EMAIL SENT (stub)")
-    print(f"To: {email}")
-    print(f"Password Setup Link: {link}\n")
+    subject = "Aina Protocol – Create Your Password"
+    body = f"""
+Aloha,
 
+Your account has been created.
+
+Click below to set your password:
+
+{link}
+
+Mahalo,
+Aina Protocol Team
+"""
+
+    # send the real email
+    send_email(subject, body)
+
+    print(f"[EMAIL] Password setup email sent to {email}")
     return True
