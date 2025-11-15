@@ -3,7 +3,7 @@ from sqlmodel import Session
 from database import get_session
 from core.security import hash_password
 from core.auth_helpers import verify_password_setup_token
-from models.user_model import User
+from models.user import User
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
