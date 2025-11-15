@@ -4,6 +4,9 @@ from jose import jwt
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
+from models.auth import LoginRequest, TokenResponse
+
+
 from core.config import settings
 from dependencies.auth import CurrentUser, get_current_user
 
