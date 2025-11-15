@@ -1,8 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
+from datetime import datetime
+
 from database import get_session
+from dependencies.auth import get_current_user   # 👈 ADD THIS
 from core.notifications import send_email
-from models.signup import SignupRequest, SignupRequestCreate
+from models.signup import SignupRequest
+from models.signup import SignupRequestCreate
+
+from core.auth_helpers import create_user_no_password, create_password_token
+
 
 router = APIRouter(
     prefix="/api/v1/signup",
