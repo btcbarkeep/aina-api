@@ -93,14 +93,16 @@ def create_app() -> FastAPI:
 
 
     # -------------------------------------------------
-    # Root endpoint → redirect to login UI
+    # Root → redirect to Cloudflare login page
     # -------------------------------------------------
-    
-from fastapi.responses import RedirectResponse
+    from fastapi.responses import RedirectResponse
 
     @app.get("/", include_in_schema=False)
     async def root():
-        return RedirectResponse(url="https://your-cloudflare-domain/auth/login.html")
+        return RedirectResponse(url="https://<YOUR-CLOUDFLARE-DOMAIN>/auth/login.html")
+
+    return app
+
 
 
 
