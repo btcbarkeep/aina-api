@@ -94,6 +94,49 @@ def update_event_supabase(event_id: str, payload: EventUpdate):
         raise HTTPException(status_code=500, detail=result["detail"])
 
     return result["data"]
+    
+@router.delete("/supabase/{event_id}", summary="Delete Event (Supabase)")
+def delete_event_supabase(
+    event_id: int,
+    current_user: str = Depends(get_current_user),
+):
+    """
+    Delete an event record from Supabase by ID.
+    Also ensures that related documents are not left orphaned.
+    """
+
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    # --- Optional: block delete if documents are still attached ---
+    try:
+        doc_result = client.table("documents").select("id").eq("event_id", event_id).execute()
+        if doc_result.data:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete event: documents are still attached to this event."
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Document check failed: {e}")
+
+    # --- Delete event ---
+    try:
+        result = client.table("events").delete().eq("id", event_id).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Event not found in Supabase")
+
+        return {
+            "status": "deleted",
+            "id": event_id,
+            "message": f"Event {event_id} successfully deleted from Supabase.",
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase delete error: {e}")
 
 
 # -----------------------------------------------------
