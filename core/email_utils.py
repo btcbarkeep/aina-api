@@ -1,10 +1,13 @@
 # core/email_utils.py
+
 from core.notifications import send_email
+
 
 def send_password_setup_email(email: str, token: str):
     """
     Sends the real password setup email using the main SMTP sender.
     """
+
     link = f"https://ainaprotocol.com/set-password?token={token}"
 
     subject = "Aina Protocol – Create Your Password"
@@ -20,6 +23,14 @@ Click below to set your password:
 Mahalo,
 Aina Protocol Team
 """
+
+    # Call the real SMTP email sender
+    send_email(subject=subject, body=body, to=email)
+
+    print(f"[EMAIL] Password setup email sent to {email}")
+
+    return True
+
 
     # send the real email
     send_email(subject, body)
