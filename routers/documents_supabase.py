@@ -13,7 +13,7 @@ from models.document import DocumentCreate, DocumentUpdate, DocumentRead
 
 router = APIRouter(
     prefix="/documents",
-    tags=["Documents"]
+    tags=["Documents"],
 )
 
 
@@ -45,6 +45,8 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
 
     result = (
         client.table("events")
@@ -66,7 +68,7 @@ def get_event_building_id(event_id: str) -> str:
 @router.get("/supabase", summary="List Documents from Supabase")
 def list_documents_supabase(
     limit: int = 100,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
@@ -97,37 +99,41 @@ def list_documents_supabase(
 )
 def create_document_supabase(
     payload: DocumentCreate,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
-    # Determine building_id for RBAC depending on case
-
+    # Determine which building this document belongs to
     if payload.event_id:
-        # If document is tied to an event → derive building_id from event
         building_id = get_event_building_id(payload.event_id)
+
     elif payload.building_id:
-        # If document is general (not event specific)
         building_id = payload.building_id
+
     else:
         raise HTTPException(
             status_code=400,
             detail="Either event_id OR building_id must be provided."
         )
 
-    # Admin/manager bypass
+    # Gate access for non-admin users
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
-    # Insert doc
+    # Insert into Supabase
     try:
         result = client.table("documents").insert(payload.dict()).execute()
+
         if not result.data:
             raise HTTPException(status_code=500, detail="Insert failed")
+
         return result.data[0]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase insert error: {e}"
+        )
 
 
 # -----------------------------------------------------
@@ -137,7 +143,7 @@ def create_document_supabase(
 def update_document_supabase(
     document_id: str,
     payload: DocumentUpdate,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     requires_role(current_user, ["admin", "manager"])
 
@@ -146,7 +152,10 @@ def update_document_supabase(
     result = update_record("documents", document_id, update_data)
 
     if result["status"] != "ok":
-        raise HTTPException(status_code=500, detail=result["detail"])
+        raise HTTPException(
+            status_code=500,
+            detail=result["detail"]
+        )
 
     return result["data"]
 
@@ -157,7 +166,7 @@ def update_document_supabase(
 @router.delete("/supabase/{document_id}", summary="Delete Document in Supabase")
 def delete_document_supabase(
     document_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     requires_role(current_user, ["admin", "manager"])
 
@@ -177,4 +186,7 @@ def delete_document_supabase(
         return {"status": "deleted", "id": document_id}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase delete error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase delete error: {e}"
+        )
