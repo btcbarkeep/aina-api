@@ -7,24 +7,31 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # --------------------------------------------------------
+# Ensure local imports always resolve correctly
+# --------------------------------------------------------
+sys.path.append(os.path.dirname(__file__))
+
+# --------------------------------------------------------
 # Local imports
 # --------------------------------------------------------
 from core.config import settings
 from core.logging_config import logger
 from database import create_db_and_tables
-from routers import api_router, user_access
 
-# --------------------------------------------------------
-# Ensure local imports always resolve correctly
-# --------------------------------------------------------
-sys.path.append(os.path.dirname(__file__))
+from routers import (
+    api_router,
+    user_access,
+    admin,
+    auth_password,
+    signup,
+)
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.PROJECT_NAME,
         version="0.3.0",
-        description="Aina Protocol API – Real Estate Data & AOAO Management on-chain",
+        description="Aina Protocol API – Real Estate Data & AOAO Management",
     )
 
     # -------------------------------------------------
@@ -46,7 +53,6 @@ def create_app() -> FastAPI:
         logger.info("🚀 Starting Aina Protocol API")
         create_db_and_tables()
 
-        # Log all /api/v1 routes for Render visibility
         print("\n📍 Registered /api/v1 Routes:\n")
         for route in app.routes:
             if route.path.startswith("/api/v1"):
@@ -66,10 +72,7 @@ def create_app() -> FastAPI:
                 request.url,
                 exc.detail,
             )
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"detail": exc.detail},
-        )
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
@@ -80,10 +83,13 @@ def create_app() -> FastAPI:
         )
 
     # -------------------------------------------------
-    # Versioned API: everything under /api/v1
+    # Versioned API Routers
     # -------------------------------------------------
-    app.include_router(api_router, prefix="/api/v1")
-    app.include_router(user_access.router, prefix="/api/v1")
+    app.include_router(api_router, prefix="/api/v1")          # core buildings/events/documents
+    app.include_router(user_access.router, prefix="/api/v1")  # user building assignments
+    app.include_router(admin.router, prefix="/api/v1")        # admin: create accounts
+    app.include_router(auth_password.router, prefix="/api/v1")# password setup
+    app.include_router(signup.router, prefix="/api/v1")       # future: public signup flow
 
     # -------------------------------------------------
     # Root endpoint
