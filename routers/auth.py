@@ -61,33 +61,39 @@ def _create_access_token(email: str, role: str, user_id: str):
 def login(payload: LoginRequest):
     client = get_supabase_client()
 
-    # 1. Fetch user by email
-    result = (
-        client.table("users")
-        .select("*")
-        .eq("email", payload.email)
-        .maybe_single()
-        .execute()
-    )
+    try:
+        result = (
+            client.table("users")
+            .select("*")
+            .eq("email", payload.email)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Supabase query failed: {str(e)}",
+        )
 
-    if result.error or not result.data:
+    # result.data will be a list or None
+    if not result.data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
-    user = result.data
+    # Get the first user (maybe_single no longer works the same)
+    user = result.data[0]
 
-    # 2. Validate password (bcrypt)
+    # Validate password
     hashed_pw = user.get("hashed_password")
-
     if not hashed_pw or not pwd_context.verify(payload.password, hashed_pw):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
-    # 3. Generate JWT
+    # Generate JWT
     token = _create_access_token(
         email=user["email"],
         role=user.get("role", "user"),
