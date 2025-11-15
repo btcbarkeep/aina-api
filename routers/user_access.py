@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from typing import List
 
 from database import get_session
-from models.user_access import UserBuildingAccess
+from models.user import UserBuildingAccess
 from models.building import Building
 
 from dependencies.auth import get_current_user
