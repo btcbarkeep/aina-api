@@ -18,7 +18,7 @@ from models.event import (
     EventUpdate,
 )
 from models.building import Building
-from models.user_access import UserBuildingAccess
+from models.user import UserBuildingAccess
 
 
 import traceback
