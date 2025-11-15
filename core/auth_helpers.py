@@ -60,25 +60,39 @@ def create_user_no_password(
     role: str = "hoa",
 ):
     """
-    Creates a user *in Supabase*, not in the local database.
+    Creates a user in the Supabase 'users' table without a password.
+    Compatible with Supabase Python client 2.x.
     """
 
     client = get_supabase_client()
 
-    # Check if email already exists
-    existing = client.table("users").select("*").eq("email", email).maybe_single().execute()
+    # -------------------------------
+    # 1️⃣ Check if user already exists
+    # -------------------------------
+    try:
+        existing = (
+            client.table("users")
+            .select("*")
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase lookup failed: {str(e)}")
 
     if existing.data:
         raise HTTPException(status_code=400, detail="A user with this email already exists.")
 
+    # -------------------------------
+    # 2️⃣ Insert new user
+    # -------------------------------
     user_id = str(uuid4())
     now = datetime.utcnow().isoformat()
 
-    # Create Supabase user row
-    result = client.table("users").insert({
+    user_payload = {
         "id": user_id,
-        "username": email,
         "email": email,
+        "username": email,
         "full_name": full_name,
         "organization_name": organization_name,
         "phone": phone,
@@ -86,12 +100,26 @@ def create_user_no_password(
         "hashed_password": None,
         "created_at": now,
         "updated_at": now,
-    }).execute()
+    }
 
-    if result.error:
-        raise HTTPException(status_code=500, detail=f"Supabase error: {result.error}")
+    try:
+        result = (
+            client.table("users")
+            .insert(user_payload)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase create error: {str(e)}")
 
-    return {"id": user_id, "email": email}
+    # Supabase returns a list under result.data
+    if not result.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase insert returned no data (unexpected).",
+        )
+
+    return result.data[0]  # Return created user
+
 
 
 # ============================================================
