@@ -107,14 +107,19 @@ def get_current_user(
 # ============================================================
 # Role Requirement Wrapper
 # ============================================================
-def requires_role(required_role: str):
+
+def requires_role(allowed_roles: list[str]):
+    """
+    Dependency factory that ensures the current user has one of the allowed roles.
+    """
     def checker(current_user: CurrentUser = Depends(get_current_user)):
-        if current_user.role != required_role:
+        if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires '{required_role}' role",
+                detail=f"Requires one of the roles: {allowed_roles}",
             )
         return current_user
+
     return checker
 
 
