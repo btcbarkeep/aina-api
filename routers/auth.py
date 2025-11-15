@@ -124,3 +124,46 @@ def dev_login():
 @router.get("/me", response_model=CurrentUser)
 def read_me(current_user: CurrentUser = Depends(lambda: None)):
     return current_user
+
+
+## password backend endpoint
+
+class SetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/set-password", summary="Finish account setup by creating password")
+def set_password(payload: SetPasswordRequest):
+    client = get_supabase_client()
+
+    # Decode email from token
+    try:
+        email = jwt.decode(
+            payload.token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )["sub"]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    # Hash the password
+    hashed_pw = pwd_context.hash(payload.password)
+
+    # Save password to Supabase
+    result = (
+        client.table("users")
+        .update({
+            "hashed_password": hashed_pw,
+            "reset_token": None,
+            "reset_token_expires": None,
+        })
+        .eq("email", email)
+        .execute()
+    )
+
+    if result.error:
+        raise HTTPException(status_code=500, detail="Failed to set password")
+
+    return {"status": "success", "message": "Password created successfully!"}
+
