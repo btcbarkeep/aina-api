@@ -25,8 +25,8 @@ class SignupRequest(SQLModel, table=True):
     full_name: str
     email: str
     phone: Optional[str] = None
-    hoa_name: Optional[str] = None     # Only for HOA/Manager
-    requester_role: str = Field(default="hoa")  # 👈 NEW FIELD
+    organization_name: Optional[str] = None   # 👈 NEW FIELD
+    requester_role: str = Field(default="hoa")
     notes: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
