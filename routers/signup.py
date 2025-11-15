@@ -11,7 +11,10 @@ from models.signup import SignupRequestCreate
 from core.auth_helpers import create_user_no_password, create_password_token
 
 
-router = APIRouter(prefix="/signup")
+router = APIRouter(
+    prefix="/signup",
+    tags=["Signup"]   # 👈 add this
+)
 
 
 # -----------------------------------------------------
