@@ -140,30 +140,31 @@ def update_building_supabase(
 
     client = get_supabase_client()
 
-    # Only send fields user actually provided
+    # Pydantic v2 fix
     update_data = payload.model_dump(exclude_unset=True)
 
     try:
         result = (
             client.table("buildings")
             .update(update_data)
-            .eq("building_id", building_id)
+            .eq("id", building_id)        # 👈 correct column
             .execute()
         )
 
-        # No record found
+        # Supabase returns [] when nothing updated
         if not result.data:
             raise HTTPException(
                 status_code=404,
-                detail="Building not found"
+                detail=f"Building with id '{building_id}' not found."
             )
 
         return result.data[0]
 
     except Exception as e:
+        # Show the REAL Supabase error
         raise HTTPException(
             status_code=500,
-            detail=f"Supabase update failed: {e}"
+            detail=f"Supabase update failed: {str(e)}"
         )
 
 
