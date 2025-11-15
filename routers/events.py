@@ -10,7 +10,8 @@ from core.auth_helpers import verify_user_building_access
 from core.supabase_client import get_supabase_client
 
 # Import models properly
-from models import Event, EventCreate, EventRead
+from models import Event, EventCreate, EventRead, EventUpdate
+
 
 import traceback
 
@@ -81,6 +82,18 @@ def create_event_supabase(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
 
+@router.put("/supabase/{event_id}", tags=["Events"])
+def update_event_supabase(event_id: str, payload: EventUpdate):
+    """
+    Update an event record in Supabase by ID.
+    """
+    update_data = payload.dict(exclude_unset=True)
+
+    result = update_record("events", event_id, update_data)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=500, detail=result["detail"])
+
+    return result["data"]
 
 
 
@@ -248,9 +261,11 @@ def create_event(
 
 
 
-@router.put("/{event_id}", response_model=Event, summary="Update Event (Local DB)")
-def update_event(event_id: int, payload: dict, session: Session = Depends(get_session)):
-    """Update an event record in the local database."""
+@router.put("/{event_id}", response_model=EventRead, summary="Update Event (Local DB)")
+def update_event_local(event_id: int, payload: dict, session: Session = Depends(get_session)):
+    """
+    Update an event record in the local database.
+    """
     event = session.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -262,6 +277,7 @@ def update_event(event_id: int, payload: dict, session: Session = Depends(get_se
     session.add(event)
     session.commit()
     session.refresh(event)
+
     return event
 
 
