@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
 
 from dependencies.auth import (
     get_current_user,
@@ -17,22 +16,9 @@ router = APIRouter(
     tags=["Documents"]
 )
 
-"""
-DOCUMENTS ROUTER (SUPABASE-ONLY)
-
-Manages document metadata for events/HOA records.
-All IDs use Supabase UUIDs.
-
-Role protection:
-  - List: any authenticated user
-  - Create: authenticated + (admin/manager OR building access)
-  - Update: admin OR manager
-  - Delete: admin OR manager
-"""
-
 
 # -----------------------------------------------------
-# HELPER — Check building access
+# Helper — Check building access
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
@@ -55,12 +41,12 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# HELPER — Get building_id from event_id
+# Helper — event_id → building_id
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
 
-    event_result = (
+    result = (
         client.table("events")
         .select("building_id")
         .eq("id", event_id)
@@ -68,14 +54,14 @@ def get_event_building_id(event_id: str) -> str:
         .execute()
     )
 
-    if not event_result.data:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    return event_result.data["building_id"]
+    return result.data["building_id"]
 
 
 # -----------------------------------------------------
-# LIST DOCUMENTS (Any authenticated user)
+# LIST DOCUMENTS
 # -----------------------------------------------------
 @router.get("/supabase", summary="List Documents from Supabase")
 def list_documents_supabase(
@@ -102,8 +88,7 @@ def list_documents_supabase(
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT
-# Admin/Manager OR must have building access
+# CREATE DOCUMENT (admin/manager OR building access)
 # -----------------------------------------------------
 @router.post(
     "/supabase",
@@ -116,15 +101,13 @@ def create_document_supabase(
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Get building_id for the event
+    # find building_id for event
     building_id = get_event_building_id(payload.event_id)
 
-    # 2️⃣ Allow admins/managers immediately
+    # admin+manager bypass access checks
     if current_user.role not in ["admin", "manager"]:
-        # 3️⃣ Otherwise must have building access
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
-    # 4️⃣ Insert
     try:
         result = client.table("documents").insert(payload.dict()).execute()
 
@@ -138,7 +121,7 @@ def create_document_supabase(
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT (Admin + Manager)
+# UPDATE DOCUMENT (admin + manager only)
 # -----------------------------------------------------
 @router.put("/supabase/{document_id}", summary="Update Document in Supabase")
 def update_document_supabase(
@@ -159,7 +142,7 @@ def update_document_supabase(
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT (Admin + Manager)
+# DELETE DOCUMENT (admin + manager only)
 # -----------------------------------------------------
 @router.delete("/supabase/{document_id}", summary="Delete Document in Supabase")
 def delete_document_supabase(
@@ -181,10 +164,7 @@ def delete_document_supabase(
         if not result.data:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        return {
-            "status": "deleted",
-            "id": document_id,
-        }
+        return {"status": "deleted", "id": document_id}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase delete error: {e}")
