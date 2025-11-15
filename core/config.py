@@ -16,23 +16,24 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # -------------------------------------------------
-    # CORS
+    # Cloudflare + Frontend Domains
     # -------------------------------------------------
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
-
-    # Cloudflare Pages (dynamic subdomain)
     CLOUDFLARE_PAGES_DOMAIN: Optional[str] = Field(
         None,
         env="CLOUDFLARE_PAGES_DOMAIN"
     )
 
-    # AinaReports + AinaProtocol frontends
     AINA_REPORTS_DOMAINS: List[str] = [
         "https://ainareports.com",
         "https://www.ainareports.com",
         "https://ainaprotocol.com",
         "https://www.ainaprotocol.com",
     ]
+
+    # -------------------------------------------------
+    # CORS (auto-built below)
+    # -------------------------------------------------
+    BACKEND_CORS_ORIGINS: List[str] = []
 
     # -------------------------------------------------
     # JWT / Auth
@@ -57,7 +58,7 @@ class Settings(BaseSettings):
     SMTP_TO: Optional[str] = Field(None, env="SMTP_TO")
 
     # -------------------------------------------------
-    # Core
+    # Model Config
     # -------------------------------------------------
     class Config:
         case_sensitive = True
@@ -65,4 +66,23 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 
+# Instantiate settings
 settings = Settings()
+
+# -------------------------------------------------
+# Build CORS list dynamically after loading settings
+# -------------------------------------------------
+cors_origins = []
+
+# 1) add Pages domain if set
+if settings.CLOUDFLARE_PAGES_DOMAIN:
+    domain = settings.CLOUDFLARE_PAGES_DOMAIN
+    if not domain.startswith("http"):
+        domain = f"https://{domain}"
+    cors_origins.append(domain.rstrip("/"))
+
+# 2) add AinaReports + AinaProtocol domains
+cors_origins.extend([d.rstrip("/") for d in settings.AINA_REPORTS_DOMAINS])
+
+# 3) dedupe
+settings.BACKEND_CORS_ORIGINS = sorted(list(set(cors_origins)))
