@@ -127,19 +127,31 @@ def update_building_supabase(
 # -----------------------------------------------------
 # DELETE (Supabase) — ADMIN ONLY
 # -----------------------------------------------------
-@router.delete(
-    "/supabase/{building_id}",
-    summary="Delete Building in Supabase"
-)
-def delete_building_supabase(
+@router.delete("/{building_id}", summary="Delete a building (Admin only)")
+def delete_building(
     building_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(requires_role("admin")),
 ):
-    require_role(current_user, ["admin"])  # 🔒 Only admin may delete
+    client = get_supabase_client()
 
-    result = delete_record("buildings", building_id)
+    try:
+        result = (
+            client.table("buildings")
+            .delete()
+            .eq("id", building_id)
+            .execute()
+        )
 
-    if result["status"] != "ok":
-        raise HTTPException(status_code=500, detail=result["detail"])
+        # Supabase returns [] if nothing deleted
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Building ID {building_id} not found",
+            )
 
-    return {"status": "deleted", "id": building_id}
+        return {"status": "deleted", "id": building_id}
+
+    except Exception as e:
+        # Show REAL Supabase error in logs
+        print("❌ Supabase delete error:", e)
+        raise HTTPException(status_code=500, detail=str(e))
