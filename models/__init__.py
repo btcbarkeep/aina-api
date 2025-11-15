@@ -1,40 +1,59 @@
-# models/__init__.py
-
-# Building models
 from .building import (
-    Building,
     BuildingBase,
+    Building,
     BuildingCreate,
     BuildingRead,
     BuildingUpdate,
 )
 
-# Event models
 from .event import (
-    Event,
+    EventType,
     EventBase,
+    Event,
     EventCreate,
     EventRead,
     EventUpdate,
 )
 
-# Document models
 from .document import (
-    Document,
     DocumentBase,
+    Document,
     DocumentCreate,
     DocumentRead,
     DocumentUpdate,
 )
 
-# User models
 from .user import UserBuildingAccess
 
-# Auth models
 from .auth import LoginRequest, TokenResponse
 
-# Enums
-from .enums import EventType
-
-# Signup models
 from .signup import SignupRequest
+
+__all__ = [
+    # buildings
+    "BuildingBase",
+    "Building",
+    "BuildingCreate",
+    "BuildingRead",
+    "BuildingUpdate",
+    # events
+    "EventType",
+    "EventBase",
+    "Event",
+    "EventCreate",
+    "EventRead",
+    "EventUpdate",
+    # documents
+    "DocumentBase",
+    "Document",
+    "DocumentCreate",
+    "DocumentRead",
+    "DocumentUpdate",
+    # user access
+    "UserBuildingAccess",
+    # auth
+    "LoginRequest",
+    "TokenResponse",
+    # signup
+    "SignupRequest",
+]
