@@ -37,41 +37,36 @@ def require_admin(user):
 # ---------------------------------------------------------
 # 1️⃣ CREATE USER (No password) + password setup email
 # ---------------------------------------------------------
-@router.post("/create-account", summary="Admin: Create new user")
+@router.post("/create-account", summary="Admin: Create a user account")
 def admin_create_account(
     payload: AdminCreateUser,
-    session: Session = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user = Depends(get_current_user)
 ):
-    require_admin(current_user)
+    # Only admins
+    if getattr(current_user, "role", None) != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
 
-    # create user with no password
+    # 1. Create user in Supabase instead of internal DB
     user = create_user_no_password(
-        session=session,
         full_name=payload.full_name,
         email=payload.email,
         organization_name=payload.organization_name,
+        phone=payload.phone,
+        role=payload.role,
     )
 
-    # generate token + send email
+    # 2. Create password setup token
     token = generate_password_setup_token(payload.email)
-    send_password_setup_email(payload.email, token)
 
-    # assign building + role
-    if payload.building_id is not None:
-        access = UserBuildingAccess(
-            username=payload.email,
-            building_id=payload.building_id,
-            role=payload.role,
-        )
-        session.add(access)
-        session.commit()
+    # 3. Email the token
+    send_password_setup_email(payload.email, token)
 
     return {
         "status": "success",
-        "message": f"Account created for {payload.email}.",
-        "debug_token": token,
+        "message": f"Account created for {payload.email}. Password setup email sent.",
+        "debug_token": token
     }
+
 
 
 # ---------------------------------------------------------
