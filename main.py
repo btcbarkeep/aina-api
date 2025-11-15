@@ -13,6 +13,11 @@ from database import create_db_and_tables
 from routers import api_router
 from routers import user_access
 
+from routers import signup
+
+app.include_router(signup.router)
+
+
 # Ensure local imports always resolve correctly
 sys.path.append(os.path.dirname(__file__))
 
