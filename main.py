@@ -6,19 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+# --------------------------------------------------------
 # Local imports
+# --------------------------------------------------------
 from core.config import settings
 from core.logging_config import logger
 from database import create_db_and_tables
-from routers import api_router
-from routers import user_access
+from routers import api_router, user_access
 
-from routers import signup
-
-app.include_router(signup.router)
-
-
+# --------------------------------------------------------
 # Ensure local imports always resolve correctly
+# --------------------------------------------------------
 sys.path.append(os.path.dirname(__file__))
 
 
@@ -48,7 +46,7 @@ def create_app() -> FastAPI:
         logger.info("🚀 Starting Aina Protocol API")
         create_db_and_tables()
 
-        # Log all /api/v1 routes for quick Render visibility
+        # Log all /api/v1 routes for Render visibility
         print("\n📍 Registered /api/v1 Routes:\n")
         for route in app.routes:
             if route.path.startswith("/api/v1"):
@@ -88,11 +86,10 @@ def create_app() -> FastAPI:
     app.include_router(user_access.router, prefix="/api/v1")
 
     # -------------------------------------------------
-    # Root endpoint (uptime / info)
+    # Root endpoint
     # -------------------------------------------------
     @app.get("/", tags=["Health"], summary="API Uptime & Version Check")
     async def root():
-        """Simple root route for uptime monitoring (e.g., Render health check)."""
         return {
             "status": "ok",
             "message": "Aina Protocol API",
@@ -102,4 +99,7 @@ def create_app() -> FastAPI:
     return app
 
 
+# --------------------------------------------------------
+# Create the application instance
+# --------------------------------------------------------
 app = create_app()
