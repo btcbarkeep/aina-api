@@ -1,4 +1,5 @@
 # routers/sync.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from jose import JWTError
@@ -19,14 +20,11 @@ router = APIRouter(
 )
 
 # --------------------------------------------------------
-# BUILDING SYNC ENDPOINTS
+# BUILDINGS SYNC (COMPARE / FIX / REVERSE)
 # --------------------------------------------------------
 
 @router.get("/buildings", summary="Compare Local vs Supabase Buildings")
 def compare_building_sync(session: Session = Depends(get_session)):
-    """
-    Compare the local buildings table versus Supabase.
-    """
     from core.supabase_client import get_supabase_client
     client = get_supabase_client()
 
@@ -38,7 +36,7 @@ def compare_building_sync(session: Session = Depends(get_session)):
         local_names = {b.name for b in local}
 
         supabase = client.table("buildings").select("name").execute()
-        supa_names = {row["name"] for row in supabase.data or []}
+        supa_names = {row["name"] for row in (supabase.data or [])}
 
         return {
             "status": "ok",
@@ -55,11 +53,8 @@ def compare_building_sync(session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"Sync comparison failed: {e}")
 
 
-@router.post("/buildings/fix", summary="Push missing local buildings to Supabase")
+@router.post("/buildings/fix", summary="Push missing local buildings → Supabase")
 def fix_building_sync(session: Session = Depends(get_session)):
-    """
-    Push missing buildings from local DB to Supabase.
-    """
     from core.supabase_client import get_supabase_client
     client = get_supabase_client()
 
@@ -70,8 +65,8 @@ def fix_building_sync(session: Session = Depends(get_session)):
         local_rows = session.exec(select(Building)).all()
         local_names = {b.name for b in local_rows}
 
-        supabase_rows = client.table("buildings").select("name").execute()
-        supa_names = {row["name"] for row in supabase_rows.data or []}
+        supa_data = client.table("buildings").select("name").execute().data or []
+        supa_names = {row["name"] for row in supa_data}
 
         missing = [b for b in local_rows if b.name not in supa_names]
 
@@ -89,21 +84,14 @@ def fix_building_sync(session: Session = Depends(get_session)):
             if result.data:
                 inserted.append(b.name)
 
-        return {
-            "status": "ok",
-            "inserted": inserted,
-            "count": len(inserted),
-        }
+        return {"status": "ok", "inserted": inserted, "count": len(inserted)}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Auto-sync failed: {e}")
 
 
-@router.post("/buildings/reverse", summary="Pull missing Supabase buildings → local DB")
+@router.post("/buildings/reverse", summary="Pull missing Supabase buildings → Local DB")
 def reverse_building_sync(session: Session = Depends(get_session)):
-    """
-    Pull missing buildings from Supabase into local DB.
-    """
     from core.supabase_client import get_supabase_client
     client = get_supabase_client()
 
@@ -114,31 +102,26 @@ def reverse_building_sync(session: Session = Depends(get_session)):
         local_rows = session.exec(select(Building)).all()
         local_names = {b.name for b in local_rows}
 
-        supa_result = client.table("buildings").select("*").execute()
-        supa_rows = supa_result.data or []
+        supa_rows = client.table("buildings").select("*").execute().data or []
         supa_names = {row["name"] for row in supa_rows}
 
         missing = [row for row in supa_rows if row["name"] not in local_names]
 
         added = []
         for row in missing:
-            new_bld = Building(
+            new_b = Building(
                 name=row["name"],
                 address=row.get("address"),
                 city=row.get("city"),
                 state=row.get("state"),
                 zip=row.get("zip"),
             )
-            session.add(new_bld)
+            session.add(new_b)
             added.append(row["name"])
 
         session.commit()
 
-        return {
-            "status": "ok",
-            "inserted": added,
-            "count": len(added),
-        }
+        return {"status": "ok", "inserted": added, "count": len(added)}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Reverse sync failed: {e}")
@@ -149,9 +132,6 @@ def reverse_building_sync(session: Session = Depends(get_session)):
 # --------------------------------------------------------
 
 def run_full_building_sync(session: Session):
-    """
-    Shared building sync logic for scheduler and API.
-    """
     from core.supabase_client import get_supabase_client
     client = get_supabase_client()
 
@@ -162,16 +142,16 @@ def run_full_building_sync(session: Session):
         local_rows = session.exec(select(Building)).all()
         local_names = {b.name for b in local_rows}
 
-        supa_result = client.table("buildings").select("*").execute()
-        supa_rows = supa_result.data or []
+        supa_rows = client.table("buildings").select("*").execute().data or []
         supa_names = {row["name"] for row in supa_rows}
 
         missing_supa = [b for b in local_rows if b.name not in supa_names]
         missing_local = [row for row in supa_rows if row["name"] not in local_names]
 
-        inserted_supa, inserted_local = [], []
+        inserted_supa = []
+        inserted_local = []
 
-        # push to supabase
+        # local → supabase
         for b in missing_supa:
             payload = {
                 "name": b.name,
@@ -185,7 +165,7 @@ def run_full_building_sync(session: Session):
             if result.data:
                 inserted_supa.append(b.name)
 
-        # pull into local
+        # supabase → local
         for row in missing_local:
             new_b = Building(
                 name=row["name"],
@@ -213,18 +193,20 @@ def run_full_building_sync(session: Session):
 
 
 # --------------------------------------------------------
+# EVENTS + DOCUMENTS SYNC (imported helpers ONLY)
+# --------------------------------------------------------
+
+from routers.events import run_full_event_sync
+from routers.documents import run_full_document_sync
+
+
+# --------------------------------------------------------
 # GLOBAL FULL SYNC (BUILDINGS + EVENTS + DOCUMENTS)
 # --------------------------------------------------------
 
 async def perform_sync_logic():
-    """
-    Runs full sync for all modules.
-    """
     try:
         print("[SYNC] Running full sync logic...")
-
-        from routers.events import run_full_event_sync
-        from routers.documents import run_full_document_sync
 
         session_gen = get_session()
         session = next(session_gen)
@@ -248,6 +230,7 @@ async def perform_sync_logic():
             "message": str(e),
             "summary": traceback.format_exc(),
         }
+
     finally:
         try:
             session.close()
@@ -255,7 +238,7 @@ async def perform_sync_logic():
             pass
 
 
-@router.post("/run", summary="Trigger full sync (All modules)")
+@router.post("/run", summary="Trigger FULL sync (Buildings + Events + Documents)")
 async def trigger_full_sync(current_user: dict = Depends(get_current_user)):
     start_time = datetime.utcnow()
     result = await perform_sync_logic()
