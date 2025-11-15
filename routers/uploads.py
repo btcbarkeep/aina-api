@@ -4,6 +4,10 @@ from datetime import datetime
 import boto3, os
 from botocore.exceptions import ClientError, NoCredentialsError
 
+from models.document import Document
+from models.event import Event
+
+
 from dependencies.auth import get_current_user, requires_role
 
 router = APIRouter(
