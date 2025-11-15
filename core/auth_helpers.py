@@ -8,7 +8,6 @@ from sqlmodel import Session, select
 # Use python-jose, NOT plain jwt
 from jose import jwt
 
-from core.config import settings
 
 from models import (
     UserBuildingAccess,
@@ -16,8 +15,11 @@ from models import (
     PasswordResetToken
 )
 
-SECRET_KEY = settings.JWT_SECRET_KEY
-ALGORITHM = "HS256"
+from core.config import settings
+
+SECRET_KEY = settings.JWT_SECRET_KEY       # ✅ correct
+ALGORITHM = settings.JWT_ALGORITHM         # ✅ correct (HS256)
+
 
 
 # ============================================================
