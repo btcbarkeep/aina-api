@@ -11,8 +11,9 @@ class SignupRequestCreate(SQLModel):
     email: str
     phone: Optional[str] = None
     organization_name: Optional[str] = None
-    requester_role: str = "hoa"     # 👈 NEW FIELD
+    requester_role: str = "hoa"   # <-- NEW FIELD
     notes: Optional[str] = None
+
 
 
 # -----------------------------------------------------
@@ -30,4 +31,3 @@ class SignupRequest(SQLModel, table=True):
     requester_role: str = Field(default="hoa")
     notes: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-
