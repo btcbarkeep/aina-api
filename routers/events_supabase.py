@@ -1,4 +1,4 @@
-# routers/events.py
+# routers/events_supabase.py
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 
@@ -22,14 +22,12 @@ router = APIRouter(
 """
 EVENTS ROUTER (SUPABASE-ONLY)
 
-Handles all AOAO event logs, maintenance records, notices, etc.
-All data stored directly in Supabase.
-
 Roles:
-  - List: Any authenticated user
+  - List: any authenticated user
   - Create: admin or manager OR user must have building access
-  - Update: admin or manager OR user must have building access
+  - Update: admin or manager
   - Delete: admin or manager
+  - Comment: admin or manager
 """
 
 
@@ -75,9 +73,12 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
-# LIST EVENTS
+# LIST EVENTS — Any authenticated user
 # -----------------------------------------------------
-@router.get("/supabase", summary="List Events from Supabase")
+@router.get(
+    "/supabase",
+    summary="List Events from Supabase"
+)
 def list_events_supabase(
     limit: int = 200,
     current_user: CurrentUser = Depends(get_current_user)
@@ -99,28 +100,26 @@ def list_events_supabase(
 
 
 # -----------------------------------------------------
-# CREATE EVENT
+# CREATE EVENT — Admin/Manager, or building-access user
 # -----------------------------------------------------
 @router.post(
     "/supabase",
     response_model=EventRead,
-    summary="Create Event in Supabase"
+    summary="Create Event in Supabase",
 )
 def create_event_supabase(
     payload: EventCreate,
     current_user: CurrentUser = Depends(get_current_user)
 ):
     client = get_supabase_client()
-
     building_id = payload.building_id
 
-    # Admin / manager can always create
+    # Admin / Manager: full access
     if current_user.role not in ["admin", "manager"]:
-        # Others must have building access
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
     try:
-        result = client.table("events").insert(payload.dict()).execute()
+        result = client.table("events").insert(payload.model_dump()).execute()
 
         if not result.data:
             raise HTTPException(status_code=500, detail="Supabase insert failed")
@@ -132,18 +131,18 @@ def create_event_supabase(
 
 
 # -----------------------------------------------------
-# UPDATE EVENT (Admins only)
+# UPDATE EVENT — Admin OR Manager
 # -----------------------------------------------------
-@router.put("/supabase/{event_id}", summary="Update Event in Supabase")
+@router.put(
+    "/supabase/{event_id}",
+    summary="Update Event in Supabase",
+    dependencies=[Depends(requires_role(["admin", "manager"]))],
+)
 def update_event_supabase(
     event_id: str,
     payload: EventUpdate,
-    current_user: CurrentUser = Depends(get_current_user)
 ):
-    # Admin only
-    requires_role(current_user, ["admin"])
-
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
 
     result = update_record("events", event_id, update_data)
 
@@ -152,20 +151,21 @@ def update_event_supabase(
 
     return result["data"]
 
+
 # -----------------------------------------------------
-# DELETE EVENT (Admins only)
+# DELETE EVENT — Admin OR Manager
 # -----------------------------------------------------
-@router.delete("/supabase/{event_id}", summary="Delete Event in Supabase")
+@router.delete(
+    "/supabase/{event_id}",
+    summary="Delete Event in Supabase",
+    dependencies=[Depends(requires_role(["admin", "manager"]))],
+)
 def delete_event_supabase(
     event_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
 ):
-    # Admin only
-    requires_role(current_user, ["admin"])
-    
     client = get_supabase_client()
 
-    # Prevent deleting if docs exist
+    # Prevent deleting events that have documents attached
     docs = (
         client.table("documents")
         .select("id")
@@ -193,26 +193,24 @@ def delete_event_supabase(
 
 
 # -----------------------------------------------------
-# ADD COMMENT TO EVENT (Manager or Admin)
+# ADD COMMENT — Admin OR Manager
 # -----------------------------------------------------
 @router.post(
     "/supabase/{event_id}/comment",
-    summary="Add a comment/update to an event"
+    summary="Add a comment/update to an event",
+    dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
 def add_event_comment(
     event_id: str,
     comment: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
-    # Must be manager or admin
-    requires_role(current_user, ["admin", "manager"])
-
-    # Verify event exists
+    # Confirm event exists & get building
     building_id = get_event_building_id(event_id)
 
-    # Managers must still have building access
+    # Managers must have building access
     if current_user.role != "admin":
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
@@ -226,6 +224,14 @@ def add_event_comment(
             })
             .execute()
         )
+
+        if not result.data:
+            raise HTTPException(500, "Insert failed")
+
+        return result.data[0]
+
+    except Exception as e:
+        raise HTTPException(500, f"Supabase insert error: {e}")
 
         return result.data[0]
 
