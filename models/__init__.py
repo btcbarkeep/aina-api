@@ -23,11 +23,16 @@ from .document import (
     DocumentUpdate,
 )
 
-from .user import UserBuildingAccess
+from .user import (
+    User,
+    UserBuildingAccess,
+    PasswordResetToken,
+)
 
 from .auth import LoginRequest, TokenResponse
 
 from .signup import SignupRequest
+
 
 __all__ = [
     # buildings
@@ -36,6 +41,7 @@ __all__ = [
     "BuildingCreate",
     "BuildingRead",
     "BuildingUpdate",
+
     # events
     "EventType",
     "EventBase",
@@ -43,17 +49,23 @@ __all__ = [
     "EventCreate",
     "EventRead",
     "EventUpdate",
+
     # documents
     "DocumentBase",
     "Document",
     "DocumentCreate",
     "DocumentRead",
     "DocumentUpdate",
-    # user access
+
+    # user + permissions
+    "User",
     "UserBuildingAccess",
-    # auth
+    "PasswordResetToken",
+
+    # auth models
     "LoginRequest",
     "TokenResponse",
-    # signup
+
+    # signup / onboarding requests
     "SignupRequest",
 ]
