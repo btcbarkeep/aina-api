@@ -100,15 +100,19 @@ def create_building_supabase(payload: BuildingCreate):
 
 
 
-@router.put("/supabase/{building_id}")
-def update_building_supabase(building_id: str, payload: dict):
+@router.put("/supabase/{building_id}", tags=["Buildings"])
+def update_building_supabase(building_id: str, payload: BuildingUpdate):
     """
     Update a building record in Supabase by ID.
     """
-    result = update_record("buildings", building_id, payload)
+    update_data = payload.dict(exclude_unset=True)
+
+    result = update_record("buildings", building_id, update_data)
     if result["status"] != "ok":
         raise HTTPException(status_code=500, detail=result["detail"])
+    
     return result["data"]
+
 
 
 @router.delete("/supabase/{building_id}")
@@ -395,7 +399,11 @@ def create_building(payload: BuildingCreate, session: Session = Depends(get_sess
 
 
 @router.put("/{building_id}", response_model=BuildingRead, summary="Update Building (Local DB)")
-def update_building_local(building_id: int, payload: dict, session: Session = Depends(get_session)):
+def update_building_local(
+    building_id: int,
+    payload: BuildingUpdate,
+    session: Session = Depends(get_session)
+):
     """
     Update a building record in the local database.
     Example: change name, address, or other fields.
@@ -404,16 +412,17 @@ def update_building_local(building_id: int, payload: dict, session: Session = De
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
 
-    # Apply updates dynamically
-    for key, value in payload.items():
-        if hasattr(building, key):
-            setattr(building, key, value)
+    # Apply updates
+    update_data = payload.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(building, key, value)
 
     session.add(building)
     session.commit()
     session.refresh(building)
 
     return building
+
 
 
 
