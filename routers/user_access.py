@@ -31,9 +31,9 @@ class UserBuildingAccessRead(BaseModel):
 # Admin — List all user access entries
 # ============================================================
 @router.get(
-    "/", 
+    "/",
     summary="Admin: List all user access records",
-    dependencies=[Depends(requires_role("admin"))]
+    dependencies=[Depends(requires_role(["admin"]))],
 )
 def list_user_access():
     client = get_supabase_client()
@@ -42,20 +42,18 @@ def list_user_access():
         result = client.table("user_building_access").select("*").execute()
         return result.data or []
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase query failed: {e}")
+        raise HTTPException(500, f"Supabase query failed: {e}")
 
 
 # ============================================================
 # Admin — Grant user access to a building
 # ============================================================
 @router.post(
-    "/", 
+    "/",
     summary="Admin: Add user → building access",
-    dependencies=[Depends(requires_role("admin"))]
+    dependencies=[Depends(requires_role(["admin"]))],
 )
-def add_user_access(
-    payload: UserBuildingAccessCreate,
-):
+def add_user_access(payload: UserBuildingAccessCreate):
     client = get_supabase_client()
 
     try:
@@ -70,7 +68,7 @@ def add_user_access(
         return result.data[0]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase insert failed: {e}")
+        raise HTTPException(500, f"Supabase insert failed: {e}")
 
 
 # ============================================================
@@ -79,7 +77,7 @@ def add_user_access(
 @router.delete(
     "/{access_id}",
     summary="Admin: Delete a user access entry",
-    dependencies=[Depends(requires_role("admin"))]
+    dependencies=[Depends(requires_role(["admin"]))],
 )
 def delete_user_access(access_id: str):
     client = get_supabase_client()
@@ -93,12 +91,12 @@ def delete_user_access(access_id: str):
         )
 
         if not result.data:
-            raise HTTPException(status_code=404, detail="Access record not found")
+            raise HTTPException(404, "Access record not found")
 
         return {"status": "deleted", "id": access_id}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase delete error: {e}")
+        raise HTTPException(500, f"Supabase delete error: {e}")
 
 
 # ============================================================
@@ -108,6 +106,7 @@ def delete_user_access(access_id: str):
 def my_access(current_user: CurrentUser = Depends(get_current_user)):
     """
     Returns all building IDs that the authenticated user can manage.
+    Accessible by ANY logged-in user.
     """
     client = get_supabase_client()
 
@@ -121,4 +120,4 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
         return result.data or []
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase fetch failed: {e}")
+        raise HTTPException(500, f"Supabase fetch failed: {e}")
