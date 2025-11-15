@@ -17,6 +17,7 @@ class SignupRequestCreate(SQLModel):
 # -----------------------------------------------------
 # Database model
 # -----------------------------------------------------
+
 class SignupRequest(SQLModel, table=True):
     __tablename__ = "signup_requests"
 
@@ -24,7 +25,8 @@ class SignupRequest(SQLModel, table=True):
     full_name: str
     email: str
     phone: Optional[str] = None
-    hoa_name: str
+    hoa_name: Optional[str] = None     # Only for HOA/Manager
+    requester_role: str = Field(default="hoa")  # 👈 NEW FIELD
     notes: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    status: str = Field(default="pending")
+
