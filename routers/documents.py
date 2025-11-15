@@ -6,7 +6,8 @@ import traceback
 
 from database import get_session
 from dependencies.auth import get_current_user
-from models import Document, DocumentCreate, DocumentRead
+from models import Document, DocumentCreate, DocumentRead, DocumentUpdate
+
 from core.supabase_client import get_supabase_client
 from core.auth_helpers import verify_user_building_access
 from models import Event  # needed to check which building the document’s event belongs to
@@ -67,6 +68,19 @@ def create_document_supabase(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
 
+@router.put("/supabase/{document_id}", tags=["Documents"])
+def update_document_supabase(document_id: str, payload: DocumentUpdate):
+    """
+    Update a document record in Supabase by ID.
+    """
+    update_data = payload.dict(exclude_unset=True)
+
+    result = update_record("documents", document_id, update_data)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=500, detail=result["detail"])
+
+    return result["data"]
+
 
 # =====================================================
 # 🧱 LOCAL DOCUMENT CREATION (Protected + Permission Aware)
@@ -96,6 +110,29 @@ def attach_document(
     session.refresh(document)
     return document
 
+@router.put("/{document_id}", response_model=DocumentRead, summary="Update Document (Local DB)")
+def update_document_local(
+    document_id: int,
+    payload: DocumentUpdate,
+    session: Session = Depends(get_session),
+):
+    """
+    Update a document record in the local database.
+    """
+    document = session.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    update_data = payload.dict(exclude_unset=True)
+
+    for key, value in update_data.items():
+        setattr(document, key, value)
+
+    session.add(document)
+    session.commit()
+    session.refresh(document)
+
+    return document
 
 
 # =====================================================
