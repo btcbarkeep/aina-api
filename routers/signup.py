@@ -5,7 +5,8 @@ from datetime import datetime
 from database import get_session
 from dependencies.auth import get_current_user
 from core.notifications import send_email
-from models import SignupRequest, User
+from models.signup import SignupRequest
+
 
 from core.auth_helpers import create_user_no_password, create_password_token
 
