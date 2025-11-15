@@ -1,3 +1,5 @@
+# routers/buildings.py
+
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 
@@ -15,8 +17,8 @@ router = APIRouter(
 """
 BUILDINGS ROUTER (SUPABASE-ONLY)
 
-All building data now lives in Supabase only.
-This router exposes CRUD operations on the 'buildings' table.
+All building data is stored in Supabase using UUID primary keys.
+This router exposes clean CRUD operations on the 'buildings' table.
 """
 
 
@@ -29,7 +31,7 @@ def list_buildings_supabase(
     name: Optional[str] = None,
     city: Optional[str] = None,
     state: Optional[str] = None,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
     client = get_supabase_client()
     if not client:
@@ -53,16 +55,16 @@ def list_buildings_supabase(
 
 
 # -----------------------------------------------------
-# CREATE (Supabase)
+# CREATE BUILDING (Supabase)
 # -----------------------------------------------------
 @router.post(
     "/supabase",
     response_model=BuildingRead,
-    summary="Create or Upsert Building in Supabase"
+    summary="Create Building in Supabase"
 )
 def create_building_supabase(
     payload: BuildingCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
     client = get_supabase_client()
     if not client:
@@ -71,26 +73,20 @@ def create_building_supabase(
     try:
         data = payload.dict()
 
-        result = client.table("buildings").upsert(
-            data,
-            on_conflict="name"
-        ).execute()
+        # Insert (do NOT upsert by name anymore – now using UUID PK)
+        result = client.table("buildings").insert(data).execute()
 
         if not result.data:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Building '{payload.name}' already exists."
-            )
+            raise HTTPException(status_code=500, detail="Supabase insert failed")
 
         return result.data[0]
 
     except Exception as e:
-        msg = str(e)
-        raise HTTPException(status_code=500, detail=f"Supabase upsert error: {msg}")
+        raise HTTPException(status_code=500, detail=f"Supabase insert error: {e}")
 
 
 # -----------------------------------------------------
-# UPDATE (Supabase)
+# UPDATE BUILDING (Supabase)
 # -----------------------------------------------------
 @router.put(
     "/supabase/{building_id}",
@@ -99,7 +95,7 @@ def create_building_supabase(
 def update_building_supabase(
     building_id: str,
     payload: BuildingUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
     update_data = payload.dict(exclude_unset=True)
 
@@ -112,7 +108,7 @@ def update_building_supabase(
 
 
 # -----------------------------------------------------
-# DELETE (Supabase)
+# DELETE BUILDING (Supabase)
 # -----------------------------------------------------
 @router.delete(
     "/supabase/{building_id}",
@@ -120,7 +116,7 @@ def update_building_supabase(
 )
 def delete_building_supabase(
     building_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
     result = delete_record("buildings", building_id)
 
