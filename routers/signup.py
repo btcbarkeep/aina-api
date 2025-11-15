@@ -29,8 +29,8 @@ def request_access(payload: SignupRequestCreate, session: Session = Depends(get_
         organization_name=payload.organization_name,
         requester_role=payload.requester_role,
         notes=payload.notes,
-        message=payload.notes,   # backward compatibility
     )
+
 
     session.add(req)
     session.commit()
