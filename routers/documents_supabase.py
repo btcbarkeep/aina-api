@@ -64,8 +64,6 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
-    if not client:
-        raise HTTPException(500, "Supabase not configured")
 
     result = (
         client.table("events")
@@ -109,7 +107,7 @@ def list_documents_supabase(
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT (admin/manager OR building-access user)
+# CREATE DOCUMENT — Admin/Manager OR building-access user
 # -----------------------------------------------------
 @router.post(
     "/supabase",
@@ -122,7 +120,7 @@ def create_document_supabase(
 ):
     client = get_supabase_client()
 
-    # Determine building ID
+    # Determine building ID for RBAC
     if payload.event_id:
         building_id = get_event_building_id(payload.event_id)
     elif payload.building_id:
@@ -133,7 +131,7 @@ def create_document_supabase(
             "Either event_id OR building_id must be provided.",
         )
 
-    # RBAC: admins/managers bypass building restrictions
+    # Enforce building access for non-admin/manager
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
@@ -142,8 +140,7 @@ def create_document_supabase(
 
         result = (
             client.table("documents")
-            .insert(doc_data)
-            .select("*")
+            .insert(doc_data, returning="representation")   # ✅ FIXED
             .execute()
         )
 
@@ -186,17 +183,14 @@ def update_document_supabase(
     summary="Delete Document in Supabase",
     dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
-def delete_document_supabase(
-    document_id: str,
-):
+def delete_document_supabase(document_id: str):
     client = get_supabase_client()
 
     try:
         result = (
             client.table("documents")
-            .delete()
+            .delete(returning="representation")   # ✅ FIXED
             .eq("id", document_id)
-            .select("*")
             .execute()
         )
 
