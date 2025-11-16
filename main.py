@@ -21,6 +21,7 @@ from routers.documents_supabase import router as documents_router
 
 # Contractors (new)
 from routers.contractors_supabase import router as contractors_router
+from routers.contractor_events_supabase import router as contractor_events_router
 
 # -------------------------------------------------
 # Routers: Auth / Admin
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
 
     # Contractors (directory + event mapping)
     app.include_router(contractors_router,           prefix="/api/v1")
+    app.include_router(contractor_events_router,     prefix="/api/v1")
 
     # Daily admin automation
     app.include_router(admin_daily_router,           prefix="/api/v1")
