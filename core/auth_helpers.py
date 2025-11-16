@@ -111,44 +111,52 @@ def create_user_no_password(
     phone: str | None = None,
     role: str = "hoa",
 ):
+    """
+    Creates a user in Supabase.
+    IMPORTANT:
+    - Do NOT send `id` (Supabase auto-generates)
+    - Do NOT send `username` (we removed the column)
+    - hashed_password should start as NULL
+    """
+
     client = get_supabase_client()
 
-    # 1️⃣ Check for existing user
+    # 1️⃣ Check if user exists
     existing = (
         client.table("users")
-        .select("uuid")
+        .select("id")
         .eq("email", email)
         .maybe_single()
         .execute()
     )
 
     if existing.data:
-        raise HTTPException(400, "A user with this email already exists.")
+        raise HTTPException(400, "User already exists.")
 
-    # 2️⃣ Build payload WITHOUT id
+    now = datetime.utcnow().isoformat()
+
     payload = {
         "email": email,
-        "username": email,
         "full_name": full_name,
         "organization_name": organization_name,
         "phone": phone,
         "role": role,
         "hashed_password": None,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
+        "created_at": now,
+        "updated_at": now,
     }
 
-    # 3️⃣ Insert and RETURN the new row
+    # 2️⃣ Create user (Supabase returns generated UUID)
     result = (
         client.table("users")
         .insert(payload)
-        .select("*")   # <-- REQUIRED to get inserted row
-        .single()
+        .select("*")      # ← REQUIRED TO GET DATA BACK
+        .single()         # ← ensure one row
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(500, "Supabase returned no user data.")
+        raise HTTPException(500, "Supabase insert returned no data.")
 
     return result.data
 
