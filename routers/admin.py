@@ -18,13 +18,19 @@ from core.email_utils import send_password_setup_email
 
 
 # -----------------------------------------------------
-# Router — ADMIN ONLY
+# Router — ADMIN + SUPER ADMIN ONLY
 # -----------------------------------------------------
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    dependencies=[Depends(requires_role(["admin", "super_admin", "manager"]))],
 )
+
+
+# -----------------------------------------------------
+# Allowed Roles
+# -----------------------------------------------------
+ALLOWED_ROLES = ["super_admin", "admin", "manager", "contractor", "hoa", "viewer"]
 
 
 # -----------------------------------------------------
@@ -35,7 +41,7 @@ class AdminCreateUser(BaseModel):
     email: EmailStr
     organization_name: str | None = None
     phone: str | None = None
-    role: str = "hoa"
+    role: str = "hoa"  # default lowest role
 
 
 class AdminUpdateUser(BaseModel):
@@ -46,6 +52,25 @@ class AdminUpdateUser(BaseModel):
 
 
 # -----------------------------------------------------
+# Helper — Ensure role assignment is allowed
+# -----------------------------------------------------
+def validate_role_change(requestor: CurrentUser, desired_role: str):
+    """Ensure the logged-in admin has permission to assign the chosen role."""
+
+    if desired_role not in ALLOWED_ROLES:
+        raise HTTPException(400, f"Invalid role: {desired_role}")
+
+    # Only super_admin can assign privileged roles
+    privileged = ["super_admin", "admin", "manager"]
+
+    if desired_role in privileged and requestor.role != "super_admin":
+        raise HTTPException(
+            403,
+            detail=f"Only super_admin can assign role '{desired_role}'"
+        )
+
+
+# -----------------------------------------------------
 # 1️⃣ CREATE USER
 # -----------------------------------------------------
 @router.post("/create-account", summary="Admin: Create a user account")
@@ -53,6 +78,9 @@ def admin_create_account(
     payload: AdminCreateUser,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    # Role validation
+    validate_role_change(current_user, payload.role)
+
     try:
         supa_user = create_user_no_password(
             full_name=payload.full_name,
@@ -69,7 +97,7 @@ def admin_create_account(
     try:
         send_password_setup_email(payload.email, token)
     except Exception as e:
-        raise HTTPException(500, f"Failed to send password email: {e}")
+        raise HTTPException(500, f"Failed to send password setup email: {e}")
 
     return {
         "status": "success",
@@ -83,15 +111,15 @@ def admin_create_account(
 # 2️⃣ LIST USERS
 # -----------------------------------------------------
 @router.get("/users", summary="Admin: List all users")
-def list_users():
+def list_users(role: str | None = None):
     client = get_supabase_client()
 
-    result = (
-        client.table("users")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-    )
+    query = client.table("users").select("*")
+
+    if role:
+        query = query.eq("role", role)
+
+    result = query.order("created_at", desc=True).execute()
 
     return result.data or []
 
@@ -118,7 +146,7 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ UPDATE USER (SYNC SAFE)
+# 4️⃣ UPDATE USER
 # -----------------------------------------------------
 @router.patch("/users/{user_id}", summary="Admin: Update user")
 def update_user(
@@ -131,13 +159,17 @@ def update_user(
     if not update_data:
         raise HTTPException(400, "No valid fields to update")
 
+    # Prevent role assignment unless allowed
+    if "role" in update_data:
+        validate_role_change(current_user, update_data["role"])
+
     update_data["updated_at"] = "now()"
 
     client = get_supabase_client()
 
     result = (
         client.table("users")
-        .update(update_data, returning="representation")   # ✅ FIXED
+        .update(update_data, returning="representation")
         .eq("id", user_id)
         .execute()
     )
@@ -149,7 +181,7 @@ def update_user(
 
 
 # -----------------------------------------------------
-# 5️⃣ DELETE USER (SYNC SAFE)
+# 5️⃣ DELETE USER
 # -----------------------------------------------------
 @router.delete("/users/{user_id}", summary="Admin: Delete user")
 def delete_user(
@@ -158,7 +190,8 @@ def delete_user(
 ):
     client = get_supabase_client()
 
-    if user_id == current_user.user_id:
+    # Fix: use current_user.id, not current_user.user_id
+    if user_id == current_user.id:
         raise HTTPException(400, "Admins cannot delete their own account.")
 
     existing = (
@@ -176,7 +209,7 @@ def delete_user(
 
     result = (
         client.table("users")
-        .delete(returning="representation")   # ✅ FIXED
+        .delete(returning="representation")
         .eq("id", user_id)
         .execute()
     )
@@ -192,7 +225,6 @@ def delete_user(
 # -----------------------------------------------------
 @router.post("/users/{user_id}/resend-password", summary="Admin: Resend password email")
 def resend_password_setup(user_id: str):
-
     client = get_supabase_client()
 
     result = (
@@ -207,7 +239,6 @@ def resend_password_setup(user_id: str):
         raise HTTPException(404, "User not found")
 
     email = result.data["email"]
-
     token = generate_password_setup_token(email)
 
     try:
