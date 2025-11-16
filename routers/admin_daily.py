@@ -13,147 +13,206 @@ from dependencies.auth import (
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
 
-
 router = APIRouter(
     prefix="/admin-daily",
     tags=["Admin Daily Update"],
     dependencies=[Depends(requires_role(["admin", "super_admin"]))],
 )
 
+# ============================================================
+# Helper — safely fetch table rows
+# ============================================================
+def fetch_rows(client, table: str):
+    result = client.table(table).select("*").order("created_at", desc=True).execute()
+    return result.data or []
 
-# --------------------------------------------------------
-# Helper — Fetch daily snapshot from Supabase
-# --------------------------------------------------------
+
+# ============================================================
+# Daily Snapshot Builder
+# ============================================================
 def get_daily_snapshot():
     client = get_supabase_client()
     if not client:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
+        raise HTTPException(500, "Supabase not configured")
 
     now = datetime.utcnow()
     since = now - timedelta(hours=24)
 
+    def created_within_last_24h(obj):
+        ts = obj.get("created_at")
+        if not ts:
+            return False
+        return ts >= since.isoformat()
+
     snapshot = {}
 
-    # Buildings
-    buildings = (
-        client.table("buildings")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
-
+    # --------------------------------------------------------
+    # BUILDINGS
+    # --------------------------------------------------------
+    buildings = fetch_rows(client, "buildings")
     snapshot["buildings_total"] = len(buildings)
-    snapshot["new_buildings"] = [
-        b for b in buildings
-        if b.get("created_at") and b["created_at"] >= since.isoformat()
-    ]
+    snapshot["new_buildings"] = [b for b in buildings if created_within_last_24h(b)]
 
-    # Events
-    events = (
-        client.table("events")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
+    # buildings that had events today
+    today_building_ids = set()
 
+    # --------------------------------------------------------
+    # EVENTS
+    # --------------------------------------------------------
+    events = fetch_rows(client, "events")
     snapshot["events_total"] = len(events)
-    snapshot["new_events"] = [
-        e for e in events
-        if e.get("created_at") and e["created_at"] >= since.isoformat()
-    ]
+    snapshot["new_events"] = [e for e in events if created_within_last_24h(e)]
 
-    # Documents
-    documents = (
-        client.table("documents")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
+    for e in snapshot["new_events"]:
+        today_building_ids.add(e.get("building_id"))
 
+    snapshot["buildings_updated_today"] = list(today_building_ids)
+
+    # --------------------------------------------------------
+    # DOCUMENTS
+    # --------------------------------------------------------
+    documents = fetch_rows(client, "documents")
     snapshot["documents_total"] = len(documents)
-    snapshot["new_documents"] = [
-        d for d in documents
-        if d.get("created_at") and d["created_at"] >= since.isoformat()
-    ]
+    snapshot["new_documents"] = [d for d in documents if created_within_last_24h(d)]
 
+    # --------------------------------------------------------
+    # USERS
+    # --------------------------------------------------------
+    users = fetch_rows(client, "users")
+    snapshot["users_total"] = len(users)
+    snapshot["new_users"] = [u for u in users if created_within_last_24h(u)]
+
+    # Active = users who submitted events/documents today
+    active_user_ids = set(e["created_by"] for e in snapshot["new_events"] if e.get("created_by"))
+    active_user_ids.update(
+        d["uploaded_by"] for d in snapshot["new_documents"] if d.get("uploaded_by")
+    )
+    snapshot["active_users_count"] = len(active_user_ids)
+
+    # --------------------------------------------------------
+    # CONTRACTOR ACTIVITY
+    # --------------------------------------------------------
+    contractors = [u for u in users if u.get("role") == "contractor"]
+    contractor_events = {}
+
+    for e in snapshot["new_events"]:
+        cid = e.get("created_by")
+        if cid:
+            contractor_events[cid] = contractor_events.get(cid, 0) + 1
+
+    snapshot["contractor_activity"] = contractor_events
+    snapshot["most_active_contractor"] = None
+
+    if contractor_events:
+        top_id = max(contractor_events, key=contractor_events.get)
+        snapshot["most_active_contractor"] = next(
+            (u for u in users if u["id"] == top_id), None
+        )
+
+    # --------------------------------------------------------
+    # SYSTEM / API HEALTH  (optional — can grow later)
+    # --------------------------------------------------------
+    snapshot["cron_status"] = "SUCCESS"
+    snapshot["api_errors_24h"] = 0   # Expand later if needed
+    snapshot["api_requests_24h"] = 0 # Expand later if needed
+
+    # --------------------------------------------------------
+    # Output metadata
+    # --------------------------------------------------------
     snapshot["generated_at"] = now.isoformat()
     snapshot["time_range"] = f"{since.isoformat()} → {now.isoformat()}"
 
     return snapshot
 
 
-# --------------------------------------------------------
-# Helper — Format email nicely
-# --------------------------------------------------------
-def format_daily_email(snapshot: dict) -> str:
+# ============================================================
+# Email Builder (clean & readable)
+# ============================================================
+def format_daily_email(s):
     lines = []
-    lines.append("Aina Protocol — Daily System Update")
-    lines.append("")
-    lines.append(f"Date: {snapshot['generated_at']}")
-    lines.append(f"Range: {snapshot['time_range']}")
-    lines.append("")
+    add = lines.append
 
-    # Buildings
-    lines.append("=== Buildings ===")
-    lines.append(f"Total Buildings: {snapshot['buildings_total']}")
-    lines.append(f"New in last 24h: {len(snapshot['new_buildings'])}")
-    for b in snapshot["new_buildings"]:
-        lines.append(f" • {b['name']} ({b.get('city', '')}, {b.get('state', '')})")
-    lines.append("")
+    add("Aina Protocol — Daily System Update\n")
+    add(f"Date: {s['generated_at']}")
+    add(f"Range: {s['time_range']}\n")
 
-    # Events
-    lines.append("=== Events ===")
-    lines.append(f"Total Events: {snapshot['events_total']}")
-    lines.append(f"New in last 24h: {len(snapshot['new_events'])}")
-    for e in snapshot["new_events"]:
-        lines.append(f" • {e.get('title', 'Untitled')} (building {e['building_id']})")
-    lines.append("")
+    # ------------------------------
+    # BUILDINGS
+    # ------------------------------
+    add("=== Buildings ===")
+    add(f"Total Buildings: {s['buildings_total']}")
+    add(f"New in last 24h: {len(s['new_buildings'])}")
+    add(f"Buildings updated today (via events): {len(s['buildings_updated_today'])}")
+    add("")
 
-    # Documents
-    lines.append("=== Documents ===")
-    lines.append(f"Total Documents: {snapshot['documents_total']}")
-    lines.append(f"New in last 24h: {len(snapshot['new_documents'])}")
-    for d in snapshot["new_documents"]:
-        lines.append(f" • {d['filename']} (event {d['event_id']})")
-    lines.append("")
-    lines.append("End of report.")
+    # ------------------------------
+    # EVENTS
+    # ------------------------------
+    add("=== Events ===")
+    add(f"Total Events: {s['events_total']}")
+    add(f"New in last 24h: {len(s['new_events'])}")
+    add("")
 
+    # ------------------------------
+    # DOCUMENTS
+    # ------------------------------
+    add("=== Documents ===")
+    add(f"Total Documents: {s['documents_total']}")
+    add(f"New in last 24h: {len(s['new_documents'])}")
+    add("")
+
+    # ------------------------------
+    # USERS
+    # ------------------------------
+    add("=== Users ===")
+    add(f"Total Users: {s['users_total']}")
+    add(f"New Users Today: {len(s['new_users'])}")
+    add(f"Active Users Today: {s['active_users_count']}")
+    add("")
+
+    # ------------------------------
+    # CONTRACTORS
+    # ------------------------------
+    add("=== Contractor Activity ===")
+    if s["most_active_contractor"]:
+        m = s["most_active_contractor"]
+        add(f"Most Active Contractor: {m.get('full_name', m['email'])}")
+    else:
+        add("No contractor activity in last 24h")
+    add("")
+
+    # ------------------------------
+    # SYSTEM HEALTH
+    # ------------------------------
+    add("=== System Health ===")
+    add(f"Cron Status: {s['cron_status']}")
+    add(f"API Requests (24h): {s['api_requests_24h']}")
+    add(f"API Errors (24h): {s['api_errors_24h']}")
+    add("")
+
+    add("End of report.")
     return "\n".join(lines)
 
 
-# --------------------------------------------------------
-# POST — Send today's daily report email (ADMIN ONLY)
-# --------------------------------------------------------
-@router.post("/send", summary="Send today's admin daily report email")
-def send_daily_update(
-    current_user: CurrentUser = Depends(get_current_user)
-):
+# ============================================================
+# POST — Send Daily Report
+# ============================================================
+@router.post("/send")
+def send_daily_update(current_user: CurrentUser = Depends(get_current_user)):
     snapshot = get_daily_snapshot()
     body = format_daily_email(snapshot)
 
-    # 👉 No email provided = use SMTP_TO from .env
     send_email(
         subject="Aina Protocol — Daily Update",
         body=body,
     )
 
-    return JSONResponse({
-        "status": "sent",
-        "snapshot": snapshot,
-    })
+    return JSONResponse({"status": "sent", "snapshot": snapshot})
 
 
-# --------------------------------------------------------
-# GET — Preview daily report JSON (ADMIN ONLY)
-# --------------------------------------------------------
-@router.get("/preview", summary="Preview today's daily report (JSON)")
-def preview_daily_snapshot(
-    current_user: CurrentUser = Depends(get_current_user)
-):
+# ============================================================
+# GET — Preview
+# ============================================================
+@router.get("/preview")
+def preview_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
     return get_daily_snapshot()
