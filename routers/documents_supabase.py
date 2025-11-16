@@ -7,7 +7,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-    from core.supabase_helpers import update_record
+from core.supabase_helpers import update_record
 
 from models.document import (
     DocumentCreate,
