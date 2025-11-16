@@ -1,8 +1,9 @@
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel, EmailStr
 
 class AdminCreateUser(BaseModel):
-    full_name: str
-    email: str
-    organization_name: str  # replaces hoa_name
+    full_name: Optional[str] = None
+    email: EmailStr
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
     role: str = "hoa"
-    building_id: int = 0
