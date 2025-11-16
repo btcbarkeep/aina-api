@@ -74,9 +74,19 @@ def create_building_supabase(payload: BuildingCreate):
     data = sanitize(payload.model_dump())
 
     try:
-        insert_result = client.table("buildings").insert(data).execute()
+        # Insert with returning="representation"
+        insert_result = (
+            client.table("buildings")
+            .insert(data, returning="representation")   # ✅ FIXED
+            .execute()
+        )
+
+        if not insert_result.data:
+            raise HTTPException(500, "Insert failed")
+
         building_id = insert_result.data[0]["id"]
 
+        # Fetch final version
         fetch_result = (
             client.table("buildings")
             .select("*")
@@ -108,8 +118,18 @@ def update_building_supabase(
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     try:
-        client.table("buildings").update(update_data).eq("id", building_id).execute()
+        # Update with returning="representation"
+        update_result = (
+            client.table("buildings")
+            .update(update_data, returning="representation")   # ✅ FIXED
+            .eq("id", building_id)
+            .execute()
+        )
 
+        if not update_result.data:
+            raise HTTPException(404, f"Building '{building_id}' not found")
+
+        # Optional: fetch final version
         fetch_result = (
             client.table("buildings")
             .select("*")
@@ -117,9 +137,6 @@ def update_building_supabase(
             .single()
             .execute()
         )
-
-        if not fetch_result.data:
-            raise HTTPException(404, f"Building '{building_id}' not found")
 
         return fetch_result.data
 
@@ -136,9 +153,10 @@ def delete_building(building_id: str):
     client = get_supabase_client()
 
     try:
+        # Delete with returning="representation"
         delete_result = (
             client.table("buildings")
-            .delete()
+            .delete(returning="representation")   # ✅ FIXED
             .eq("id", building_id)
             .execute()
         )
@@ -194,7 +212,7 @@ def get_building_events(
 
 
 # ============================================================================
-# BUILDING → UNITS (inferred from event.unit_number)
+# BUILDING → UNITS (inferred from events)
 # ============================================================================
 @router.get(
     "/supabase/{building_id}/units",
@@ -220,7 +238,7 @@ def get_building_units(
 
 
 # ============================================================================
-# BUILDING → CONTRACTORS (summaries)
+# BUILDING → CONTRACTORS SUMMARY
 # ============================================================================
 @router.get(
     "/supabase/{building_id}/contractors",
@@ -290,7 +308,7 @@ def get_building_contractors(
 
 
 # ============================================================================
-# BUILDING → FULL REPORT (for AinaReports)
+# BUILDING → FULL REPORT (AinaReports)
 # ============================================================================
 @router.get(
     "/supabase/{building_id}/report",
