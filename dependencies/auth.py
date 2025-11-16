@@ -14,7 +14,7 @@ bearer_scheme = HTTPBearer()
 # Current User object returned to backend + frontend
 # ============================================================
 class CurrentUser(BaseModel):
-    id: str                      # Supabase UUID
+    id: str
     email: str
     role: str
     full_name: Optional[str] = None
@@ -22,7 +22,7 @@ class CurrentUser(BaseModel):
 
 
 # ============================================================
-# Decode + lookup user using email (sub)
+# Decode + lookup user
 # ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
@@ -36,9 +36,7 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # -------------------------------------------------
     # Decode JWT
-    # -------------------------------------------------
     try:
         payload = jwt.decode(
             token,
@@ -56,7 +54,7 @@ def get_current_user(
         raise unauthorized
 
     # -------------------------------------------------
-    # BOOTSTRAP ADMIN OVERRIDE
+    # CRON / BOOTSTRAP ADMIN OVERRIDE
     # -------------------------------------------------
     if payload.get("bootstrap_admin") is True:
         return CurrentUser(
@@ -87,7 +85,6 @@ def get_current_user(
     if not user:
         raise unauthorized
 
-    # Role fallback to Supabase row
     role = user.get("role") or role_from_token or "hoa"
 
     return CurrentUser(
