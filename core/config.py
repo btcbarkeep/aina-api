@@ -65,6 +65,12 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
 
+    # -------------------------------------------------
+    # Webhooks / Sync notifications
+    # -------------------------------------------------
+    SYNC_WEBHOOK_URL: Optional[str] = Field(None, env="SYNC_WEBHOOK_URL")
+
+
 
 # Instantiate settings
 settings = Settings()
