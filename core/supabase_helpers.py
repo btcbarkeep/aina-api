@@ -10,7 +10,13 @@ def fetch_all(table_name: str, limit: int = 100):
         if not client:
             return {"status": "error", "detail": "Supabase not configured"}
 
-        result = client.table(table_name).select("*").limit(limit).execute()
+        result = (
+            client.table(table_name)
+            .select("*")
+            .limit(limit)
+            .execute()
+        )
+
         return {"status": "ok", "data": result.data or []}
 
     except Exception as e:
@@ -19,13 +25,18 @@ def fetch_all(table_name: str, limit: int = 100):
 
 
 def insert_record(table_name: str, record: dict):
-    """Insert a single record into a table."""
+    """Insert a single record into a table (Sync client safe)."""
     try:
         client = get_supabase_client()
         if not client:
             return {"status": "error", "detail": "Supabase not configured"}
 
-        result = client.table(table_name).insert(record).execute()
+        result = (
+            client.table(table_name)
+            .insert(record, returning="representation")   # ✅ FIXED
+            .execute()
+        )
+
         return {"status": "ok", "data": result.data}
 
     except Exception as e:
@@ -34,13 +45,19 @@ def insert_record(table_name: str, record: dict):
 
 
 def update_record(table_name: str, record_id: str, updates: dict):
-    """Update a record by its 'id' field."""
+    """Update a record by its 'id' field (Sync client safe)."""
     try:
         client = get_supabase_client()
         if not client:
             return {"status": "error", "detail": "Supabase not configured"}
 
-        result = client.table(table_name).update(updates).eq("id", record_id).execute()
+        result = (
+            client.table(table_name)
+            .update(updates, returning="representation")   # ✅ FIXED
+            .eq("id", record_id)
+            .execute()
+        )
+
         return {"status": "ok", "data": result.data}
 
     except Exception as e:
@@ -49,13 +66,19 @@ def update_record(table_name: str, record_id: str, updates: dict):
 
 
 def delete_record(table_name: str, record_id: str):
-    """Delete a record by its 'id'."""
+    """Delete a record by its 'id' (Sync client safe)."""
     try:
         client = get_supabase_client()
         if not client:
             return {"status": "error", "detail": "Supabase not configured"}
 
-        result = client.table(table_name).delete().eq("id", record_id).execute()
+        result = (
+            client.table(table_name)
+            .delete(returning="representation")   # ✅ FIXED
+            .eq("id", record_id)
+            .execute()
+        )
+
         return {"status": "ok", "data": result.data}
 
     except Exception as e:
