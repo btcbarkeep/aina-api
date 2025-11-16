@@ -1,6 +1,6 @@
 # routers/auth.py
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
@@ -69,7 +69,7 @@ def _create_access_token(email: str, role: str, user_id: str):
 
 
 # -----------------------------------------------------
-# LOGIN (Supabase)
+# LOGIN
 # -----------------------------------------------------
 @router.post("/login", response_model=TokenResponse, summary="Authenticate user")
 def login(payload: LoginRequest):
@@ -91,12 +91,15 @@ def login(payload: LoginRequest):
     if not user:
         raise HTTPException(401, "Invalid email or password")
 
-    # Validate password
+    # Validate stored password
     hashed_pw = user.get("hashed_password")
-    if not hashed_pw or not verify_password(payload.password, hashed_pw):
+    if not hashed_pw:
+        raise HTTPException(401, "Password not set. Use set-password to complete setup.")
+
+    if not verify_password(payload.password, hashed_pw):
         raise HTTPException(401, "Invalid email or password")
 
-    # Generate token
+    # Create token
     token = _create_access_token(
         email=user["email"],
         role=user.get("role", "hoa"),
@@ -107,7 +110,7 @@ def login(payload: LoginRequest):
 
 
 # -----------------------------------------------------
-# DEV ADMIN LOGIN (TEMPORARY)
+# DEV-ONLY ADMIN LOGIN
 # -----------------------------------------------------
 @router.post("/dev-login", summary="Temporary admin login (development only)")
 def dev_login():
@@ -132,7 +135,7 @@ def dev_login():
 
 
 # -----------------------------------------------------
-# WHO AM I? (validate token)
+# CURRENT USER
 # -----------------------------------------------------
 @router.get("/me", response_model=CurrentUser, summary="Current authenticated user")
 def read_me(current_user: CurrentUser = Depends(get_current_user)):
@@ -140,13 +143,13 @@ def read_me(current_user: CurrentUser = Depends(get_current_user)):
 
 
 # -----------------------------------------------------
-# COMPLETE ACCOUNT SETUP (set password)
+# SET PASSWORD AFTER ADMIN CREATED ACCOUNT
 # -----------------------------------------------------
 @router.post("/set-password", summary="Finish account setup by creating password")
 def set_password(payload: SetPasswordRequest):
     client = get_supabase_client()
 
-    # Decode the token
+    # Decode token
     try:
         decoded = jwt.decode(
             payload.token,
@@ -173,7 +176,7 @@ def set_password(payload: SetPasswordRequest):
 
     user = result.data
 
-    # Validate token matches DB
+    # Ensure token matches DB
     if not user.get("reset_token") or user["reset_token"] != payload.token:
         raise HTTPException(400, "Invalid password reset token")
 
@@ -182,14 +185,16 @@ def set_password(payload: SetPasswordRequest):
     if expires and datetime.fromisoformat(expires) < datetime.utcnow():
         raise HTTPException(400, "Reset token expired")
 
-    # Update password
+    # Store hashed password
     hashed_pw = hash_password(payload.password)
 
-    client.table("users").update({
-        "hashed_password": hashed_pw,
-        "reset_token": None,
-        "reset_token_expires": None,
-    }).eq("email", email).execute()
+    client.table("users").update(
+        {
+            "hashed_password": hashed_pw,
+            "reset_token": None,
+            "reset_token_expires": None,
+        }
+    ).eq("email", email).execute()
 
     return {
         "status": "success",
