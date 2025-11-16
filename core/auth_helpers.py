@@ -141,9 +141,12 @@ def create_user_no_password(
     # 2️⃣ Insert
     result = (
         client.table("users")
-            .insert(payload, returning="representation")
-            .execute()
+        .insert(payload)
+        .select("*")
+        .single()
+        .execute()
     )
+
 
     if not result.data or len(result.data) == 0:
         raise HTTPException(500, "Supabase insert returned no rows")
