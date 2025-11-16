@@ -75,7 +75,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # --- User Email ---
+    # --- User Notification Email ---
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -93,7 +93,7 @@ Aina Protocol Team
     except Exception as e:
         print("Email send failed:", e)
 
-    # --- Admin Notification ---
+    # --- Admin Notification Email ---
     try:
         send_email(
             subject="New Signup Request - Aina Protocol",
@@ -142,7 +142,23 @@ def list_requests():
 
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve a signup request
+# Helper — Enforce role security
+# -----------------------------------------------------
+def validate_role_assignment(requested_role: str, current_user: CurrentUser):
+    """
+    Prevent ANY admin from assigning the super_admin role.
+    Only super_admin may assign super_admin.
+    """
+
+    if requested_role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only a super_admin can approve or assign the super_admin role.",
+        )
+
+
+# -----------------------------------------------------
+# 3️⃣ ADMIN — Approve signup request
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
@@ -160,37 +176,42 @@ def approve_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
-    # Create user with supplied role (defaults to 'hoa')
+    requested_role = req.get("requester_role") or "hoa"
+
+    # 🔐 SECURE ROLE ASSIGNMENT CHECK
+    validate_role_assignment(requested_role, current_user)
+
+    # Create user with the SAFE role
     try:
         user = create_user_no_password(
             full_name=req.get("full_name"),
             email=req["email"],
             organization_name=req.get("organization_name"),
             phone=req.get("phone"),
-            role=req.get("requester_role") or "hoa",
+            role=requested_role,
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # Update request status
+    # Update signup request status
     try:
         client.table("signup_requests").update(
             {
                 "status": "approved",
                 "approved_at": datetime.utcnow().isoformat(),
-                # "approved_by": current_user.id,  # optional enhancement
             },
             returning="representation",
         ).eq("id", request_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Send password setup email
+    # Password setup email
     token = generate_password_setup_token(req["email"])
 
-    send_email(
-        subject="Aina Protocol - Create Your Password",
-        body=f"""
+    try:
+        send_email(
+            subject="Aina Protocol - Create Your Password",
+            body=f"""
 Aloha {req.get('full_name')},
 
 Your Aina Protocol account has been approved!
@@ -201,12 +222,15 @@ https://app.ainaprotocol.com/set-password?token={token}
 Mahalo,
 Aina Protocol Team
 """,
-        to=req["email"],
-    )
+            to=req["email"],
+        )
+    except Exception as e:
+        print("Password setup email failed:", e)
 
     return {
         "status": "approved",
         "email": req["email"],
+        "assigned_role": requested_role,
     }
 
 
@@ -234,16 +258,17 @@ def reject_request(
             {
                 "status": "rejected",
                 "rejected_at": datetime.utcnow().isoformat(),
-                # "rejected_by": current_user.id,  # optional enhancement
             },
             returning="representation",
         ).eq("id", request_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    send_email(
-        subject="Aina Protocol - Signup Request Update",
-        body=f"""
+    # Rejection email
+    try:
+        send_email(
+            subject="Aina Protocol - Signup Request Update",
+            body=f"""
 Aloha {req.get('full_name')},
 
 Unfortunately, your request to join Aina Protocol
@@ -252,7 +277,9 @@ was not approved at this time.
 Mahalo,
 Aina Protocol Team
 """,
-        to=req["email"],
-    )
+            to=req["email"],
+        )
+    except Exception as e:
+        print("Rejection email failed:", e)
 
     return {"status": "rejected", "request_id": request_id}
