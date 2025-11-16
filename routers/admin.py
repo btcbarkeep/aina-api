@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
-from sqlmodel import Session, select
 
 from dependencies.auth import (
     get_current_user,
@@ -16,39 +15,47 @@ from core.auth_helpers import (
     generate_password_setup_token,
 )
 from core.email_utils import send_password_setup_email
-from database import get_session
-from models import UserBuildingAccess
 
 
 # -----------------------------------------------------
-# Router
+# Router — ADMIN ONLY
 # -----------------------------------------------------
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    dependencies=[Depends(requires_role(["admin"]))],
 )
 
 
 # -----------------------------------------------------
-# Payload Model
+# Payload Models
 # -----------------------------------------------------
 class AdminCreateUser(BaseModel):
     full_name: str | None = None
     email: EmailStr
     organization_name: str | None = None
     phone: str | None = None
-    role: str = "user"
+    role: str = "hoa"  # default non-admin user
+
+
+class AdminUpdateUser(BaseModel):
+    full_name: str | None = None
+    organization_name: str | None = None
+    phone: str | None = None
+    role: str | None = None  # Allow promoting/demoting users
 
 
 # -----------------------------------------------------
 # 1️⃣ Create User
 # -----------------------------------------------------
 @router.post("/create-account", summary="Admin: Create a user account")
-def admin_create_account(
-    payload: AdminCreateUser,
-):
-    # Supabase user creation
+def admin_create_account(payload: AdminCreateUser):
+    """
+    Creates a user in Supabase (no password yet),
+    sends password-setup email.
+    """
+
+    # Step 1 — Create user record in Supabase
     try:
         supa_user = create_user_no_password(
             full_name=payload.full_name,
@@ -58,15 +65,27 @@ def admin_create_account(
             role=payload.role,
         )
     except Exception as e:
-        raise HTTPException(500, f"Supabase create error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase user creation failed: {str(e)}",
+        )
 
-    # Password setup token + email
+    # Step 2 — Generate password token
     token = generate_password_setup_token(payload.email)
-    send_password_setup_email(payload.email, token)
+
+    # Step 3 — Send password setup email
+    try:
+        send_password_setup_email(payload.email, token)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed sending password email: {str(e)}",
+        )
 
     return {
         "status": "success",
-        "message": f"Account created for {payload.email}. Password setup email sent.",
+        "user_id": supa_user.get("id"),
+        "email": payload.email,
         "debug_token": token,
     }
 
@@ -80,20 +99,16 @@ def list_users():
 
     try:
         result = client.table("users").select("*").execute()
+        return result.data or []
     except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
-
-    return result.data or []
+        raise HTTPException(500, f"Supabase fetch error: {e}")
 
 
 # -----------------------------------------------------
-# 3️⃣ Get User Building Access
+# 3️⃣ Get Single User
 # -----------------------------------------------------
-@router.get("/users/{user_id}/access", summary="Admin: Get building access for a user")
-def get_user_access(
-    user_id: str,
-    session: Session = Depends(get_session),
-):
+@router.get("/users/{user_id}", summary="Admin: Get one user")
+def get_user(user_id: str):
     client = get_supabase_client()
 
     try:
@@ -101,7 +116,7 @@ def get_user_access(
             client.table("users")
             .select("*")
             .eq("id", user_id)
-            .limit(1)
+            .single()
             .execute()
         )
     except Exception as e:
@@ -110,106 +125,114 @@ def get_user_access(
     if not result.data:
         raise HTTPException(404, "User not found")
 
-    email = result.data[0]["email"]
-
-    rows = session.exec(
-        select(UserBuildingAccess).where(UserBuildingAccess.username == email)
-    ).all()
-
-    return rows
+    return result.data
 
 
 # -----------------------------------------------------
 # 4️⃣ Update User
 # -----------------------------------------------------
-class AdminUpdateUser(BaseModel):
-    full_name: str | None = None
-    organization_name: str | None = None
-    role: str | None = None
-    phone: str | None = None
-
-
 @router.patch("/users/{user_id}", summary="Admin: Update user")
-def update_user(
-    user_id: str,
-    payload: AdminUpdateUser,
-):
-    client = get_supabase_client()
+def update_user(user_id: str, payload: AdminUpdateUser):
 
     update_data = {
         k: v for k, v in payload.dict().items()
         if v is not None
     }
+
+    if not update_data:
+        raise HTTPException(400, "No valid fields to update")
+
     update_data["updated_at"] = "now()"
+
+    client = get_supabase_client()
 
     try:
         result = (
             client.table("users")
             .update(update_data)
             .eq("id", user_id)
+            .select("*")
             .execute()
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
 
-    return {"status": "updated", "user": result.data}
+    if not result.data:
+        raise HTTPException(404, "User not found")
+
+    return {"status": "updated", "user": result.data[0]}
 
 
 # -----------------------------------------------------
 # 5️⃣ Delete User
 # -----------------------------------------------------
 @router.delete("/users/{user_id}", summary="Admin: Delete user")
-def delete_user(
-    user_id: str,
-    session: Session = Depends(get_session),
-):
+def delete_user(user_id: str):
     client = get_supabase_client()
 
-    result = (
-        client.table("users")
-        .select("*")
-        .eq("id", user_id)
-        .execute()
-    )
+    # Verify user exists
+    try:
+        existing = (
+            client.table("users")
+            .select("*")
+            .eq("id", user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase fetch failed: {e}")
 
-    if not result.data:
+    if not existing.data:
         raise HTTPException(404, "User not found")
 
-    email = result.data[0]["email"]
+    email = existing.data["email"]
 
+    # Delete
     try:
         client.table("users").delete().eq("id", user_id).execute()
     except Exception as e:
-        raise HTTPException(500, f"Supabase delete error: {e}")
+        raise HTTPException(500, f"Supabase delete failed: {e}")
 
-    # Local DB cleanup
-    session.exec(
-        select(UserBuildingAccess).where(UserBuildingAccess.username == email)
-    )
-    session.commit()
+    # Building access is stored in Supabase now — no SQL cleanup
 
-    return {"status": "deleted", "email": email}
+    return {"status": "deleted", "email": email, "user_id": user_id}
 
 
 # -----------------------------------------------------
 # 6️⃣ Resend Password Setup Email
 # -----------------------------------------------------
-@router.post("/users/{user_id}/resend-password", summary="Admin: Resend password setup email")
-def resend_password_setup(
-    user_id: str,
-):
+@router.post(
+    "/users/{user_id}/resend-password",
+    summary="Admin: Re-send new user password setup email"
+)
+def resend_password_setup(user_id: str):
+
     client = get_supabase_client()
 
-    result = (
-        client.table("users").select("*").eq("id", user_id).execute()
-    )
+    # Get user record
+    try:
+        res = (
+            client.table("users")
+            .select("*")
+            .eq("id", user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase error: {e}")
 
-    if not result.data:
+    if not res.data:
         raise HTTPException(404, "User not found")
 
-    email = result.data[0]["email"]
+    email = res.data["email"]
 
+    # Generate token
     token = generate_password_setup_token(email)
-    send_password_setup_email(email, token)
+
+    # Send email
+    try:
+        send_password_setup_email(email, token)
+    except Exception as e:
+        raise HTTPException(500, f"Failed sending email: {e}")
 
     return {"status": "email_sent", "email": email, "debug_token": token}
