@@ -23,7 +23,7 @@ from core.email_utils import send_password_setup_email
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
 )
 
 
@@ -42,20 +42,23 @@ class AdminUpdateUser(BaseModel):
     full_name: str | None = None
     organization_name: str | None = None
     phone: str | None = None
-    role: str | None = None  # Allow promoting/demoting users
+    role: str | None = None
 
 
 # -----------------------------------------------------
-# 1️⃣ Create User
+# 1️⃣ CREATE USER
 # -----------------------------------------------------
 @router.post("/create-account", summary="Admin: Create a user account")
-def admin_create_account(payload: AdminCreateUser):
+def admin_create_account(
+    payload: AdminCreateUser,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """
     Creates a user in Supabase (no password yet),
-    sends password-setup email.
+    and sends password-setup email.
     """
 
-    # Step 1 — Create user record in Supabase
+    # Step 1 — Create Supabase user
     try:
         supa_user = create_user_no_password(
             full_name=payload.full_name,
@@ -67,20 +70,17 @@ def admin_create_account(payload: AdminCreateUser):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Supabase user creation failed: {str(e)}",
+            detail=f"Supabase user creation failed: {e}",
         )
 
-    # Step 2 — Generate password token
+    # Step 2 — Generate password setup token
     token = generate_password_setup_token(payload.email)
 
-    # Step 3 — Send password setup email
+    # Step 3 — Email user
     try:
         send_password_setup_email(payload.email, token)
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed sending password email: {str(e)}",
-        )
+        raise HTTPException(500, f"Failed to send password email: {e}")
 
     return {
         "status": "success",
@@ -91,21 +91,21 @@ def admin_create_account(payload: AdminCreateUser):
 
 
 # -----------------------------------------------------
-# 2️⃣ List Users
+# 2️⃣ LIST USERS
 # -----------------------------------------------------
 @router.get("/users", summary="Admin: List all users")
 def list_users():
     client = get_supabase_client()
 
     try:
-        result = client.table("users").select("*").execute()
+        result = client.table("users").select("*").order("created_at", desc=True).execute()
         return result.data or []
     except Exception as e:
         raise HTTPException(500, f"Supabase fetch error: {e}")
 
 
 # -----------------------------------------------------
-# 3️⃣ Get Single User
+# 3️⃣ GET ONE USER
 # -----------------------------------------------------
 @router.get("/users/{user_id}", summary="Admin: Get one user")
 def get_user(user_id: str):
@@ -129,15 +129,15 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ Update User
+# 4️⃣ UPDATE USER
 # -----------------------------------------------------
 @router.patch("/users/{user_id}", summary="Admin: Update user")
-def update_user(user_id: str, payload: AdminUpdateUser):
-
-    update_data = {
-        k: v for k, v in payload.dict().items()
-        if v is not None
-    }
+def update_user(
+    user_id: str, 
+    payload: AdminUpdateUser,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    update_data = {k: v for k, v in payload.dict().items() if v is not None}
 
     if not update_data:
         raise HTTPException(400, "No valid fields to update")
@@ -155,7 +155,7 @@ def update_user(user_id: str, payload: AdminUpdateUser):
             .execute()
         )
     except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+        raise HTTPException(500, f"Supabase update error: {e}")
 
     if not result.data:
         raise HTTPException(404, "User not found")
@@ -164,11 +164,18 @@ def update_user(user_id: str, payload: AdminUpdateUser):
 
 
 # -----------------------------------------------------
-# 5️⃣ Delete User
+# 5️⃣ DELETE USER
 # -----------------------------------------------------
 @router.delete("/users/{user_id}", summary="Admin: Delete user")
-def delete_user(user_id: str):
+def delete_user(
+    user_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     client = get_supabase_client()
+
+    # Prevent deleting yourself
+    if user_id == current_user.user_id:
+        raise HTTPException(400, "Admins cannot delete their own account.")
 
     # Verify user exists
     try:
@@ -193,25 +200,19 @@ def delete_user(user_id: str):
     except Exception as e:
         raise HTTPException(500, f"Supabase delete failed: {e}")
 
-    # Building access is stored in Supabase now — no SQL cleanup
-
     return {"status": "deleted", "email": email, "user_id": user_id}
 
 
 # -----------------------------------------------------
-# 6️⃣ Resend Password Setup Email
+# 6️⃣ RESEND PASSWORD SETUP EMAIL
 # -----------------------------------------------------
-@router.post(
-    "/users/{user_id}/resend-password",
-    summary="Admin: Re-send new user password setup email"
-)
+@router.post("/users/{user_id}/resend-password", summary="Admin: Resend password email")
 def resend_password_setup(user_id: str):
 
     client = get_supabase_client()
 
-    # Get user record
     try:
-        res = (
+        result = (
             client.table("users")
             .select("*")
             .eq("id", user_id)
@@ -221,15 +222,13 @@ def resend_password_setup(user_id: str):
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
 
-    if not res.data:
+    if not result.data:
         raise HTTPException(404, "User not found")
 
-    email = res.data["email"]
+    email = result.data["email"]
 
-    # Generate token
     token = generate_password_setup_token(email)
 
-    # Send email
     try:
         send_password_setup_email(email, token)
     except Exception as e:
