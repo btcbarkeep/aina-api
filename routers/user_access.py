@@ -12,7 +12,6 @@ router = APIRouter(
     tags=["User Access"],
 )
 
-
 # ============================================================
 # Pydantic Models
 # ============================================================
@@ -22,7 +21,6 @@ class UserBuildingAccessCreate(BaseModel):
 
 
 class UserBuildingAccessRead(BaseModel):
-    id: str
     user_id: str
     building_id: str
 
@@ -39,7 +37,7 @@ def list_user_access():
     client = get_supabase_client()
 
     try:
-        result = client.table("user_building_access").select("*").execute()
+        result = client.table("user_building_access").select("user_id, building_id").execute()
         return result.data or []
     except Exception as e:
         raise HTTPException(500, f"Supabase query failed: {e}")
@@ -75,25 +73,26 @@ def add_user_access(payload: UserBuildingAccessCreate):
 # Admin — Remove a user’s building access
 # ============================================================
 @router.delete(
-    "/{access_id}",
+    "/{user_id}/{building_id}",
     summary="Admin: Delete a user access entry",
     dependencies=[Depends(requires_role(["admin"]))],
 )
-def delete_user_access(access_id: str):
+def delete_user_access(user_id: str, building_id: str):
     client = get_supabase_client()
 
     try:
         result = (
             client.table("user_building_access")
             .delete()
-            .eq("id", access_id)
+            .eq("user_id", user_id)
+            .eq("building_id", building_id)
             .execute()
         )
 
         if not result.data:
             raise HTTPException(404, "Access record not found")
 
-        return {"status": "deleted", "id": access_id}
+        return {"status": "deleted", "user_id": user_id, "building_id": building_id}
 
     except Exception as e:
         raise HTTPException(500, f"Supabase delete error: {e}")
@@ -113,8 +112,8 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
     try:
         result = (
             client.table("user_building_access")
-            .select("id, building_id")
-            .eq("user_id", current_user.user_id)
+            .select("building_id")
+            .eq("user_id", current_user.username)  # FIXED
             .execute()
         )
         return result.data or []
