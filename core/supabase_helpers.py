@@ -1,86 +1,61 @@
 # core/supabase_helpers.py
+
+from core.utils import sanitize
+from core.errors import supabase_error
 from core.supabase_client import get_supabase_client
-import traceback
 
 
-def fetch_all(table_name: str, limit: int = 100):
-    """Fetch all records from a table (default 100)."""
+# -----------------------------------------------------
+# SELECT
+# -----------------------------------------------------
+def safe_select(table: str, filters: dict = None, *, single=False):
+    client = get_supabase_client()
+
     try:
-        client = get_supabase_client()
-        if not client:
-            return {"status": "error", "detail": "Supabase not configured"}
+        query = client.table(table).select("*")
+        if filters:
+            for key, val in filters.items():
+                query = query.eq(key, val)
 
+        result = query.maybe_single().execute() if single else query.execute()
+        return result.data
+    except Exception as e:
+        supabase_error(e, f"Failed to fetch from {table}")
+
+
+# -----------------------------------------------------
+# INSERT
+# -----------------------------------------------------
+def safe_insert(table: str, data: dict):
+    client = get_supabase_client()
+    cleaned = sanitize(data)
+
+    try:
         result = (
-            client.table(table_name)
-            .select("*")
-            .limit(limit)
+            client.table(table)
+            .insert(cleaned, returning="representation")
             .execute()
         )
-
-        return {"status": "ok", "data": result.data or []}
-
+        return result.data[0] if result.data else None
     except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "detail": str(e)}
+        supabase_error(e, f"Failed to insert into {table}")
 
 
-def insert_record(table_name: str, record: dict):
-    """Insert a single record into a table (Sync client safe)."""
+# -----------------------------------------------------
+# UPDATE
+# -----------------------------------------------------
+def safe_update(table: str, filters: dict, data: dict):
+    client = get_supabase_client()
+    cleaned = sanitize(data)
+
     try:
-        client = get_supabase_client()
-        if not client:
-            return {"status": "error", "detail": "Supabase not configured"}
-
-        result = (
-            client.table(table_name)
-            .insert(record, returning="representation")   # ✅ FIXED
-            .execute()
+        query = client.table(table).update(
+            cleaned, returning="representation"
         )
+        for key, val in filters.items():
+            query = query.eq(key, val)
 
-        return {"status": "ok", "data": result.data}
-
+        result = query.execute()
+        return result.data[0] if result.data else None
     except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "detail": str(e)}
-
-
-def update_record(table_name: str, record_id: str, updates: dict):
-    """Update a record by its 'id' field (Sync client safe)."""
-    try:
-        client = get_supabase_client()
-        if not client:
-            return {"status": "error", "detail": "Supabase not configured"}
-
-        result = (
-            client.table(table_name)
-            .update(updates, returning="representation")   # ✅ FIXED
-            .eq("id", record_id)
-            .execute()
-        )
-
-        return {"status": "ok", "data": result.data}
-
-    except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "detail": str(e)}
-
-
-def delete_record(table_name: str, record_id: str):
-    """Delete a record by its 'id' (Sync client safe)."""
-    try:
-        client = get_supabase_client()
-        if not client:
-            return {"status": "error", "detail": "Supabase not configured"}
-
-        result = (
-            client.table(table_name)
-            .delete(returning="representation")   # ✅ FIXED
-            .eq("id", record_id)
-            .execute()
-        )
-
-        return {"status": "ok", "data": result.data}
-
-    except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "detail": str(e)}
+        supabase_error(e, f"Failed to update {table}")
