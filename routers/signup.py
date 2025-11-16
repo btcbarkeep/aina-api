@@ -125,9 +125,10 @@ Request ID: {signup["id"]}
 # -----------------------------------------------------
 @router.get(
     "/requests",
-    summary="Admin: List all signup requests",
-    dependencies=[Depends(requires_role("admin"))],
+    summary="Admin: List signup requests",
+    dependencies=[Depends(requires_role(["admin"]))],
 )
+
 def list_requests():
     client = get_supabase_client()
 
@@ -147,11 +148,13 @@ def list_requests():
 # -----------------------------------------------------
 # 3️⃣ ADMIN — Approve request → create user → send setup email
 # -----------------------------------------------------
+
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
-    dependencies=[Depends(requires_role("admin"))],
+    dependencies=[Depends(requires_role(["admin"]))],
 )
+
 def approve_request(
     request_id: str,
     current_user: CurrentUser = Depends(get_current_user),
@@ -220,11 +223,13 @@ Aina Protocol Team
 # -----------------------------------------------------
 # 4️⃣ ADMIN — Reject signup request
 # -----------------------------------------------------
+
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
-    dependencies=[Depends(requires_role("admin"))],
+    dependencies=[Depends(requires_role(["admin"]))],
 )
+
 def reject_request(
     request_id: str,
     current_user: CurrentUser = Depends(get_current_user),
