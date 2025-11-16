@@ -1,13 +1,14 @@
 # routers/buildings_supabase.py
 
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 
 from dependencies.auth import (
     get_current_user,
     requires_role,
     CurrentUser,
+    requires_permission,   # ⭐ NEW
 )
 
 from core.supabase_client import get_supabase_client
@@ -18,6 +19,7 @@ router = APIRouter(
     prefix="/buildings",
     tags=["Buildings"]
 )
+
 
 # ============================================================
 # Helper — normalize payload ("" → None)
@@ -65,13 +67,12 @@ def list_buildings_supabase(
 
 # ============================================================
 # POST — CREATE BUILDING
-# roles: admin, manager
-# (allows HOA managers to create their own buildings)
+# roles: admin ONLY (no property_manager)
 # ============================================================
 @router.post(
     "/supabase",
     response_model=BuildingRead,
-    dependencies=[Depends(requires_role(["admin", "manager"]))],
+    dependencies=[Depends(requires_permission("buildings:write"))],
     summary="Create Building",
 )
 def create_building_supabase(payload: BuildingCreate):
@@ -88,18 +89,7 @@ def create_building_supabase(payload: BuildingCreate):
         if not insert_result.data:
             raise HTTPException(500, "Insert failed")
 
-        building_id = insert_result.data[0]["id"]
-
-        # Re-fetch final row
-        fetch_result = (
-            client.table("buildings")
-            .select("*")
-            .eq("id", building_id)
-            .single()
-            .execute()
-        )
-
-        return fetch_result.data
+        return insert_result.data[0]
 
     except Exception as e:
         msg = str(e)
@@ -110,12 +100,12 @@ def create_building_supabase(payload: BuildingCreate):
 
 # ============================================================
 # PUT — UPDATE BUILDING
-# roles: admin, manager
+# roles: admin ONLY (no property_manager)
 # ============================================================
 @router.put(
     "/supabase/{building_id}",
     response_model=BuildingRead,
-    dependencies=[Depends(requires_role(["admin", "manager"]))],
+    dependencies=[Depends(requires_permission("buildings:write"))],
     summary="Update Building"
 )
 def update_building_supabase(
@@ -144,11 +134,11 @@ def update_building_supabase(
 
 # ============================================================
 # DELETE — DELETE BUILDING
-# roles: admin only
+# roles: admin ONLY
 # ============================================================
 @router.delete(
     "/supabase/{building_id}",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_permission("buildings:write"))],
     summary="Delete Building",
 )
 def delete_building(building_id: str):
@@ -202,7 +192,7 @@ def get_building_events(
     if event_type:
         query = query.eq("event_type", event_type)
     if contractor_id:
-        query = query.eq("created_by", contractor_id)
+        query = query.eq("contractor_id", contractor_id)
     if severity:
         query = query.eq("severity", severity)
     if status:
@@ -229,7 +219,7 @@ def get_building_units(
         client.table("events")
         .select("unit_number")
         .eq("building_id", building_id)
-        .not_.is_("unit_number", "null")  # correct null check
+        .not_.is_("unit_number", None)
         .execute()
     ).data or []
 
@@ -243,7 +233,7 @@ def get_building_units(
 
 
 # ============================================================
-# GET — CONTRACTORS FOR BUILDING
+# GET — CONTRACTORS WHO WORKED ON BUILDING
 # roles: ANY authenticated user
 # ============================================================
 @router.get(
@@ -256,23 +246,21 @@ def get_building_contractors(
 ):
     client = get_supabase_client()
 
-    # Events referencing a contractor
     events = (
         client.table("events")
-        .select("created_by, event_type, created_at")
+        .select("contractor_id, event_type, created_at")
         .eq("building_id", building_id)
-        .not_.is_("created_by", "null")
+        .not_.is_("contractor_id", None)
         .execute()
     ).data or []
 
     if not events:
         return []
 
-    contractor_ids = list({e["created_by"] for e in events})
+    contractor_ids = list({e["contractor_id"] for e in events})
 
-    # Fetch contractor rows (from users table, not a contractors table)
     contractors = (
-        client.table("users")
+        client.table("contractors")
         .select("*")
         .in_("id", contractor_ids)
         .execute()
@@ -283,7 +271,7 @@ def get_building_contractors(
     summary = {}
 
     for e in events:
-        cid = e["created_by"]
+        cid = e["contractor_id"]
         if cid not in summary:
             summary[cid] = {
                 "contractor": contractor_map.get(cid),
@@ -303,14 +291,14 @@ def get_building_contractors(
 
     output = []
     for cid, data in summary.items():
-        item = data["contractor"].copy() if data["contractor"] else {"id": cid}
-        item.update({
+        out = data["contractor"].copy() if data["contractor"] else {"id": cid}
+        out.update({
             "event_count": data["event_count"],
             "event_types": list(data["event_types"]),
             "first_seen": data["first_seen"],
             "last_seen": data["last_seen"],
         })
-        output.append(item)
+        output.append(out)
 
     return output
 
@@ -321,7 +309,7 @@ def get_building_contractors(
 # ============================================================
 @router.get(
     "/supabase/{building_id}/report",
-    summary="Full building report (events, contractors, units)"
+    summary="Full building report"
 )
 def get_building_report(
     building_id: str,
