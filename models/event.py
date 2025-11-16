@@ -1,33 +1,48 @@
 # models/event.py
+
 from datetime import datetime
 from typing import Optional
-from sqlmodel import SQLModel, Field
+from pydantic import BaseModel
 
 from .enums import EventType
 
-class EventBase(SQLModel):
-    building_id: int = Field(foreign_key="buildings.id", index=True)
-    unit_number: Optional[str] = Field(default=None, index=True)
+
+# -------------------------------------------------
+# Shared Fields (used across Create/Read/Update)
+# -------------------------------------------------
+class EventBase(BaseModel):
+    building_id: str                     # UUID from Supabase
+    unit_number: Optional[str] = None
     event_type: EventType
     title: str
     body: Optional[str] = None
     occurred_at: datetime
 
-class Event(EventBase, table=True):
-    __tablename__ = "events"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
-
+# -------------------------------------------------
+# Create Event
+# -------------------------------------------------
 class EventCreate(EventBase):
+    """
+    Sent by the client when creating an event.
+    No ID or created_at — Supabase generates those.
+    """
     pass
 
-class EventRead(EventBase):
-    id: int
-    created_at: datetime
 
-class EventUpdate(SQLModel):
-    building_id: Optional[int] = None
+# -------------------------------------------------
+# Read Event (from Supabase)
+# -------------------------------------------------
+class EventRead(EventBase):
+    id: str                               # Supabase UUID
+    created_at: datetime                  # Supabase timestamp
+
+
+# -------------------------------------------------
+# Update Event (partial)
+# -------------------------------------------------
+class EventUpdate(BaseModel):
+    building_id: Optional[str] = None
     unit_number: Optional[str] = None
     event_type: Optional[EventType] = None
     title: Optional[str] = None
