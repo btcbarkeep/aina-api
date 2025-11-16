@@ -30,10 +30,3 @@ Aina Protocol Team
     print(f"[EMAIL] Password setup email sent to {email}")
 
     return True
-
-
-    # send the real email
-    send_email(subject, body)
-
-    print(f"[EMAIL] Password setup email sent to {email}")
-    return True
