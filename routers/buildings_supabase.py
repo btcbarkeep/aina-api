@@ -42,14 +42,10 @@ def sanitize(data: dict) -> dict:
     return clean
 
 
-# ---------------------------------------------------------
+# -------------------------------------------------------------------
 # LIST — Any authenticated user
-# ---------------------------------------------------------
-@router.get(
-    "/supabase",
-    summary="List Buildings from Supabase",
-    response_model=list[BuildingRead]
-)
+# -------------------------------------------------------------------
+@router.get("/supabase", summary="List Buildings from Supabase")
 def list_buildings_supabase(
     limit: int = 100,
     name: Optional[str] = None,
@@ -58,10 +54,13 @@ def list_buildings_supabase(
     current_user: CurrentUser = Depends(get_current_user)
 ):
     client = get_supabase_client()
+    if not client:
+        raise HTTPException(500, "Supabase not configured")
 
     try:
         query = client.table("buildings").select("*").limit(limit)
 
+        # These MUST be applied to the query object.
         if name:
             query = query.ilike("name", f"%{name}%")
         if city:
@@ -69,12 +68,23 @@ def list_buildings_supabase(
         if state:
             query = query.ilike("state", f"%{state}%")
 
+        # Execute query
         result = query.execute()
+
+        # Explicit debugging
+        if hasattr(result, "error") and result.error:
+            raise Exception(f"Supabase error: {result.error}")
+
         return result.data or []
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase fetch error: {e}")
+        # Print error to server logs
+        print("❌ ERROR in list_buildings_supabase:", str(e))
 
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase fetch error: {str(e)}"
+        )
 
 # ---------------------------------------------------------
 # CREATE — Admin only
