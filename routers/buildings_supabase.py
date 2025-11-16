@@ -16,17 +16,6 @@ router = APIRouter(
     tags=["Buildings"]
 )
 
-"""
-BUILDINGS ROUTER — FULLY HARDENED VERSION
-
-Fixes applied:
-  ✓ All inserts/updates now use .select("*") to ensure data returns
-  ✓ Sanitizes empty fields before insert/update
-  ✓ Prevents '500 but still inserts' issues
-  ✓ Consistent RBAC (requires_role(["admin"]))
-  ✓ Better error logging
-"""
-
 
 # ---------------------------------------------------------
 # Helper — normalize payloads
@@ -60,7 +49,6 @@ def list_buildings_supabase(
     try:
         query = client.table("buildings").select("*").limit(limit)
 
-        # These MUST be applied to the query object.
         if name:
             query = query.ilike("name", f"%{name}%")
         if city:
@@ -68,23 +56,13 @@ def list_buildings_supabase(
         if state:
             query = query.ilike("state", f"%{state}%")
 
-        # Execute query
         result = query.execute()
-
-        # Explicit debugging
-        if hasattr(result, "error") and result.error:
-            raise Exception(f"Supabase error: {result.error}")
-
         return result.data or []
 
     except Exception as e:
-        # Print error to server logs
         print("❌ ERROR in list_buildings_supabase:", str(e))
+        raise HTTPException(500, f"Supabase fetch error: {str(e)}")
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Supabase fetch error: {str(e)}"
-        )
 
 # ---------------------------------------------------------
 # CREATE — Admin only
@@ -97,14 +75,10 @@ def list_buildings_supabase(
 )
 def create_building_supabase(payload: BuildingCreate):
     client = get_supabase_client()
-
-    # Sanitize empty strings
     data = sanitize(payload.model_dump())
 
     try:
-        # -------------------------------
-        # 1️⃣ Insert (NO SELECT HERE)
-        # -------------------------------
+        # 1️⃣ Insert
         insert_result = (
             client.table("buildings")
             .insert(data)
@@ -116,9 +90,7 @@ def create_building_supabase(payload: BuildingCreate):
 
         building_id = insert_result.data[0]["id"]
 
-        # -------------------------------
-        # 2️⃣ Fetch the inserted record
-        # -------------------------------
+        # 2️⃣ Fetch record
         fetch_result = (
             client.table("buildings")
             .select("*")
@@ -127,22 +99,13 @@ def create_building_supabase(payload: BuildingCreate):
             .execute()
         )
 
-        if not fetch_result.data:
-            raise HTTPException(500, "Insert completed but building not found")
-
         return fetch_result.data
 
     except Exception as e:
         msg = str(e)
-
         if "duplicate" in msg.lower():
-            raise HTTPException(
-                400,
-                f"Building '{payload.name}' already exists."
-            )
-
+            raise HTTPException(400, f"Building '{payload.name}' already exists.")
         raise HTTPException(500, f"Supabase insert error: {msg}")
-
 
 
 # ---------------------------------------------------------
@@ -159,25 +122,36 @@ def update_building_supabase(
     payload: BuildingUpdate,
 ):
     client = get_supabase_client()
-
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     try:
-        result = (
+        # 1️⃣ UPDATE (NO select() allowed here)
+        update_result = (
             client.table("buildings")
             .update(update_data)
             .eq("id", building_id)
-            .select("*")
             .execute()
         )
 
-        if not result.data:
+        if update_result.data is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Building '{building_id}' not found."
+                404,
+                f"Building '{building_id}' not found."
             )
 
-        return result.data[0]
+        # 2️⃣ Fetch updated record
+        fetch_result = (
+            client.table("buildings")
+            .select("*")
+            .eq("id", building_id)
+            .single()
+            .execute()
+        )
+
+        if not fetch_result.data:
+            raise HTTPException(404, f"Building '{building_id}' not found")
+
+        return fetch_result.data
 
     except Exception as e:
         raise HTTPException(500, f"Supabase update failed: {e}")
@@ -195,15 +169,14 @@ def delete_building(building_id: str):
     client = get_supabase_client()
 
     try:
-        result = (
+        delete_result = (
             client.table("buildings")
             .delete()
             .eq("id", building_id)
-            .select("*")
             .execute()
         )
 
-        if not result.data:
+        if not delete_result.data:
             raise HTTPException(404, f"Building '{building_id}' not found")
 
         return {"status": "deleted", "id": building_id}
