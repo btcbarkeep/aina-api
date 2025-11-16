@@ -1,5 +1,3 @@
-# routers/user_access.py
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -120,7 +118,7 @@ def add_user_access(payload: UserBuildingAccessCreate):
 
         result = (
             client.table("user_building_access")
-            .insert(clean_payload, returning="representation")  # <-- Sync client safe
+            .insert(clean_payload, returning="representation")
             .execute()
         )
 
@@ -147,7 +145,7 @@ def delete_user_access(user_id: str, building_id: str):
     try:
         result = (
             client.table("user_building_access")
-            .delete(returning="representation")   # <-- Sync client safe
+            .delete(returning="representation")
             .eq("user_id", user_id)
             .eq("building_id", building_id)
             .execute()
@@ -159,7 +157,7 @@ def delete_user_access(user_id: str, building_id: str):
         return {
             "status": "deleted",
             "user_id": user_id,
-            "building_id": building_id
+            "building_id": building_id,
         }
 
     except Exception as e:
@@ -172,11 +170,11 @@ def delete_user_access(user_id: str, building_id: str):
 @router.get("/me", summary="Get building access for the authenticated user")
 def my_access(current_user: CurrentUser = Depends(get_current_user)):
 
-    # Allow bootstrap admin universal access
-    if current_user.user_id == "bootstrap":
+    # Bootstrap admin universal access
+    if current_user.id == "bootstrap":
         return [{
             "building_id": "ALL",
-            "note": "Bootstrap admin has universal access"
+            "note": "Bootstrap admin has universal access",
         }]
 
     client = get_supabase_client()
@@ -185,7 +183,7 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
         result = (
             client.table("user_building_access")
             .select("building_id")
-            .eq("user_id", current_user.user_id)
+            .eq("user_id", current_user.id)     # <-- FIXED
             .execute()
         )
 
