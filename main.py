@@ -26,6 +26,10 @@ from routers.admin import router as admin_router
 from routers.user_access import router as user_access_router
 from routers.admin_daily import router as admin_daily_router
 
+## AWS Uploads
+from routers.uploads import router as uploads_router
+
+
 # Health (missing before)
 from routers.health import router as health_router
 
@@ -101,6 +105,9 @@ def create_app() -> FastAPI:
     # NEW: Daily Admin Update Email
     app.include_router(admin_daily_router, prefix="/api/v1")
 
+    # AWS Uploads S3 Bucket
+    app.include_router(uploads_router,   prefix="/api/v1")
+    
     # Health checks (now visible in Swagger)
     app.include_router(health_router,      prefix="/api/v1")
 
