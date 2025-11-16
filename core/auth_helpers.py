@@ -113,24 +113,20 @@ def create_user_no_password(
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Check if user exists
+    # 1️⃣ Check for existing user
     existing = (
         client.table("users")
-        .select("*")
+        .select("uuid")
         .eq("email", email)
-        .limit(1)
+        .maybe_single()
         .execute()
     )
 
     if existing.data:
         raise HTTPException(400, "A user with this email already exists.")
 
-    # 2️⃣ Prepare payload
-    user_id = str(uuid4())
-    now = datetime.utcnow().isoformat()
-
+    # 2️⃣ Build payload WITHOUT id
     payload = {
-        "id": user_id,
         "email": email,
         "username": email,
         "full_name": full_name,
@@ -138,18 +134,23 @@ def create_user_no_password(
         "phone": phone,
         "role": role,
         "hashed_password": None,
-        "created_at": now,
-        "updated_at": now,
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
     }
 
-    # 3️⃣ Insert (sync client ONLY supports this)
-    result = client.table("users").insert(payload).execute()
+    # 3️⃣ Insert and RETURN the new row
+    result = (
+        client.table("users")
+        .insert(payload)
+        .select("*")   # <-- REQUIRED to get inserted row
+        .single()
+        .execute()
+    )
 
-    if not result or not result.data:
-        raise HTTPException(500, "Supabase returned no data on insert.")
+    if not result.data:
+        raise HTTPException(500, "Supabase returned no user data.")
 
-    return result.data[0]
-
+    return result.data
 
 
 # ============================================================
