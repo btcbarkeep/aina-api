@@ -1,18 +1,15 @@
 # routers/dev_auth.py
 
+from core.config import settings
 from fastapi import APIRouter
 from datetime import datetime, timedelta
-from jose import jwt
+import jwt
 
-from core.config import settings
+router = APIRouter(prefix="/auth", tags=["Auth (Dev Only)"])
 
-router = APIRouter(
-    prefix="/auth",
-    tags=["Auth (Dev Only)"]
-)
+SECRET = settings.JWT_SECRET_KEY
+ALGORITHM = settings.JWT_ALGORITHM
 
-SECRET = settings.SECRET_KEY
-ALGO = settings.ALGORITHM
 
 
 @router.post("/dev-login", summary="DEV: Get an instant admin token")
