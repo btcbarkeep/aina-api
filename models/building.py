@@ -1,30 +1,44 @@
 # models/building.py
+
 from datetime import datetime
 from typing import Optional
-from sqlmodel import SQLModel, Field, UniqueConstraint
+from pydantic import BaseModel
 
-class BuildingBase(SQLModel):
-    name: str = Field(index=True)
+
+# -------------------------------------------------
+# Shared fields
+# -------------------------------------------------
+class BuildingBase(BaseModel):
+    name: str
     address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     zip: Optional[str] = None
 
-class Building(BuildingBase, table=True):
-    __tablename__ = "buildings"
-    __table_args__ = (UniqueConstraint("name", name="uq_building_name"),)
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
-
+# -------------------------------------------------
+# Create
+# -------------------------------------------------
 class BuildingCreate(BuildingBase):
+    """
+    Used when creating a building in Supabase.
+    No ID supplied — Supabase generates UUID.
+    """
     pass
 
-class BuildingRead(BuildingBase):
-    id: int
-    created_at: datetime
 
-class BuildingUpdate(SQLModel):
+# -------------------------------------------------
+# Read (Supabase → API response)
+# -------------------------------------------------
+class BuildingRead(BuildingBase):
+    id: str                      # UUID STRING from Supabase
+    created_at: datetime         # Supabase timestamp
+
+
+# -------------------------------------------------
+# Update (PATCH)
+# -------------------------------------------------
+class BuildingUpdate(BaseModel):
     name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
