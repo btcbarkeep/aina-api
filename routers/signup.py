@@ -1,5 +1,3 @@
-# routers/signup.py
-
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 
@@ -26,7 +24,7 @@ router = APIRouter(
 
 
 # -----------------------------------------------------
-# Helper: Get signup request by UUID
+# Helper — Get signup request by UUID
 # -----------------------------------------------------
 def get_signup_request_by_id(request_id: str):
     client = get_supabase_client()
@@ -66,11 +64,10 @@ def request_access(payload: SignupRequestCreate):
         "created_at": datetime.utcnow().isoformat(),
     }
 
-    # Insert — SYNC CLIENT SAFE
     try:
         result = (
             client.table("signup_requests")
-            .insert(request_data, returning="representation")  # ✅ fixed
+            .insert(request_data, returning="representation")
             .execute()
         )
     except Exception as e:
@@ -78,7 +75,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # Send emails (non-blocking)
+    # --- User Email ---
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -96,6 +93,7 @@ Aina Protocol Team
     except Exception as e:
         print("Email send failed:", e)
 
+    # --- Admin Notification ---
     try:
         send_email(
             subject="New Signup Request - Aina Protocol",
@@ -126,7 +124,7 @@ Request ID: {signup["id"]}
 @router.get(
     "/requests",
     summary="Admin: List signup requests",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
 )
 def list_requests():
     client = get_supabase_client()
@@ -144,12 +142,12 @@ def list_requests():
 
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve request
+# 3️⃣ ADMIN — Approve a signup request
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
 )
 def approve_request(
     request_id: str,
@@ -162,7 +160,7 @@ def approve_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
-    # Create user
+    # Create user with supplied role (defaults to 'hoa')
     try:
         user = create_user_no_password(
             full_name=req.get("full_name"),
@@ -174,19 +172,20 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # Update request status — SYNC CLIENT SAFE
+    # Update request status
     try:
         client.table("signup_requests").update(
             {
                 "status": "approved",
                 "approved_at": datetime.utcnow().isoformat(),
+                # "approved_by": current_user.id,  # optional enhancement
             },
-            returning="representation"      # ✅ FIXED
+            returning="representation",
         ).eq("id", request_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Password setup email
+    # Send password setup email
     token = generate_password_setup_token(req["email"])
 
     send_email(
@@ -217,7 +216,7 @@ Aina Protocol Team
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
 )
 def reject_request(
     request_id: str,
@@ -235,8 +234,9 @@ def reject_request(
             {
                 "status": "rejected",
                 "rejected_at": datetime.utcnow().isoformat(),
+                # "rejected_by": current_user.id,  # optional enhancement
             },
-            returning="representation"    # ✅ FIXED
+            returning="representation",
         ).eq("id", request_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
