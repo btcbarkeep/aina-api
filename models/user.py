@@ -1,57 +1,40 @@
 # models/user.py
 from typing import Optional
 from datetime import datetime
-from sqlmodel import SQLModel, Field
+from pydantic import BaseModel, EmailStr
 
 
-# ===============================================================
-# 👤 USER TABLE
-# ===============================================================
+# ===================================================================
+# 👤 USER MODELS (Supabase table: users)
+# ===================================================================
 
-class User(SQLModel, table=True):
-    """
-    Local user account table.
-    Passwords are optional during admin-invite onboarding.
-    """
-    __tablename__ = "users"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    username: str = Field(index=True, unique=True)
-    email: str = Field(index=True, unique=True)
+class UserBase(BaseModel):
     full_name: Optional[str] = None
-    hoa_name: Optional[str] = None
-
-    hashed_password: Optional[str] = None  # null = must set password
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
-
-
-# ===============================================================
-# 🔑 PASSWORD RESET / SET-PASSWORD TOKENS
-# ===============================================================
-
-class PasswordResetToken(SQLModel, table=True):
-    """
-    Temporary token for letting HOA users set or reset their password.
-    """
-    __tablename__ = "password_reset_tokens"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True)
-
-    token: str = Field(index=True, unique=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: datetime
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: str = "hoa"                 # default HOA role
+    email: EmailStr
 
 
-# ===============================================================
-# 🏢 USER BUILDING ACCESS
-# (already existing, leaving unchanged)
-# ===============================================================
+# Returned when reading a user from Supabase
+class UserRead(UserBase):
+    id: str                            # UUID from Supabase
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-class UserBuildingAccess(SQLModel, table=True):
-    __tablename__ = "user_building_access"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    username: str = Field(index=True)
-    building_id: int = Field(foreign_key="buildings.id", index=True)
-    role: str = Field(default="hoa", description="hoa, manager, contractor")
+# Used when creating a user WITHOUT password (admin invite flow)
+class UserCreate(BaseModel):
+    full_name: Optional[str] = None
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: str = "hoa"
+    email: EmailStr
+
+
+# Partial updates allowed (admin)
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
