@@ -1,19 +1,17 @@
-from sqlmodel import SQLModel, Field
+from pydantic import BaseModel
 from typing import Optional, Literal
 from datetime import datetime
 
-# -----------------------------------------------------
-# Incoming public request body (Pydantic model)
-# -----------------------------------------------------
 
-
-class SignupRequestCreate(SQLModel):
+# -----------------------------------------------------
+# Incoming public request body (request DTO)
+# -----------------------------------------------------
+class SignupRequestCreate(BaseModel):
     full_name: str
     email: str
     phone: Optional[str] = None
     organization_name: Optional[str] = None
 
-    # Dropdown options shown in Swagger
     requester_role: Literal[
         "hoa",
         "property_manager",
@@ -29,29 +27,21 @@ class SignupRequestCreate(SQLModel):
     notes: Optional[str] = None
 
 
-
-
 # -----------------------------------------------------
-# Database model
+# Response model — mirrors Supabase row
 # -----------------------------------------------------
-
-
-class SignupRequest(SQLModel, table=True):
-    __tablename__ = "signup_requests"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-
+class SignupRequest(BaseModel):
+    id: int
     full_name: str
     email: str
     phone: Optional[str] = None
     organization_name: Optional[str] = None
 
-    requester_role: str = Field(default="hoa")
+    requester_role: str = "hoa"
     notes: Optional[str] = None
 
-    # NEW FIELDS
-    status: str = Field(default="pending")          # pending, approved, rejected
+    status: str = "pending"     # pending, approved, rejected
     approved_at: Optional[datetime] = None
     rejected_at: Optional[datetime] = None
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime
