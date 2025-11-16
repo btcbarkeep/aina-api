@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
 
-from .enums import EventType
+from .enums import EventType, EventSeverity, EventStatus
 
 
 # -------------------------------------------------
@@ -16,9 +16,9 @@ class EventBase(BaseModel):
     body: Optional[str] = None
     occurred_at: datetime
 
-    # NEW FIELDS (allowed in Create / Update)
-    severity: Optional[str] = "medium"      # low, medium, high, urgent
-    status: Optional[str] = "open"          # open, in_progress, resolved
+    # NEW FIELDS using Enums
+    severity: Optional[EventSeverity] = EventSeverity.medium
+    status: Optional[EventStatus] = EventStatus.open
 
     # contractor_id is optional during create
     contractor_id: Optional[str] = None
@@ -43,7 +43,7 @@ class EventRead(EventBase):
     id: str
     created_at: datetime
 
-    # NEW in read model
+    # NEW: who created the event
     created_by: Optional[str] = None
 
 
@@ -59,6 +59,6 @@ class EventUpdate(BaseModel):
     occurred_at: Optional[datetime] = None
 
     # NEW — admin/manager can update these
-    severity: Optional[str] = None
-    status: Optional[str] = None
+    severity: Optional[EventSeverity] = None
+    status: Optional[EventStatus] = None
     contractor_id: Optional[str] = None
