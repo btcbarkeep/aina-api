@@ -19,13 +19,12 @@ router = APIRouter(
 )
 
 """
-UPLOAD ROUTER (SANITIZED + PRODUCTION READY)
+UPLOAD ROUTER (HARDENED + SYNC CLIENT SAFE)
 
-Rules:
-- Admin/Manager bypass building access.
-- Regular users: must have building access.
-- Prevent unsafe file names.
-- Ensure documents always return row data (.select("*"))
+Fixes:
+- Replaced .insert().select("*") with returning="representation"
+- All write ops safe for Sync client
+- No SQL added
 """
 
 
@@ -46,9 +45,7 @@ def sanitize(data: dict) -> dict:
 # Helper — Validate & sanitize filename
 # -----------------------------------------------------
 def safe_filename(filename: str) -> str:
-    # Remove dangerous characters
-    filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
-    return filename
+    return re.sub(r"[^A-Za-z0-9._-]", "_", filename)
 
 
 # -----------------------------------------------------
@@ -76,10 +73,11 @@ def get_s3_client():
 # Helper: Check building access
 # -----------------------------------------------------
 def verify_user_building_access(user: CurrentUser, building_id: str):
+    client = get_supabase_client()
+
     if user.role in ["admin", "manager"]:
         return  # bypass
 
-    client = get_supabase_client()
     result = (
         client.table("user_building_access")
         .select("id")
@@ -100,7 +98,6 @@ def get_event_building_id(event_id: str | None):
         return None
 
     client = get_supabase_client()
-
     result = (
         client.table("events")
         .select("building_id")
@@ -129,44 +126,32 @@ async def upload_document(
     """
     Uploads to S3 and creates a Supabase document row.
     """
-    # -------------------------------------------------
+
     # Validate event → building relationship
-    # -------------------------------------------------
     event_building = get_event_building_id(event_id)
     if event_building and event_building != building_id:
-        raise HTTPException(
-            400,
-            "Event does not belong to the specified building.",
-        )
+        raise HTTPException(400, "Event does not belong to the specified building.")
 
-    # -------------------------------------------------
     # Building access check
-    # -------------------------------------------------
     verify_user_building_access(current_user, building_id)
 
     try:
         s3, bucket, region = get_s3_client()
 
-        # -------------------------------------------------
         # Safe inputs
-        # -------------------------------------------------
         clean_filename = safe_filename(file.filename)
         safe_category = (
             category.strip().replace(" ", "_").lower()
             if category else "general"
         )
 
-        # -------------------------------------------------
-        # Create S3 key
-        # -------------------------------------------------
+        # S3 key
         if event_id:
             s3_key = f"events/{event_id}/documents/{safe_category}/{clean_filename}"
         else:
             s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
 
-        # -------------------------------------------------
         # Upload to S3
-        # -------------------------------------------------
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
@@ -174,18 +159,14 @@ async def upload_document(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # -------------------------------------------------
         # Presigned URL
-        # -------------------------------------------------
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": s3_key},
             ExpiresIn=86400,
         )
 
-        # -------------------------------------------------
-        # Insert into Supabase
-        # -------------------------------------------------
+        # Insert into Supabase — SYNC CLIENT SAFE
         payload = sanitize({
             "event_id": event_id,
             "building_id": building_id,
@@ -200,8 +181,7 @@ async def upload_document(
         client = get_supabase_client()
         result = (
             client.table("documents")
-            .insert(payload)
-            .select("*")
+            .insert(payload, returning="representation")   # ✅ FIXED
             .execute()
         )
 
