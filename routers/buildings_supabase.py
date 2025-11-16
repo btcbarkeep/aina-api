@@ -102,18 +102,35 @@ def create_building_supabase(payload: BuildingCreate):
     data = sanitize(payload.model_dump())
 
     try:
-        # **IMPORTANT**: use select("*") to ensure return value
-        result = (
+        # -------------------------------
+        # 1️⃣ Insert (NO SELECT HERE)
+        # -------------------------------
+        insert_result = (
             client.table("buildings")
             .insert(data)
-            .select("*")
             .execute()
         )
 
-        if not result.data:
+        if not insert_result.data:
             raise HTTPException(500, "Insert succeeded but returned no data")
 
-        return result.data[0]
+        building_id = insert_result.data[0]["id"]
+
+        # -------------------------------
+        # 2️⃣ Fetch the inserted record
+        # -------------------------------
+        fetch_result = (
+            client.table("buildings")
+            .select("*")
+            .eq("id", building_id)
+            .single()
+            .execute()
+        )
+
+        if not fetch_result.data:
+            raise HTTPException(500, "Insert completed but building not found")
+
+        return fetch_result.data
 
     except Exception as e:
         msg = str(e)
@@ -125,6 +142,7 @@ def create_building_supabase(payload: BuildingCreate):
             )
 
         raise HTTPException(500, f"Supabase insert error: {msg}")
+
 
 
 # ---------------------------------------------------------
