@@ -1,5 +1,7 @@
+# routers/buildings_supabase.py
+
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
+from typing import Optional, List
 
 from dependencies.auth import (
     get_current_user,
@@ -16,10 +18,8 @@ router = APIRouter(
     tags=["Buildings"]
 )
 
-
 # ---------------------------------------------------------
-# Helper — normalize payloads
-# Converts "" or None → None for safe DB storage
+# Helper — normalize payloads ("" -> None)
 # ---------------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
@@ -31,10 +31,10 @@ def sanitize(data: dict) -> dict:
     return clean
 
 
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
 # LIST — Any authenticated user
-# -------------------------------------------------------------------
-@router.get("/supabase", summary="List Buildings from Supabase")
+# ---------------------------------------------------------
+@router.get("/supabase", summary="List Buildings")
 def list_buildings_supabase(
     limit: int = 100,
     name: Optional[str] = None,
@@ -60,7 +60,6 @@ def list_buildings_supabase(
         return result.data or []
 
     except Exception as e:
-        print("❌ ERROR in list_buildings_supabase:", str(e))
         raise HTTPException(500, f"Supabase fetch error: {str(e)}")
 
 
@@ -70,7 +69,7 @@ def list_buildings_supabase(
 @router.post(
     "/supabase",
     response_model=BuildingRead,
-    summary="Create Building (Supabase only)",
+    summary="Create Building",
     dependencies=[Depends(requires_role(["admin"]))]
 )
 def create_building_supabase(payload: BuildingCreate):
@@ -78,19 +77,13 @@ def create_building_supabase(payload: BuildingCreate):
     data = sanitize(payload.model_dump())
 
     try:
-        # 1️⃣ Insert
-        insert_result = (
-            client.table("buildings")
-            .insert(data)
-            .execute()
-        )
+        insert_result = client.table("buildings").insert(data).execute()
 
         if not insert_result.data:
             raise HTTPException(500, "Insert succeeded but returned no data")
 
         building_id = insert_result.data[0]["id"]
 
-        # 2️⃣ Fetch record
         fetch_result = (
             client.table("buildings")
             .select("*")
@@ -114,7 +107,7 @@ def create_building_supabase(payload: BuildingCreate):
 @router.put(
     "/supabase/{building_id}",
     response_model=BuildingRead,
-    summary="Update Building in Supabase",
+    summary="Update Building",
     dependencies=[Depends(requires_role(["admin", "manager"]))]
 )
 def update_building_supabase(
@@ -125,21 +118,8 @@ def update_building_supabase(
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     try:
-        # 1️⃣ UPDATE (NO select() allowed here)
-        update_result = (
-            client.table("buildings")
-            .update(update_data)
-            .eq("id", building_id)
-            .execute()
-        )
+        client.table("buildings").update(update_data).eq("id", building_id).execute()
 
-        if update_result.data is None:
-            raise HTTPException(
-                404,
-                f"Building '{building_id}' not found."
-            )
-
-        # 2️⃣ Fetch updated record
         fetch_result = (
             client.table("buildings")
             .select("*")
@@ -183,3 +163,84 @@ def delete_building(building_id: str):
 
     except Exception as e:
         raise HTTPException(500, f"Supabase delete error: {e}")
+
+
+# =====================================================================
+# 🆕 NEW: BUILDING → CONTRACTOR SUMMARY ENDPOINT
+# =====================================================================
+@router.get(
+    "/supabase/{building_id}/contractors",
+    summary="List contractors who have worked on this building"
+)
+def get_building_contractors(
+    building_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Returns contractors that have events in this building,
+    including event counts and first/last seen dates.
+    """
+
+    client = get_supabase_client()
+
+    events_query = (
+        client.table("events")
+        .select("contractor_id, event_type, created_at")
+        .eq("building_id", building_id)
+        .not_.is_("contractor_id", None)
+        .execute()
+    )
+
+    events = events_query.data or []
+
+    if not events:
+        return []  # building has no contractor work yet
+
+    contractor_ids = list({e["contractor_id"] for e in events if e["contractor_id"]})
+    if not contractor_ids:
+        return []
+
+    contractors_query = (
+        client.table("contractors")
+        .select("*")
+        .in_("id", contractor_ids)
+        .execute()
+    )
+
+    contractors = {c["id"]: c for c in (contractors_query.data or [])}
+
+    summary = {}
+    for e in events:
+        cid = e["contractor_id"]
+        if not cid:
+            continue
+
+        if cid not in summary:
+            summary[cid] = {
+                "contractor": contractors.get(cid),
+                "event_count": 0,
+                "event_types": set(),
+                "first_seen": e["created_at"],
+                "last_seen": e["created_at"],
+            }
+
+        summary[cid]["event_count"] += 1
+        summary[cid]["event_types"].add(e["event_type"])
+
+        if e["created_at"] < summary[cid]["first_seen"]:
+            summary[cid]["first_seen"] = e["created_at"]
+
+        if e["created_at"] > summary[cid]["last_seen"]:
+            summary[cid]["last_seen"] = e["created_at"]
+
+    # Convert sets to lists for JSON
+    return [
+        {
+            **data["contractor"],
+            "event_count": data["event_count"],
+            "event_types": list(data["event_types"]),
+            "first_seen": data["first_seen"],
+            "last_seen": data["last_seen"],
+        }
+        for cid, data in summary.items()
+    ]
