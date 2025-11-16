@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     SMTP_PASS: Optional[str] = Field(None, env="SMTP_PASS")
     SMTP_TO: Optional[str] = Field(None, env="SMTP_TO")
 
+    # 👇 NEW — destination for all admin/daily reports
+    ADMIN_REPORT_EMAIL: Optional[str] = Field(None, env="ADMIN_REPORT_EMAIL")
+
     # -------------------------------------------------
     # Model Config
     # -------------------------------------------------
@@ -69,7 +72,6 @@ class Settings(BaseSettings):
     # Webhooks / Sync notifications
     # -------------------------------------------------
     SYNC_WEBHOOK_URL: Optional[str] = Field(None, env="SYNC_WEBHOOK_URL")
-
 
 
 # Instantiate settings
