@@ -12,6 +12,7 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
+from core.config import settings
 
 
 router = APIRouter(
@@ -137,13 +138,18 @@ def send_daily_update(
     snapshot = get_daily_snapshot()
     body = format_daily_email(snapshot)
 
+    # 👇 Use environment-defined report recipient(s)
+    report_email = settings.ADMIN_REPORT_EMAIL
+
     send_email(
         subject="Aina Protocol — Daily Update",
-        body=body
+        body=body,
+        to=report_email
     )
 
     return JSONResponse({
         "status": "sent",
+        "sent_to": report_email,
         "snapshot": snapshot,
     })
 
