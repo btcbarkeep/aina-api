@@ -1,8 +1,9 @@
 # core/auth_helpers.py
 
-from fastapi import HTTPException
 from datetime import datetime, timedelta
 from uuid import uuid4
+
+from fastapi import HTTPException
 from jose import jwt
 from passlib.context import CryptContext
 
@@ -25,7 +26,7 @@ def require_admin_role(current_user: dict):
     if current_user.get("role") != "admin":
         raise HTTPException(
             status_code=403,
-            detail="Admin privileges required for this action."
+            detail="Admin privileges required for this action.",
         )
 
 
@@ -37,7 +38,6 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
     Checks if user has access to a specific building.
     Supabase table: user_building_access
     """
-
     client = get_supabase_client()
 
     try:
@@ -49,12 +49,15 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
             .execute()
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase access lookup failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase access lookup failed: {e}",
+        )
 
     if not result.data:
         raise HTTPException(
             status_code=403,
-            detail="You do not have permission to access this building."
+            detail="You do not have permission to access this building.",
         )
 
 
@@ -76,7 +79,10 @@ def get_event_building_id(event_id: str) -> str:
             .execute()
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase lookup failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase lookup failed: {e}",
+        )
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Event not found.")
@@ -91,7 +97,6 @@ def verify_user_event_permission(user_id: str, event_id: str):
     """
     Confirms user has access to the building associated with this event.
     """
-
     building_id = get_event_building_id(event_id)
     verify_user_building_access_supabase(user_id, building_id)
 
@@ -108,9 +113,8 @@ def create_user_no_password(
 ):
     """
     Creates a user in the Supabase 'users' table.
-    Password is not set until they visit set-password page.
+    Password is not set until they visit the set-password page.
     """
-
     client = get_supabase_client()
 
     # 1️⃣ Check if user already exists
@@ -123,10 +127,16 @@ def create_user_no_password(
             .execute()
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase lookup failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase lookup failed: {e}",
+        )
 
     if existing.data:
-        raise HTTPException(status_code=400, detail="A user with this email already exists.")
+        raise HTTPException(
+            status_code=400,
+            detail="A user with this email already exists.",
+        )
 
     # 2️⃣ Insert new user
     user_id = str(uuid4())
@@ -148,10 +158,16 @@ def create_user_no_password(
     try:
         result = client.table("users").insert(payload).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase insert failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase insert failed: {e}",
+        )
 
     if not result.data:
-        raise HTTPException(status_code=500, detail="Supabase returned no data.")
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase returned no data.",
+        )
 
     return result.data[0]
 
@@ -159,28 +175,27 @@ def create_user_no_password(
 # ============================================================
 # 🔑 CREATE PASSWORD RESET TOKEN
 # ============================================================
-def create_password_token(email: str, expires_minutes: int = 60):
+def create_password_token(email: str, expires_minutes: int = 60) -> str:
     """
-    Stores reset_token + expiration in Supabase.
+    Stores reset_token + expiration in Supabase and returns the token.
     """
-
     client = get_supabase_client()
 
     token = uuid4().hex
     expires_at = datetime.utcnow() + timedelta(minutes=expires_minutes)
 
     try:
-        result = (
-            client.table("users")
-            .update({
+        client.table("users").update(
+            {
                 "reset_token": token,
-                "reset_token_expires": expires_at.isoformat()
-            })
-            .eq("email", email)
-            .execute()
-        )
+                "reset_token_expires": expires_at.isoformat(),
+            }
+        ).eq("email", email).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Supabase update failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase update failed: {e}",
+        )
 
     return token
 
@@ -209,13 +224,28 @@ def get_user_by_email(email: str):
 # 🔐 PASSWORD HASHING
 # ============================================================
 def hash_password(password: str) -> str:
+    """
+    Hash a plain-text password using bcrypt.
+    """
     return pwd_context.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    if not hashed:
+    """
+    Safely verify a plain-text password against a stored hash.
+
+    Returns False instead of throwing if the hash is invalid or there is
+    any verification error, so the caller can return a clean 401.
+    """
+    if not plain or not hashed:
         return False
-    return pwd_context.verify(plain, hashed)
+
+    try:
+        return pwd_context.verify(plain, hashed)
+    except Exception:
+        # If anything goes wrong (bad hash format, unsupported scheme, etc.)
+        # treat it as a failed password check instead of a 500 error.
+        return False
 
 
 # ============================================================
