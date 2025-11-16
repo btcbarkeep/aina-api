@@ -1,5 +1,3 @@
-# routers/documents_supabase.py
-
 from fastapi import APIRouter, HTTPException, Depends
 
 from dependencies.auth import (
@@ -9,7 +7,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import update_record
+    from core.supabase_helpers import update_record
 
 from models.document import (
     DocumentCreate,
@@ -21,7 +19,6 @@ router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
-
 
 # -----------------------------------------------------
 # Helper — sanitize payloads ("" → None)
@@ -133,14 +130,14 @@ def create_document_supabase(
 
     # Enforce building access for non-admin/manager
     if current_user.role not in ["admin", "manager"]:
-        verify_user_building_access_supabase(current_user.user_id, building_id)
+        verify_user_building_access_supabase(current_user.id, building_id)
 
     try:
         doc_data = sanitize(payload.model_dump())
 
         result = (
             client.table("documents")
-            .insert(doc_data, returning="representation")   # ✅ FIXED
+            .insert(doc_data, returning="representation")
             .execute()
         )
 
@@ -189,7 +186,7 @@ def delete_document_supabase(document_id: str):
     try:
         result = (
             client.table("documents")
-            .delete(returning="representation")   # ✅ FIXED
+            .delete(returning="representation")
             .eq("id", document_id)
             .execute()
         )
