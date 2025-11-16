@@ -107,13 +107,23 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
     Returns all building IDs that the authenticated user can manage.
     Accessible by ANY logged-in user.
     """
+
+    # -------------------------------------------------
+    # Special case: Bootstrap admin bypasses Supabase
+    # -------------------------------------------------
+    if current_user.user_id == "bootstrap":
+        return [{
+            "building_id": "ALL",
+            "note": "Bootstrap admin has access to all buildings"
+        }]
+
     client = get_supabase_client()
 
     try:
         result = (
             client.table("user_building_access")
             .select("building_id")
-            .eq("user_id", current_user.user_id)   # ✅ FIXED
+            .eq("user_id", current_user.user_id)
             .execute()
         )
         return result.data or []
