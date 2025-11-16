@@ -111,17 +111,9 @@ def create_user_no_password(
     phone: str | None = None,
     role: str = "hoa",
 ):
-    """
-    Creates a user in Supabase.
-    IMPORTANT:
-    - Do NOT send `id` (Supabase auto-generates)
-    - Do NOT send `username` (we removed the column)
-    - hashed_password should start as NULL
-    """
-
     client = get_supabase_client()
 
-    # 1️⃣ Check if user exists
+    # 1️⃣ Check if user already exists
     existing = (
         client.table("users")
         .select("id")
@@ -146,19 +138,17 @@ def create_user_no_password(
         "updated_at": now,
     }
 
-    # 2️⃣ Create user (Supabase returns generated UUID)
+    # 🚀 2️⃣ Insert — MUST USE returning="representation"
     result = (
         client.table("users")
-        .insert(payload)
-        .select("*")      # ← REQUIRED TO GET DATA BACK
-        .single()         # ← ensure one row
+        .insert(payload, returning="representation")   # ← REQUIRED
         .execute()
     )
 
     if not result.data:
         raise HTTPException(500, "Supabase insert returned no data.")
 
-    return result.data
+    return result.data[0]
 
 
 # ============================================================
