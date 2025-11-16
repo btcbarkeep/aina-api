@@ -4,11 +4,11 @@ from datetime import datetime
 
 
 # -----------------------------------------
-# BASE MODEL (fields shared across models)
+# BASE MODEL (shared fields)
 # -----------------------------------------
 class EventCommentBase(BaseModel):
-    event_id: str
-    user_id: Optional[str]  # Filled automatically from JWT
+    event_id: str                  # Supabase UUID
+    user_id: Optional[str] = None  # Filled automatically from JWT in the router
     comment_text: str
 
 
@@ -16,24 +16,21 @@ class EventCommentBase(BaseModel):
 # CREATE MODEL
 # -----------------------------------------
 class EventCommentCreate(BaseModel):
-    event_id: str          # UUID of parent event
-    comment_text: str      # Actual comment text
+    event_id: str                  # UUID of parent event
+    comment_text: str              # Actual comment text
 
 
 # -----------------------------------------
-# UPDATE MODEL
+# UPDATE MODEL (partial)
 # -----------------------------------------
 class EventCommentUpdate(BaseModel):
     comment_text: Optional[str] = None
 
 
 # -----------------------------------------
-# READ / RETURN MODEL
+# READ MODEL (returned from Supabase)
 # -----------------------------------------
 class EventCommentRead(EventCommentBase):
-    id: str                    # UUID primary key
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        orm_mode = True
+    id: str                        # UUID primary key
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
