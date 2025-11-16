@@ -10,6 +10,7 @@ from passlib.context import CryptContext
 from core.config import settings
 from core.supabase_client import get_supabase_client
 
+
 SECRET_KEY = settings.JWT_SECRET_KEY
 ALGORITHM = settings.JWT_ALGORITHM
 
@@ -104,6 +105,7 @@ def verify_user_event_permission(user_id: str, event_id: str):
 # ============================================================
 # 👤 CREATE USER *IN SUPABASE* (NO PASSWORD)
 # ============================================================
+
 def create_user_no_password(
     full_name: str,
     email: str,
@@ -113,17 +115,23 @@ def create_user_no_password(
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Check if user exists
-    resp = (
-        client.table("users")
-        .select("id")
-        .eq("email", email)
-        .single()        # ← FIXED: never returns None
-        .execute()
-    )
+    # 1️⃣ Check if user already exists (NO .single())
+    try:
+        existing = (
+            client.table("users")
+            .select("id")
+            .eq("email", email)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase check existing user failed: {e}",
+        )
 
-    if resp.data:
-        raise HTTPException(400, "User already exists.")
+    if existing.data:
+        # If we got any rows back, the user already exists
+        raise HTTPException(status_code=400, detail="User already exists.")
 
     now = datetime.utcnow().isoformat()
 
@@ -133,27 +141,34 @@ def create_user_no_password(
         "organization_name": organization_name,
         "phone": phone,
         "role": role,
-        "hashed_password": None,
+        "is_active": True,
         "created_at": now,
         "updated_at": now,
+        # If you later want to support contractor_id, add:
+        # "contractor_id": contractor_id,
     }
 
-    # 2️⃣ Insert
-    result = (
-        client.table("users")
-        .insert(payload)
-        .select("*")
-        .single()
-        .execute()
-    )
+    # 2️⃣ Insert user — sync-client safe pattern
+    try:
+        insert_result = (
+            client.table("users")
+            .insert(payload, returning="representation")
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase insert failed: {e}",
+        )
 
+    if not insert_result.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase insert returned no rows",
+        )
 
-    if not result.data or len(result.data) == 0:
-        raise HTTPException(500, "Supabase insert returned no rows")
-
-    return result.data[0]
-
-
+    # Return the inserted row
+    return insert_result.data[0]
 
 
 # ============================================================
