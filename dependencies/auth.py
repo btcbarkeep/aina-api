@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 from core.config import settings
 from core.supabase_client import get_supabase_client
+from core.roles import ROLE_PERMISSIONS  # ⭐ NEW
+
 
 bearer_scheme = HTTPBearer()
 
@@ -111,7 +113,7 @@ def get_current_user(
 
 
 # ============================================================
-# Role Requirement Wrapper
+# Role Requirement Wrapper (existing)
 # ============================================================
 def requires_role(allowed_roles: list[str]):
     def checker(current_user: CurrentUser = Depends(get_current_user)):
@@ -121,4 +123,39 @@ def requires_role(allowed_roles: list[str]):
                 detail=f"Requires one of: {allowed_roles}",
             )
         return current_user
+    return checker
+
+
+# ============================================================
+# ⭐ NEW — Permission System (RBAC)
+# ============================================================
+
+def has_permission(role: str, permission: str) -> bool:
+    """
+    Check if a role has a permission.
+    Supports wildcard "*" = full access.
+    """
+    allowed = ROLE_PERMISSIONS.get(role, [])
+
+    # super_admin or wildcard support
+    if "*" in allowed:
+        return True
+
+    return permission in allowed
+
+
+def requires_permission(permission: str):
+    """
+    FastAPI dependency wrapper for fine-grained permission checks.
+    Example:
+        @router.post("/", dependencies=[Depends(requires_permission("events:write"))])
+    """
+    def checker(current_user: CurrentUser = Depends(get_current_user)):
+        if not has_permission(current_user.role, permission):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Missing permission: {permission}"
+            )
+        return current_user
+
     return checker
