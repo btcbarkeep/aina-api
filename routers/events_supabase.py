@@ -1,4 +1,3 @@
-# routers/events_supabase.py
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, List
 
@@ -18,18 +17,6 @@ router = APIRouter(
     prefix="/events",
     tags=["Events"],
 )
-
-"""
-EVENTS ROUTER (SUPABASE-ONLY, SYNC CLIENT SAFE)
-
-Fixes:
-  ✓ No more .select("*") after insert/delete/update
-  ✓ All inserts use returning="representation"
-  ✓ All deletes use returning="representation"
-  ✓ Comment insert updated
-  ✓ Fully sanitized payloads
-  ✓ Admin/Manager/Contractor logic intact
-"""
 
 
 # -----------------------------------------------------
@@ -87,11 +74,11 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
-# LIST EVENTS — Any authenticated user
+# LIST EVENTS
 # -----------------------------------------------------
 @router.get(
     "/supabase",
-    summary="List Events from Supabase",
+    summary="List Events",
     response_model=List[EventRead],
 )
 def list_events_supabase(
@@ -115,44 +102,42 @@ def list_events_supabase(
 
 
 # -----------------------------------------------------
-# CREATE EVENT — Admin/Manager or building-access user
+# CREATE EVENT — Admin / Manager / building-access user
 # -----------------------------------------------------
 @router.post(
     "/supabase",
     response_model=EventRead,
-    summary="Create Event in Supabase",
+    summary="Create Event",
 )
 def create_event_supabase(
     payload: EventCreate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
+
     building_id = payload.building_id
 
-    # Admin / Manager: full access; others need building access
+    # Only admin/manager can bypass building access
     if current_user.role not in ["admin", "manager"]:
-        verify_user_building_access_supabase(current_user.user_id, building_id)
+        verify_user_building_access_supabase(current_user.id, building_id)
 
     try:
         event_data = sanitize(payload.model_dump())
 
         # Track creator
-        event_data["created_by"] = current_user.user_id
+        event_data["created_by"] = current_user.id
 
-        # Contractor rules
+        # Contractor-specific behavior
         if current_user.role == "contractor":
-            if not current_user.contractor_id:
+            contractor_id = getattr(current_user, "contractor_id", None)
+            if not contractor_id:
                 raise HTTPException(
                     status_code=400,
                     detail="Contractor account missing contractor_id."
                 )
-            event_data["contractor_id"] = current_user.contractor_id
+            event_data["contractor_id"] = contractor_id
 
-        elif current_user.role not in ["admin", "manager"]:
-            # Owners, tenants, buyers, etc.
-            event_data["contractor_id"] = None
-
-        # Insert safely — NO .select("*")
+        # Insert safely
         result = (
             client.table("events")
             .insert(event_data, returning="representation")
@@ -160,7 +145,7 @@ def create_event_supabase(
         )
 
         if not result.data:
-            raise HTTPException(status_code=500, detail="Supabase insert failed")
+            raise HTTPException(status_code=500, detail="Insert failed")
 
         return result.data[0]
 
@@ -173,7 +158,7 @@ def create_event_supabase(
 # -----------------------------------------------------
 @router.put(
     "/supabase/{event_id}",
-    summary="Update Event in Supabase",
+    summary="Update Event",
     response_model=EventRead,
     dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
@@ -183,10 +168,6 @@ def update_event_supabase(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
-
-    # Contractors cannot override identity
-    if current_user.role == "contractor":
-        update_data["contractor_id"] = current_user.contractor_id
 
     result = update_record("events", event_id, update_data)
 
@@ -201,13 +182,13 @@ def update_event_supabase(
 # -----------------------------------------------------
 @router.delete(
     "/supabase/{event_id}",
-    summary="Delete Event in Supabase",
+    summary="Delete Event",
     dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
 def delete_event_supabase(event_id: str):
     client = get_supabase_client()
 
-    # Prevent deleting events with documents attached
+    # Prevent deleting events that have documents
     docs = (
         client.table("documents")
         .select("id")
@@ -217,8 +198,8 @@ def delete_event_supabase(event_id: str):
 
     if docs.data:
         raise HTTPException(
-            status_code=400,
-            detail="Cannot delete event: documents exist for this event.",
+            400,
+            "Cannot delete event: documents exist for this event.",
         )
 
     result = (
@@ -235,11 +216,11 @@ def delete_event_supabase(event_id: str):
 
 
 # -----------------------------------------------------
-# ADD COMMENT — Admin OR Manager
+# ADD COMMENT — Admin / Manager
 # -----------------------------------------------------
 @router.post(
     "/supabase/{event_id}/comment",
-    summary="Add a comment/update to an event",
+    summary="Add a comment to an event",
     dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
 def add_event_comment(
@@ -249,12 +230,12 @@ def add_event_comment(
 ):
     client = get_supabase_client()
 
-    # Confirm event exists
+    # Ensure event exists & retrieve building
     building_id = get_event_building_id(event_id)
 
-    # Admin always allowed; managers must have building access
+    # Manager must also have building access
     if current_user.role != "admin":
-        verify_user_building_access_supabase(current_user.user_id, building_id)
+        verify_user_building_access_supabase(current_user.id, building_id)
 
     try:
         result = (
@@ -262,7 +243,7 @@ def add_event_comment(
             .insert(
                 {
                     "event_id": event_id,
-                    "user_id": current_user.user_id,
+                    "user_id": current_user.id,
                     "comment": comment,
                 },
                 returning="representation",
