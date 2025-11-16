@@ -120,13 +120,8 @@ def create_user_no_password(
 
     # 1️⃣ Check if user already exists
     try:
-        existing = (
-            client.table("users")
-            .select("*")
-            .eq("email", email)
-            .limit(1)
-            .execute()
-        )
+        existing = client.table("users").select("*").eq("email", email).limit(1).execute()
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase lookup failed: {e}")
 
