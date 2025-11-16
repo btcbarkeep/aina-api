@@ -49,7 +49,7 @@ def get_signup_request_by_id(request_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ PUBLIC — Submit signup request (Supabase)
+# 1️⃣ PUBLIC — Submit signup request
 # -----------------------------------------------------
 @router.post("/request", summary="Public: Submit signup request")
 def request_access(payload: SignupRequestCreate):
@@ -66,19 +66,19 @@ def request_access(payload: SignupRequestCreate):
         "created_at": datetime.utcnow().isoformat(),
     }
 
-    # ------------------------------
-    # Insert into Supabase
-    # ------------------------------
+    # Insert — SYNC CLIENT SAFE
     try:
-        result = client.table("signup_requests").insert(request_data).execute()
+        result = (
+            client.table("signup_requests")
+            .insert(request_data, returning="representation")  # ✅ fixed
+            .execute()
+        )
     except Exception as e:
         raise HTTPException(500, f"Supabase insert error: {e}")
 
     signup = result.data[0]
 
-    # ------------------------------
-    # Send emails (safe failure)
-    # ------------------------------
+    # Send emails (non-blocking)
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -128,7 +128,6 @@ Request ID: {signup["id"]}
     summary="Admin: List signup requests",
     dependencies=[Depends(requires_role(["admin"]))],
 )
-
 def list_requests():
     client = get_supabase_client()
 
@@ -139,22 +138,19 @@ def list_requests():
             .order("created_at", desc=True)
             .execute()
         )
+        return result.data or []
     except Exception as e:
         raise HTTPException(500, f"Supabase fetch error: {e}")
 
-    return result.data or []
-
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve request → create user → send setup email
+# 3️⃣ ADMIN — Approve request
 # -----------------------------------------------------
-
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
     dependencies=[Depends(requires_role(["admin"]))],
 )
-
 def approve_request(
     request_id: str,
     current_user: CurrentUser = Depends(get_current_user),
@@ -166,9 +162,7 @@ def approve_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
-    # ------------------------------
-    # Create Supabase user
-    # ------------------------------
+    # Create user
     try:
         user = create_user_no_password(
             full_name=req.get("full_name"),
@@ -180,22 +174,19 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # ------------------------------
-    # Update request status
-    # ------------------------------
+    # Update request status — SYNC CLIENT SAFE
     try:
         client.table("signup_requests").update(
             {
                 "status": "approved",
                 "approved_at": datetime.utcnow().isoformat(),
-            }
+            },
+            returning="representation"      # ✅ FIXED
         ).eq("id", request_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # ------------------------------
     # Password setup email
-    # ------------------------------
     token = generate_password_setup_token(req["email"])
 
     send_email(
@@ -223,13 +214,11 @@ Aina Protocol Team
 # -----------------------------------------------------
 # 4️⃣ ADMIN — Reject signup request
 # -----------------------------------------------------
-
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
     dependencies=[Depends(requires_role(["admin"]))],
 )
-
 def reject_request(
     request_id: str,
     current_user: CurrentUser = Depends(get_current_user),
@@ -246,7 +235,8 @@ def reject_request(
             {
                 "status": "rejected",
                 "rejected_at": datetime.utcnow().isoformat(),
-            }
+            },
+            returning="representation"    # ✅ FIXED
         ).eq("id", request_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
