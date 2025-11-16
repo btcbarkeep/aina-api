@@ -13,7 +13,7 @@ bearer_scheme = HTTPBearer()
 
 
 # ============================================================
-# Current User object returned to the frontend
+# Current User object returned to frontend & other routes
 # ============================================================
 class CurrentUser(BaseModel):
     user_id: str
@@ -24,7 +24,7 @@ class CurrentUser(BaseModel):
 
 
 # ============================================================
-# Decode + Validate the JWT and lookup user in Supabase
+# Decode JWT + Lookup user in Supabase
 # ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
@@ -38,13 +38,14 @@ def get_current_user(
     )
 
     # -------------------------------------------------
-    # Decode token
+    # Decode token with expiration validation
     # -------------------------------------------------
     try:
         payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": True},  # 🔥 REQUIRED
         )
     except JWTError:
         raise unauthorized
@@ -92,13 +93,16 @@ def get_current_user(
 
     user = result.data
 
+    # Ensure role is never null
+    role = user.get("role") or "hoa"
+
     # -------------------------------------------------
-    # Build CurrentUser object
+    # Return strongly-typed CurrentUser object
     # -------------------------------------------------
     return CurrentUser(
         user_id=user["id"],
         email=user["email"],
-        role=user.get("role", "hoa"),
+        role=role,
         full_name=user.get("full_name"),
         organization_name=user.get("organization_name"),
     )
@@ -107,10 +111,9 @@ def get_current_user(
 # ============================================================
 # Role Requirement Wrapper
 # ============================================================
-
 def requires_role(allowed_roles: list[str]):
     """
-    Dependency factory that ensures the current user has one of the allowed roles.
+    Dependency factory ensuring the current user has one of the allowed roles.
     """
     def checker(current_user: CurrentUser = Depends(get_current_user)):
         if current_user.role not in allowed_roles:
