@@ -1,4 +1,3 @@
-# main.py
 import os
 import sys
 from fastapi import FastAPI, Request
@@ -9,28 +8,26 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # Ensure local imports resolve correctly
 sys.path.append(os.path.dirname(__file__))
 
-# Core / DB / Config
+# Core / Config
 from core.config import settings
 from core.logging_config import logger
-from database import create_db_and_tables
 
 # Routers — Supabase only
 from routers.buildings_supabase import router as buildings_router
 from routers.events_supabase import router as events_router
 from routers.documents_supabase import router as documents_router
 
-# Auth / Admin
+# Auth / Admin Routers
 from routers.auth import router as auth_router
 from routers.signup import router as signup_router
 from routers.admin import router as admin_router
 from routers.user_access import router as user_access_router
 from routers.admin_daily import router as admin_daily_router
 
-## AWS Uploads
+# AWS Uploads
 from routers.uploads import router as uploads_router
 
-
-# Health (missing before)
+# Health Check
 from routers.health import router as health_router
 
 
@@ -45,7 +42,7 @@ def create_app() -> FastAPI:
     )
 
     # -------------------------------------------------
-    # CORS (Auto-built from settings.BACKEND_CORS_ORIGINS)
+    # CORS
     # -------------------------------------------------
     app.add_middleware(
         CORSMiddleware,
@@ -61,8 +58,6 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def on_startup():
         logger.info("🚀 Starting Aina Protocol API")
-        create_db_and_tables()
-
         print("\n📍 Registered /api/v1 Routes:\n")
         for route in app.routes:
             if route.path.startswith("/api/v1"):
@@ -97,20 +92,19 @@ def create_app() -> FastAPI:
     app.include_router(admin_router,       prefix="/api/v1")
     app.include_router(user_access_router, prefix="/api/v1")
 
-    # Supabase Routers (canonical)
+    # Supabase-backed data routers
     app.include_router(buildings_router,   prefix="/api/v1")
     app.include_router(events_router,      prefix="/api/v1")
     app.include_router(documents_router,   prefix="/api/v1")
 
-    # NEW: Daily Admin Update Email
+    # Daily admin email automation
     app.include_router(admin_daily_router, prefix="/api/v1")
 
-    # AWS Uploads S3 Bucket
-    app.include_router(uploads_router,   prefix="/api/v1")
-    
-    # Health checks (now visible in Swagger)
-    app.include_router(health_router,      prefix="/api/v1")
+    # S3 Uploads
+    app.include_router(uploads_router,     prefix="/api/v1")
 
+    # Health Check
+    app.include_router(health_router,      prefix="/api/v1")
 
     # -------------------------------------------------
     # Root — Redirect to Cloudflare login
