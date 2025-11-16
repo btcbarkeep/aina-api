@@ -17,8 +17,9 @@ from routers.buildings_supabase import router as buildings_router
 from routers.events_supabase import router as events_router
 from routers.documents_supabase import router as documents_router
 
-# NEW — Contractors Router
+# NEW — Contractors Routers
 from routers.contractors_supabase import router as contractors_router
+from routers.contractor_events_supabase import router as contractor_events_router
 
 # Auth / Admin Routers
 from routers.auth import router as auth_router
@@ -90,27 +91,28 @@ def create_app() -> FastAPI:
     # -------------------------------------------------
     # Register All Versioned Routers
     # -------------------------------------------------
-    app.include_router(auth_router,          prefix="/api/v1")
-    app.include_router(signup_router,        prefix="/api/v1")
-    app.include_router(admin_router,         prefix="/api/v1")
-    app.include_router(user_access_router,   prefix="/api/v1")
+    app.include_router(auth_router,                  prefix="/api/v1")
+    app.include_router(signup_router,                prefix="/api/v1")
+    app.include_router(admin_router,                 prefix="/api/v1")
+    app.include_router(user_access_router,           prefix="/api/v1")
 
     # Supabase-backed data routers
-    app.include_router(buildings_router,     prefix="/api/v1")
-    app.include_router(events_router,        prefix="/api/v1")
-    app.include_router(documents_router,     prefix="/api/v1")
+    app.include_router(buildings_router,             prefix="/api/v1")
+    app.include_router(events_router,                prefix="/api/v1")
+    app.include_router(documents_router,             prefix="/api/v1")
 
-    # NEW — Contractors
-    app.include_router(contractors_router,   prefix="/api/v1")
+    # NEW — Contractors + Contractor Events
+    app.include_router(contractors_router,           prefix="/api/v1")
+    app.include_router(contractor_events_router,     prefix="/api/v1")
 
     # Daily admin email automation
-    app.include_router(admin_daily_router,   prefix="/api/v1")
+    app.include_router(admin_daily_router,           prefix="/api/v1")
 
     # S3 Uploads
-    app.include_router(uploads_router,       prefix="/api/v1")
+    app.include_router(uploads_router,               prefix="/api/v1")
 
     # Health Check
-    app.include_router(health_router,        prefix="/api/v1")
+    app.include_router(health_router,                prefix="/api/v1")
 
     # -------------------------------------------------
     # Root — Redirect to Cloudflare login
