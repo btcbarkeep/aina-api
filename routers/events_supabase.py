@@ -22,12 +22,13 @@ router = APIRouter(
 """
 EVENTS ROUTER (SUPABASE-ONLY)
 
-Roles:
-  - List: any authenticated user
-  - Create: admin or manager OR user must have building access
-  - Update: admin or manager
-  - Delete: admin or manager
-  - Comment: admin or manager
+New logic added:
+  ✓ created_by is always set from current_user
+  ✓ contractor_id rules:
+        - contractors: auto-force their contractor_id
+        - admin/manager: can set contractor manually
+        - others: contractor_id = None
+  ✓ severity + status supported
 """
 
 
@@ -114,7 +115,8 @@ def list_events_supabase(
 
 
 # -----------------------------------------------------
-# CREATE EVENT — Admin/Manager, or building-access user
+# CREATE EVENT — Admin/Manager or building-access user
+# Contractor logic + created_by logic included
 # -----------------------------------------------------
 @router.post(
     "/supabase",
@@ -135,6 +137,30 @@ def create_event_supabase(
     try:
         event_data = sanitize(payload.model_dump())
 
+        # Always track who created the event
+        event_data["created_by"] = current_user.user_id
+
+        # Contractor permissions logic
+        user_role = current_user.role
+
+        if user_role == "contractor":
+            # Contractor MUST be assigned a contractor_id
+            if not current_user.contractor_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Contractor account missing contractor_id."
+                )
+            event_data["contractor_id"] = current_user.contractor_id
+
+        elif user_role in ["admin", "manager"]:
+            # They MAY set contractor_id from the payload (sanitized above)
+            pass
+
+        else:
+            # Owners, tenants, buyers, etc.
+            event_data["contractor_id"] = None
+
+        # Insert into Supabase
         result = (
             client.table("events")
             .insert(event_data)
@@ -153,6 +179,7 @@ def create_event_supabase(
 
 # -----------------------------------------------------
 # UPDATE EVENT — Admin OR Manager
+# Contractor logic also applied here
 # -----------------------------------------------------
 @router.put(
     "/supabase/{event_id}",
@@ -163,8 +190,13 @@ def create_event_supabase(
 def update_event_supabase(
     event_id: str,
     payload: EventUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
+
+    # Contractors CANNOT override contractor identity
+    if current_user.role == "contractor":
+        update_data["contractor_id"] = current_user.contractor_id
 
     result = update_record("events", event_id, update_data)
 
@@ -182,9 +214,7 @@ def update_event_supabase(
     summary="Delete Event in Supabase",
     dependencies=[Depends(requires_role(["admin", "manager"]))],
 )
-def delete_event_supabase(
-    event_id: str,
-):
+def delete_event_supabase(event_id: str):
     client = get_supabase_client()
 
     # Prevent deleting events that have documents attached
@@ -230,10 +260,10 @@ def add_event_comment(
 ):
     client = get_supabase_client()
 
-    # Confirm event exists & get building
+    # Confirm event exists
     building_id = get_event_building_id(event_id)
 
-    # Managers must have building access (admins bypass)
+    # Managers must have building access
     if current_user.role != "admin":
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
@@ -244,7 +274,7 @@ def add_event_comment(
                 {
                     "event_id": event_id,
                     "user_id": current_user.user_id,
-                    "comment": comment,  # assumes column name is "comment"
+                    "comment": comment,
                 }
             )
             .select("*")
