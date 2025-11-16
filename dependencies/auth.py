@@ -6,14 +6,13 @@ from pydantic import BaseModel
 
 from core.config import settings
 from core.supabase_client import get_supabase_client
-from core.roles import ROLE_PERMISSIONS  # ⭐ NEW
-
+from core.roles import ROLE_PERMISSIONS  # Permissions table
 
 bearer_scheme = HTTPBearer()
 
 
 # ============================================================
-# Current User returned to backend + frontend
+# Current User Model (returned to backend + frontend)
 # ============================================================
 class CurrentUser(BaseModel):
     id: str
@@ -21,10 +20,12 @@ class CurrentUser(BaseModel):
     role: str
     full_name: Optional[str] = None
     organization_name: Optional[str] = None
+    phone: Optional[str] = None
+    contractor_id: Optional[str] = None
 
 
 # ============================================================
-# Decode token + resolve user
+# Decode token + resolve user from Supabase
 # ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
@@ -38,9 +39,9 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # -------------------------------------------------
+    # ---------------------------------------------------------
     # Decode JWT
-    # -------------------------------------------------
+    # ---------------------------------------------------------
     try:
         payload = jwt.decode(
             token,
@@ -54,9 +55,9 @@ def get_current_user(
     email = payload.get("sub")
     role_from_token = payload.get("role")
 
-    # -------------------------------------------------
-    # ⭐ CRON TOKEN OVERRIDE — bypass Supabase
-    # -------------------------------------------------
+    # ---------------------------------------------------------
+    # CRON TOKEN (bypass Supabase)
+    # ---------------------------------------------------------
     if payload.get("cron") is True:
         return CurrentUser(
             id="cron",
@@ -64,11 +65,13 @@ def get_current_user(
             role="admin",
             full_name="Cron Job",
             organization_name="System",
+            phone=None,
+            contractor_id=None,
         )
 
-    # -------------------------------------------------
+    # ---------------------------------------------------------
     # BOOTSTRAP ADMIN OVERRIDE
-    # -------------------------------------------------
+    # ---------------------------------------------------------
     if payload.get("bootstrap_admin") is True:
         return CurrentUser(
             id="bootstrap",
@@ -76,11 +79,13 @@ def get_current_user(
             role="admin",
             full_name="Bootstrap Admin",
             organization_name="System",
+            phone=None,
+            contractor_id=None,
         )
 
-    # -------------------------------------------------
-    # Standard authentication path
-    # -------------------------------------------------
+    # ---------------------------------------------------------
+    # Normal user path
+    # ---------------------------------------------------------
     if not email:
         raise unauthorized
 
@@ -101,19 +106,31 @@ def get_current_user(
     if not user:
         raise unauthorized
 
+    # ---------------------------------------------------------
+    # Determine final role
+    # ---------------------------------------------------------
     role = user.get("role") or role_from_token or "hoa"
 
+    # fallback to safe role if unknown
+    if role not in ROLE_PERMISSIONS:
+        role = "hoa"
+
+    # ---------------------------------------------------------
+    # Return enriched CurrentUser
+    # ---------------------------------------------------------
     return CurrentUser(
         id=user["id"],
         email=user["email"],
         role=role,
         full_name=user.get("full_name"),
         organization_name=user.get("organization_name"),
+        phone=user.get("phone"),
+        contractor_id=user.get("contractor_id"),
     )
 
 
 # ============================================================
-# Role Requirement Wrapper (existing)
+# Role Requirement Wrapper (simple role checking)
 # ============================================================
 def requires_role(allowed_roles: list[str]):
     def checker(current_user: CurrentUser = Depends(get_current_user)):
@@ -127,17 +144,15 @@ def requires_role(allowed_roles: list[str]):
 
 
 # ============================================================
-# ⭐ NEW — Permission System (RBAC)
+# Permission System (fine-grained RBAC)
 # ============================================================
-
 def has_permission(role: str, permission: str) -> bool:
     """
     Check if a role has a permission.
-    Supports wildcard "*" = full access.
+    Supports "*" (full access).
     """
     allowed = ROLE_PERMISSIONS.get(role, [])
 
-    # super_admin or wildcard support
     if "*" in allowed:
         return True
 
@@ -154,7 +169,7 @@ def requires_permission(permission: str):
         if not has_permission(current_user.role, permission):
             raise HTTPException(
                 status_code=403,
-                detail=f"Missing permission: {permission}"
+                detail=f"Missing permission: {permission}",
             )
         return current_user
 
