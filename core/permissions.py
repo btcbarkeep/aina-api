@@ -1,6 +1,14 @@
+# core/permissions.py
+
 ROLE_PERMISSIONS = {
+    # ----------------------------------------------------
+    # Full System Access
+    # ----------------------------------------------------
     "super_admin": ["*"],
 
+    # ----------------------------------------------------
+    # System Admin
+    # ----------------------------------------------------
     "admin": [
         "users:read", "users:write",
         "buildings:read", "buildings:write",
@@ -10,6 +18,9 @@ ROLE_PERMISSIONS = {
         "contractors:read", "contractors:write",
     ],
 
+    # ----------------------------------------------------
+    # Property Manager
+    # ----------------------------------------------------
     "property_manager": [
         "buildings:read",
         "events:read", "events:write",
@@ -18,6 +29,9 @@ ROLE_PERMISSIONS = {
         "access:read",
     ],
 
+    # ----------------------------------------------------
+    # HOA Manager
+    # ----------------------------------------------------
     "hoa": [
         "buildings:read",
         "events:read", "events:write",
@@ -25,6 +39,9 @@ ROLE_PERMISSIONS = {
         "contractors:read",
     ],
 
+    # ----------------------------------------------------
+    # HOA Staff
+    # ----------------------------------------------------
     "hoa_staff": [
         "buildings:read",
         "events:read", "events:write",
@@ -32,6 +49,9 @@ ROLE_PERMISSIONS = {
         "contractors:read",
     ],
 
+    # ----------------------------------------------------
+    # Contractors
+    # ----------------------------------------------------
     "contractor": [
         "events:read", "events:write",
         "documents:read", "documents:write",
@@ -39,12 +59,14 @@ ROLE_PERMISSIONS = {
     ],
 
     "contractor_staff": [
-        "events:read",
-        "events:write",
+        "events:read", "events:write",
         "documents:read",
         "contractors:read",
     ],
 
+    # ----------------------------------------------------
+    # Auditors
+    # ----------------------------------------------------
     "auditor": [
         "events:read",
         "documents:read",
@@ -52,6 +74,9 @@ ROLE_PERMISSIONS = {
         "contractors:read",
     ],
 
+    # ----------------------------------------------------
+    # Owners / Tenants
+    # ----------------------------------------------------
     "owner": [
         "events:read",
         "documents:read",
@@ -64,11 +89,17 @@ ROLE_PERMISSIONS = {
         "buildings:read",
     ],
 
+    # ----------------------------------------------------
+    # AinaReports Purchasers
+    # ----------------------------------------------------
     "buyer": [
         "buildings:read",
         "events:read",
         "documents:read",
     ],
 
+    # ----------------------------------------------------
+    # No Access
+    # ----------------------------------------------------
     "guest": [],
 }
