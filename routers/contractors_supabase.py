@@ -34,6 +34,29 @@ def sanitize(data: dict) -> dict:
 
 
 # -----------------------------------------------------
+# Permission — Contractor Access Rules
+# -----------------------------------------------------
+def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
+    """
+    Contractors can only see THEIR own events & data.
+    Admin + Manager can see all.
+    Other roles cannot see contractor data.
+    """
+    if current_user.role in ["admin", "manager"]:
+        return
+
+    if current_user.role == "contractor":
+        if current_user.contractor_id != contractor_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have access to this contractor's data."
+            )
+        return
+
+    raise HTTPException(status_code=403, detail="Access denied.")
+
+
+# -----------------------------------------------------
 # Pydantic Models
 # -----------------------------------------------------
 class ContractorBase(BaseModel):
@@ -102,8 +125,9 @@ def get_contractor(
     contractor_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    client = get_supabase_client()
+    ensure_contractor_access(current_user, contractor_id)
 
+    client = get_supabase_client()
     result = (
         client.table("contractors")
         .select("*")
@@ -194,7 +218,6 @@ def delete_contractor(contractor_id: str):
             detail="Cannot delete contractor: events reference this contractor."
         )
 
-    # Perform delete
     result = (
         client.table("contractors")
         .delete()
@@ -207,3 +230,105 @@ def delete_contractor(contractor_id: str):
         raise HTTPException(status_code=404, detail="Contractor not found")
 
     return {"status": "deleted", "id": contractor_id}
+
+
+# -----------------------------------------------------
+# GET EVENTS FOR CONTRACTOR
+# -----------------------------------------------------
+@router.get(
+    "/{contractor_id}/events",
+    summary="List all events performed by this contractor",
+)
+def get_contractor_events(
+    contractor_id: str,
+    limit: int = 200,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    ensure_contractor_access(current_user, contractor_id)
+
+    client = get_supabase_client()
+    result = (
+        client.table("events")
+        .select("*")
+        .eq("contractor_id", contractor_id)
+        .order("occurred_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+
+    return result.data or []
+
+
+# -----------------------------------------------------
+# GET BUILDINGS WHERE CONTRACTOR HAS WORKED
+# -----------------------------------------------------
+@router.get(
+    "/{contractor_id}/buildings",
+    summary="List buildings this contractor has worked in",
+)
+def get_contractor_buildings(
+    contractor_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    ensure_contractor_access(current_user, contractor_id)
+
+    client = get_supabase_client()
+    result = (
+        client.table("events")
+        .select("building_id")
+        .eq("contractor_id", contractor_id)
+        .execute()
+    )
+
+    if not result.data:
+        return []
+
+    unique_ids = sorted({row["building_id"] for row in result.data})
+
+    buildings = (
+        client.table("buildings")
+        .select("*")
+        .in_("id", unique_ids)
+        .execute()
+    )
+
+    return buildings.data or []
+
+
+# -----------------------------------------------------
+# CONTRACTOR STATS — event breakdown
+# -----------------------------------------------------
+@router.get(
+    "/{contractor_id}/stats",
+    summary="Get contractor event statistics & breakdown",
+)
+def get_contractor_stats(
+    contractor_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    ensure_contractor_access(current_user, contractor_id)
+
+    client = get_supabase_client()
+    result = (
+        client.table("events")
+        .select("severity,status,event_type")
+        .eq("contractor_id", contractor_id)
+        .execute()
+    )
+
+    rows = result.data or []
+
+    def count_by(field: str):
+        counter = {}
+        for r in rows:
+            value = r.get(field)
+            if value:
+                counter[value] = counter.get(value, 0) + 1
+        return counter
+
+    return {
+        "total_events": len(rows),
+        "by_severity": count_by("severity"),
+        "by_status": count_by("status"),
+        "by_type": count_by("event_type"),
+    }
