@@ -113,16 +113,16 @@ def create_user_no_password(
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Check if user already exists
-    existing = (
+    # 1️⃣ Check if user exists
+    resp = (
         client.table("users")
         .select("id")
         .eq("email", email)
-        .maybe_single()
+        .single()        # ← FIXED: never returns None
         .execute()
     )
 
-    if existing.data:
+    if resp.data:
         raise HTTPException(400, "User already exists.")
 
     now = datetime.utcnow().isoformat()
@@ -138,17 +138,20 @@ def create_user_no_password(
         "updated_at": now,
     }
 
-    # 🚀 2️⃣ Insert — MUST USE returning="representation"
+    # 2️⃣ Insert
     result = (
         client.table("users")
-        .insert(payload, returning="representation")   # ← REQUIRED
+        .insert(payload)
+        .select("*")
+        .single()
         .execute()
     )
 
     if not result.data:
         raise HTTPException(500, "Supabase insert returned no data.")
 
-    return result.data[0]
+    return result.data
+
 
 
 # ============================================================
