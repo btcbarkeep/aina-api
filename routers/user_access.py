@@ -113,7 +113,7 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
         result = (
             client.table("user_building_access")
             .select("building_id")
-            .eq("user_id", current_user.username)  # FIXED
+            .eq("user_id", current_user.user_id)   # ✅ FIXED
             .execute()
         )
         return result.data or []
