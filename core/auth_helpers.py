@@ -113,22 +113,19 @@ def create_user_no_password(
 ):
     client = get_supabase_client()
 
-    # 1️⃣ Check if user already exists
-    try:
-        existing = (
-            client.table("users")
-            .select("*")
-            .eq("email", email)
-            .maybe_single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase lookup failed: {e}")
+    # 1️⃣ Check if user exists
+    existing = (
+        client.table("users")
+        .select("*")
+        .eq("email", email)
+        .limit(1)
+        .execute()
+    )
 
     if existing.data:
         raise HTTPException(400, "A user with this email already exists.")
 
-    # 2️⃣ Insert new user (⚠️ NO .select() on insert)
+    # 2️⃣ Prepare payload
     user_id = str(uuid4())
     now = datetime.utcnow().isoformat()
 
@@ -145,13 +142,13 @@ def create_user_no_password(
         "updated_at": now,
     }
 
-    try:
-        insert_result = client.table("users").insert(payload).execute()
-    except Exception as e:
-        raise HTTPException(500, f"Supabase insert failed: {e}")
+    # 3️⃣ Insert (sync client ONLY supports this)
+    result = client.table("users").insert(payload).execute()
 
-    # 3️⃣ Return what we inserted
-    return payload
+    if not result or not result.data:
+        raise HTTPException(500, "Supabase returned no data on insert.")
+
+    return result.data[0]
 
 
 
