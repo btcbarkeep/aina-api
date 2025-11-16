@@ -1,243 +1,197 @@
-# routers/admin.py
+# routers/auth.py
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
-from datetime import datetime  # ✅ added for updated_at timestamps
+from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel
+from datetime import datetime, timedelta
+from jose import jwt, JWTError
+from passlib.context import CryptContext
 
-from dependencies.auth import (
-    get_current_user,
-    requires_role,
-    CurrentUser,
-)
-
+from core.config import settings
 from core.supabase_client import get_supabase_client
 from core.auth_helpers import (
-    create_user_no_password,
-    generate_password_setup_token,
+    hash_password,
+    verify_password,
 )
-from core.email_utils import send_password_setup_email
+
+from dependencies.auth import get_current_user, CurrentUser
 
 
 # -----------------------------------------------------
-# Router — ADMIN ONLY
+# Router
 # -----------------------------------------------------
 router = APIRouter(
-    prefix="/admin",
-    tags=["Admin"],
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    prefix="/auth",
+    tags=["Auth"],
 )
 
-
-# -----------------------------------------------------
-# Payload Models
-# -----------------------------------------------------
-class AdminCreateUser(BaseModel):
-    full_name: str | None = None
-    email: EmailStr
-    organization_name: str | None = None
-    phone: str | None = None
-    role: str = "hoa"  # default non-admin user
-
-
-class AdminUpdateUser(BaseModel):
-    full_name: str | None = None
-    organization_name: str | None = None
-    phone: str | None = None
-    role: str | None = None
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # -----------------------------------------------------
-# 1️⃣ CREATE USER
+# Pydantic Models
 # -----------------------------------------------------
-@router.post("/create-account", summary="Admin: Create a user account")
-def admin_create_account(
-    payload: AdminCreateUser,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    """
-    Creates a user in Supabase (no password yet),
-    and sends password-setup email.
-    """
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
-    # Step 1 — Create Supabase user
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class SetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
+# -----------------------------------------------------
+# JWT Utility
+# -----------------------------------------------------
+def _create_access_token(email: str, role: str, user_id: str):
+    """Create a signed JWT access token."""
+    expires = datetime.utcnow() + timedelta(
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    payload = {
+        "sub": email,
+        "role": role,
+        "user_id": user_id,
+        "exp": expires,
+    }
+
+    return jwt.encode(
+        payload,
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+# -----------------------------------------------------
+# LOGIN (Supabase)
+# -----------------------------------------------------
+@router.post("/login", response_model=TokenResponse, summary="Authenticate user")
+def login(payload: LoginRequest):
+    client = get_supabase_client()
+
+    # Fetch user
     try:
-        supa_user = create_user_no_password(
-            full_name=payload.full_name,
-            email=payload.email,
-            organization_name=payload.organization_name,
-            phone=payload.phone,
-            role=payload.role,
+        result = (
+            client.table("users")
+            .select("*")
+            .eq("email", payload.email)
+            .single()
+            .execute()
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Supabase user creation failed: {e}",
-        )
+        raise HTTPException(500, f"Supabase query failed: {e}")
 
-    # Step 2 — Generate password setup token
-    token = generate_password_setup_token(payload.email)
+    user = result.data
+    if not user:
+        raise HTTPException(401, "Invalid email or password")
 
-    # Step 3 — Email user
-    try:
-        send_password_setup_email(payload.email, token)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to send password email: {e}")
+    # Validate password
+    hashed_pw = user.get("hashed_password")
+    if not hashed_pw or not verify_password(payload.password, hashed_pw):
+        raise HTTPException(401, "Invalid email or password")
+
+    # Generate token
+    token = _create_access_token(
+        email=user["email"],
+        role=user.get("role", "hoa"),
+        user_id=user["id"],
+    )
+
+    return TokenResponse(access_token=token)
+
+
+# -----------------------------------------------------
+# DEV ADMIN LOGIN (TEMPORARY)
+# -----------------------------------------------------
+@router.post("/dev-login", summary="Temporary admin login (development only)")
+def dev_login():
+    if settings.ENV == "production":
+        raise HTTPException(403, "dev-login disabled in production")
+
+    token = jwt.encode(
+        {
+            "sub": "bootstrap-admin",
+            "role": "admin",
+            "user_id": "bootstrap",
+            "exp": datetime.utcnow() + timedelta(hours=12),
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
 
     return {
-        "status": "success",
-        "user_id": supa_user.get("id"),
-        "email": payload.email,
-        "debug_token": token,
+        "access_token": token,
+        "token_type": "bearer",
     }
 
 
 # -----------------------------------------------------
-# 2️⃣ LIST USERS
+# WHO AM I? (validate token)
 # -----------------------------------------------------
-@router.get("/users", summary="Admin: List all users")
-def list_users():
+@router.get("/me", response_model=CurrentUser, summary="Current authenticated user")
+def read_me(current_user: CurrentUser = Depends(get_current_user)):
+    return current_user
+
+
+# -----------------------------------------------------
+# COMPLETE ACCOUNT SETUP (set password)
+# -----------------------------------------------------
+@router.post("/set-password", summary="Finish account setup by creating password")
+def set_password(payload: SetPasswordRequest):
     client = get_supabase_client()
 
+    # Decode the token
     try:
-        result = (
-            client.table("users")
-            .select("*")
-            .order("created_at", desc=True)
-            .execute()
+        decoded = jwt.decode(
+            payload.token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
         )
-        return result.data or []
-    except Exception as e:
-        raise HTTPException(500, f"Supabase fetch error: {e}")
+        email = decoded.get("sub")
+        if not email:
+            raise Exception("No email in token")
+    except JWTError:
+        raise HTTPException(400, "Invalid or expired token")
 
-
-# -----------------------------------------------------
-# 3️⃣ GET ONE USER
-# -----------------------------------------------------
-@router.get("/users/{user_id}", summary="Admin: Get one user")
-def get_user(user_id: str):
-    client = get_supabase_client()
-
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+    # Fetch user
+    result = (
+        client.table("users")
+        .select("*")
+        .eq("email", email)
+        .single()
+        .execute()
+    )
 
     if not result.data:
         raise HTTPException(404, "User not found")
 
-    return result.data
+    user = result.data
 
+    # Validate token matches DB
+    if not user.get("reset_token") or user["reset_token"] != payload.token:
+        raise HTTPException(400, "Invalid password reset token")
 
-# -----------------------------------------------------
-# 4️⃣ UPDATE USER
-# -----------------------------------------------------
-@router.patch("/users/{user_id}", summary="Admin: Update user")
-def update_user(
-    user_id: str,
-    payload: AdminUpdateUser,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    update_data = {k: v for k, v in payload.dict().items() if v is not None}
+    # Check expiration
+    expires = user.get("reset_token_expires")
+    if expires and datetime.fromisoformat(expires) < datetime.utcnow():
+        raise HTTPException(400, "Reset token expired")
 
-    if not update_data:
-        raise HTTPException(400, "No valid fields to update")
+    # Update password
+    hashed_pw = hash_password(payload.password)
 
-    # Use explicit UTC timestamp instead of "now()"
-    update_data["updated_at"] = datetime.utcnow().isoformat()
+    client.table("users").update({
+        "hashed_password": hashed_pw,
+        "reset_token": None,
+        "reset_token_expires": None,
+    }).eq("email", email).execute()
 
-    client = get_supabase_client()
-
-    try:
-        result = (
-            client.table("users")
-            .update(update_data, returning="representation")  # ✅ sync-safe
-            .eq("id", user_id)
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase update error: {e}")
-
-    if not result.data:
-        raise HTTPException(404, "User not found")
-
-    return {"status": "updated", "user": result.data[0]}
-
-
-# -----------------------------------------------------
-# 5️⃣ DELETE USER
-# -----------------------------------------------------
-@router.delete("/users/{user_id}", summary="Admin: Delete user")
-def delete_user(
-    user_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    client = get_supabase_client()
-
-    # Prevent deleting yourself
-    if user_id == current_user.user_id:
-        raise HTTPException(400, "Admins cannot delete their own account.")
-
-    # Verify user exists
-    try:
-        existing = (
-            client.table("users")
-            .select("*")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase fetch failed: {e}")
-
-    if not existing.data:
-        raise HTTPException(404, "User not found")
-
-    email = existing.data["email"]
-
-    # Delete
-    try:
-        client.table("users").delete().eq("id", user_id).execute()
-    except Exception as e:
-        raise HTTPException(500, f"Supabase delete failed: {e}")
-
-    return {"status": "deleted", "email": email, "user_id": user_id}
-
-
-# -----------------------------------------------------
-# 6️⃣ RESEND PASSWORD SETUP EMAIL
-# -----------------------------------------------------
-@router.post("/users/{user_id}/resend-password", summary="Admin: Resend password email")
-def resend_password_setup(user_id: str):
-
-    client = get_supabase_client()
-
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
-
-    if not result.data:
-        raise HTTPException(404, "User not found")
-
-    email = result.data["email"]
-
-    token = generate_password_setup_token(email)
-
-    try:
-        send_password_setup_email(email, token)
-    except Exception as e:
-        raise HTTPException(500, f"Failed sending email: {e}")
-
-    return {"status": "email_sent", "email": email, "debug_token": token}
+    return {
+        "status": "success",
+        "message": "Password created successfully!",
+    }
