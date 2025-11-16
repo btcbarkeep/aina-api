@@ -17,7 +17,7 @@ from dependencies.auth import get_current_user, CurrentUser
 
 
 # -----------------------------------------------------
-# Router
+# Router Setup
 # -----------------------------------------------------
 router = APIRouter(
     prefix="/auth",
@@ -46,11 +46,10 @@ class SetPasswordRequest(BaseModel):
 
 
 # -----------------------------------------------------
-# JWT Utility
+# Helper: Create JWT Access Token
 # -----------------------------------------------------
 def _create_access_token(email: str, role: str, user_id: str):
-    """Create a signed JWT access token."""
-    expires = datetime.utcnow() + timedelta(
+    expiration = datetime.utcnow() + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
 
@@ -58,7 +57,7 @@ def _create_access_token(email: str, role: str, user_id: str):
         "sub": email,
         "role": role,
         "user_id": user_id,
-        "exp": expires,
+        "exp": expiration,
     }
 
     return jwt.encode(
@@ -91,15 +90,17 @@ def login(payload: LoginRequest):
     if not user:
         raise HTTPException(401, "Invalid email or password")
 
-    # Validate stored password
     hashed_pw = user.get("hashed_password")
     if not hashed_pw:
-        raise HTTPException(401, "Password not set. Use set-password to complete setup.")
+        raise HTTPException(
+            401,
+            "Password not set — complete setup link first.",
+        )
 
     if not verify_password(payload.password, hashed_pw):
         raise HTTPException(401, "Invalid email or password")
 
-    # Create token
+    # Issue token with user's real role from DB
     token = _create_access_token(
         email=user["email"],
         role=user.get("role", "hoa"),
@@ -110,7 +111,7 @@ def login(payload: LoginRequest):
 
 
 # -----------------------------------------------------
-# DEV-ONLY ADMIN LOGIN
+# DEV-ONLY ADMIN LOGIN (safe for development only)
 # -----------------------------------------------------
 @router.post("/dev-login", summary="Temporary admin login (development only)")
 def dev_login():
@@ -119,7 +120,7 @@ def dev_login():
 
     token = jwt.encode(
         {
-            "sub": "bootstrap-admin",
+            "sub": "dev-admin@ainaprotocol.com",
             "role": "admin",
             "user_id": "bootstrap",
             "exp": datetime.utcnow() + timedelta(hours=12),
@@ -149,7 +150,7 @@ def read_me(current_user: CurrentUser = Depends(get_current_user)):
 def set_password(payload: SetPasswordRequest):
     client = get_supabase_client()
 
-    # Decode token
+    # Decode token safely
     try:
         decoded = jwt.decode(
             payload.token,
@@ -160,7 +161,7 @@ def set_password(payload: SetPasswordRequest):
         if not email:
             raise Exception("No email in token")
     except JWTError:
-        raise HTTPException(400, "Invalid or expired token")
+        raise HTTPException(400, "Invalid or expired setup token")
 
     # Fetch user
     result = (
@@ -176,14 +177,18 @@ def set_password(payload: SetPasswordRequest):
 
     user = result.data
 
-    # Ensure token matches DB
-    if not user.get("reset_token") or user["reset_token"] != payload.token:
-        raise HTTPException(400, "Invalid password reset token")
+    # Validate reset token & expiration
+    stored_token = user.get("reset_token")
+    if not stored_token or stored_token != payload.token:
+        raise HTTPException(400, "Invalid reset token")
 
-    # Check expiration
     expires = user.get("reset_token_expires")
-    if expires and datetime.fromisoformat(expires) < datetime.utcnow():
-        raise HTTPException(400, "Reset token expired")
+    if expires:
+        try:
+            if datetime.fromisoformat(expires) < datetime.utcnow():
+                raise HTTPException(400, "Reset token expired")
+        except Exception:
+            raise HTTPException(400, "Invalid expiration format")
 
     # Store hashed password
     hashed_pw = hash_password(payload.password)
