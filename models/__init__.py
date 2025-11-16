@@ -27,10 +27,12 @@ from .event_comment import (
     EventCommentUpdate,
 )
 
+# NEW: Supabase User Models (Pydantic only)
 from .user import (
-    User,
-    UserBuildingAccess,
-    PasswordResetToken,
+    UserBase,
+    UserCreate,
+    UserRead,
+    UserUpdate,
 )
 
 from .auth import LoginRequest, TokenResponse
@@ -64,10 +66,11 @@ __all__ = [
     "EventCommentRead",
     "EventCommentUpdate",
 
-    # user + permissions
-    "User",
-    "UserBuildingAccess",
-    "PasswordResetToken",
+    # Supabase user models
+    "UserBase",
+    "UserCreate",
+    "UserRead",
+    "UserUpdate",
 
     # auth
     "LoginRequest",
