@@ -5,12 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-for route in app.routes:
-    if route.path.startswith("/api/v1"):
-        methods = ",".join(route.methods or [])
-        print(f"➡️ {methods:12s} {route.path}")
-
-
 # Ensure local imports resolve correctly
 sys.path.append(os.path.dirname(__file__))
 
