@@ -35,7 +35,7 @@ class AdminCreateUser(BaseModel):
     email: EmailStr
     organization_name: str | None = None
     phone: str | None = None
-    role: str = "hoa"  # default non-admin user
+    role: str = "hoa"
 
 
 class AdminUpdateUser(BaseModel):
@@ -53,12 +53,6 @@ def admin_create_account(
     payload: AdminCreateUser,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """
-    Creates a user in Supabase (no password yet),
-    and sends password-setup email.
-    """
-
-    # Step 1 — Create Supabase user
     try:
         supa_user = create_user_no_password(
             full_name=payload.full_name,
@@ -68,15 +62,10 @@ def admin_create_account(
             role=payload.role,
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Supabase user creation failed: {e}",
-        )
+        raise HTTPException(500, f"Supabase user creation failed: {e}")
 
-    # Step 2 — Generate password setup token
     token = generate_password_setup_token(payload.email)
 
-    # Step 3 — Email user
     try:
         send_password_setup_email(payload.email, token)
     except Exception as e:
@@ -97,11 +86,14 @@ def admin_create_account(
 def list_users():
     client = get_supabase_client()
 
-    try:
-        result = client.table("users").select("*").order("created_at", desc=True).execute()
-        return result.data or []
-    except Exception as e:
-        raise HTTPException(500, f"Supabase fetch error: {e}")
+    result = (
+        client.table("users")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    return result.data or []
 
 
 # -----------------------------------------------------
@@ -111,16 +103,13 @@ def list_users():
 def get_user(user_id: str):
     client = get_supabase_client()
 
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+    result = (
+        client.table("users")
+        .select("*")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
 
     if not result.data:
         raise HTTPException(404, "User not found")
@@ -129,15 +118,15 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ UPDATE USER
+# 4️⃣ UPDATE USER (SYNC SAFE)
 # -----------------------------------------------------
 @router.patch("/users/{user_id}", summary="Admin: Update user")
 def update_user(
-    user_id: str, 
+    user_id: str,
     payload: AdminUpdateUser,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    update_data = {k: v for k, v in payload.dict().items() if v is not None}
+    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
 
     if not update_data:
         raise HTTPException(400, "No valid fields to update")
@@ -146,16 +135,12 @@ def update_user(
 
     client = get_supabase_client()
 
-    try:
-        result = (
-            client.table("users")
-            .update(update_data)
-            .eq("id", user_id)
-            .select("*")
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase update error: {e}")
+    result = (
+        client.table("users")
+        .update(update_data, returning="representation")   # ✅ FIXED
+        .eq("id", user_id)
+        .execute()
+    )
 
     if not result.data:
         raise HTTPException(404, "User not found")
@@ -164,7 +149,7 @@ def update_user(
 
 
 # -----------------------------------------------------
-# 5️⃣ DELETE USER
+# 5️⃣ DELETE USER (SYNC SAFE)
 # -----------------------------------------------------
 @router.delete("/users/{user_id}", summary="Admin: Delete user")
 def delete_user(
@@ -173,32 +158,31 @@ def delete_user(
 ):
     client = get_supabase_client()
 
-    # Prevent deleting yourself
     if user_id == current_user.user_id:
         raise HTTPException(400, "Admins cannot delete their own account.")
 
-    # Verify user exists
-    try:
-        existing = (
-            client.table("users")
-            .select("*")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase fetch failed: {e}")
+    existing = (
+        client.table("users")
+        .select("*")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
 
     if not existing.data:
         raise HTTPException(404, "User not found")
 
     email = existing.data["email"]
 
-    # Delete
-    try:
-        client.table("users").delete().eq("id", user_id).execute()
-    except Exception as e:
-        raise HTTPException(500, f"Supabase delete failed: {e}")
+    result = (
+        client.table("users")
+        .delete(returning="representation")   # ✅ FIXED
+        .eq("id", user_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(404, "User not found")
 
     return {"status": "deleted", "email": email, "user_id": user_id}
 
@@ -211,16 +195,13 @@ def resend_password_setup(user_id: str):
 
     client = get_supabase_client()
 
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+    result = (
+        client.table("users")
+        .select("*")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
 
     if not result.data:
         raise HTTPException(404, "User not found")
