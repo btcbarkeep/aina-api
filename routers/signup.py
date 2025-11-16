@@ -26,7 +26,7 @@ router = APIRouter(
 
 
 # -----------------------------------------------------
-# Helper — Fetch signup request by UUID
+# Helper: Get signup request by UUID
 # -----------------------------------------------------
 def get_signup_request_by_id(request_id: str):
     client = get_supabase_client()
@@ -36,11 +36,11 @@ def get_signup_request_by_id(request_id: str):
             client.table("signup_requests")
             .select("*")
             .eq("id", request_id)
-            .single()
+            .maybe_single()
             .execute()
         )
     except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+        raise HTTPException(500, f"Supabase query error: {e}")
 
     if not result.data:
         raise HTTPException(404, "Signup request not found")
@@ -49,15 +49,10 @@ def get_signup_request_by_id(request_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ PUBLIC — Submit signup request
+# 1️⃣ PUBLIC — Submit signup request (Supabase)
 # -----------------------------------------------------
 @router.post("/request", summary="Public: Submit signup request")
 def request_access(payload: SignupRequestCreate):
-    """
-    Stores signup requests in Supabase (UUID primary key).
-    Sends confirmation + admin alert emails.
-    """
-
     client = get_supabase_client()
 
     request_data = {
@@ -71,25 +66,24 @@ def request_access(payload: SignupRequestCreate):
         "created_at": datetime.utcnow().isoformat(),
     }
 
+    # ------------------------------
+    # Insert into Supabase
+    # ------------------------------
     try:
-        result = (
-            client.table("signup_requests")
-            .insert(request_data)
-            .select("*")
-            .execute()
-        )
+        result = client.table("signup_requests").insert(request_data).execute()
     except Exception as e:
         raise HTTPException(500, f"Supabase insert error: {e}")
 
     signup = result.data[0]
 
-    # -------------------------
-    # Send confirmation email
-    # -------------------------
-    send_email(
-        subject="Aina Protocol - Signup Request Received",
-        body=f"""
-Aloha {payload.full_name or ''},
+    # ------------------------------
+    # Send emails (safe failure)
+    # ------------------------------
+    try:
+        send_email(
+            subject="Aina Protocol - Signup Request Received",
+            body=f"""
+Aloha {payload.full_name},
 
 Your request to access Aina Protocol has been received.
 We will review it shortly.
@@ -97,20 +91,20 @@ We will review it shortly.
 Mahalo,
 Aina Protocol Team
 """,
-        to=payload.email,
-    )
+            to=payload.email,
+        )
+    except Exception as e:
+        print("Email send failed:", e)
 
-    # -------------------------
-    # Notify admin(s)
-    # -------------------------
-    send_email(
-        subject="New Signup Request - Aina Protocol",
-        body=f"""
+    try:
+        send_email(
+            subject="New Signup Request - Aina Protocol",
+            body=f"""
 New signup request received:
 
 Organization: {payload.organization_name or "(none)"}
 Role: {payload.requester_role or "(none)"}
-Name: {payload.full_name or "(none)"}
+Name: {payload.full_name}
 Email: {payload.email}
 Phone: {payload.phone or "(none)"}
 
@@ -119,7 +113,9 @@ Notes:
 
 Request ID: {signup["id"]}
 """,
-    )
+        )
+    except Exception as e:
+        print("Admin alert email failed:", e)
 
     return {"status": "success", "request_id": signup["id"]}
 
@@ -130,7 +126,7 @@ Request ID: {signup["id"]}
 @router.get(
     "/requests",
     summary="Admin: List all signup requests",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role("admin"))],
 )
 def list_requests():
     client = get_supabase_client()
@@ -142,18 +138,19 @@ def list_requests():
             .order("created_at", desc=True)
             .execute()
         )
-        return result.data or []
     except Exception as e:
         raise HTTPException(500, f"Supabase fetch error: {e}")
 
+    return result.data or []
+
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve signup request
+# 3️⃣ ADMIN — Approve request → create user → send setup email
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role("admin"))],
 )
 def approve_request(
     request_id: str,
@@ -166,9 +163,9 @@ def approve_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
-    # -------------------------
-    # Create Supabase user (no password yet)
-    # -------------------------
+    # ------------------------------
+    # Create Supabase user
+    # ------------------------------
     try:
         user = create_user_no_password(
             full_name=req.get("full_name"),
@@ -178,27 +175,30 @@ def approve_request(
             role=req.get("requester_role") or "hoa",
         )
     except Exception as e:
-        raise HTTPException(500, f"Supabase user creation failed: {e}")
+        raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # -------------------------
-    # Mark request as approved
-    # -------------------------
-    client.table("signup_requests").update(
-        {
-            "status": "approved",
-            "approved_at": datetime.utcnow().isoformat(),
-        }
-    ).eq("id", request_id).execute()
+    # ------------------------------
+    # Update request status
+    # ------------------------------
+    try:
+        client.table("signup_requests").update(
+            {
+                "status": "approved",
+                "approved_at": datetime.utcnow().isoformat(),
+            }
+        ).eq("id", request_id).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Supabase update error: {e}")
 
-    # -------------------------
-    # Password setup token + email
-    # -------------------------
+    # ------------------------------
+    # Password setup email
+    # ------------------------------
     token = generate_password_setup_token(req["email"])
 
     send_email(
         subject="Aina Protocol - Create Your Password",
         body=f"""
-Aloha {req.get('full_name') or ''},
+Aloha {req.get('full_name')},
 
 Your Aina Protocol account has been approved!
 
@@ -214,7 +214,6 @@ Aina Protocol Team
     return {
         "status": "approved",
         "email": req["email"],
-        "debug_token": token,
     }
 
 
@@ -224,7 +223,7 @@ Aina Protocol Team
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
-    dependencies=[Depends(requires_role(["admin"]))],
+    dependencies=[Depends(requires_role("admin"))],
 )
 def reject_request(
     request_id: str,
@@ -237,19 +236,20 @@ def reject_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
-    # Update status
-    client.table("signup_requests").update(
-        {
-            "status": "rejected",
-            "rejected_at": datetime.utcnow().isoformat(),
-        }
-    ).eq("id", request_id).execute()
+    try:
+        client.table("signup_requests").update(
+            {
+                "status": "rejected",
+                "rejected_at": datetime.utcnow().isoformat(),
+            }
+        ).eq("id", request_id).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Notify requester
     send_email(
         subject="Aina Protocol - Signup Request Update",
         body=f"""
-Aloha {req.get('full_name') or ''},
+Aloha {req.get('full_name')},
 
 Unfortunately, your request to join Aina Protocol
 was not approved at this time.
