@@ -14,6 +14,19 @@ router = APIRouter(
 
 
 # ============================================================
+# Helper — sanitize blanks → None
+# ============================================================
+def sanitize(data: dict) -> dict:
+    clean = {}
+    for k, v in data.items():
+        if isinstance(v, str) and v.strip() == "":
+            clean[k] = None
+        else:
+            clean[k] = v
+    return clean
+
+
+# ============================================================
 # Pydantic Models
 # ============================================================
 class UserBuildingAccessCreate(BaseModel):
@@ -44,12 +57,13 @@ def list_user_access():
             .execute()
         )
         return result.data or []
+
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
-# Helper — Validate User + Building exist
+# Helper — Validate User & Building exist
 # ============================================================
 def validate_user_and_building(client, user_id: str, building_id: str):
     # Validate user
@@ -86,7 +100,7 @@ def validate_user_and_building(client, user_id: str, building_id: str):
 def add_user_access(payload: UserBuildingAccessCreate):
     client = get_supabase_client()
 
-    # Validate references
+    # Validate foreign keys
     validate_user_and_building(client, payload.user_id, payload.building_id)
 
     # Prevent duplicates
@@ -102,15 +116,16 @@ def add_user_access(payload: UserBuildingAccessCreate):
         raise HTTPException(400, "User already has access to this building")
 
     try:
+        clean_payload = sanitize(payload.model_dump())
+
         result = (
             client.table("user_building_access")
-            .insert({
-                "user_id": payload.user_id,
-                "building_id": payload.building_id,
-            })
-            .select("*")  # Required to return created row
+            .insert(clean_payload, returning="representation")  # <-- Sync client safe
             .execute()
         )
+
+        if not result.data:
+            raise HTTPException(500, "Insert failed — no data returned")
 
         return result.data[0]
 
@@ -132,32 +147,32 @@ def delete_user_access(user_id: str, building_id: str):
     try:
         result = (
             client.table("user_building_access")
-            .delete()
+            .delete(returning="representation")   # <-- Sync client safe
             .eq("user_id", user_id)
             .eq("building_id", building_id)
-            .select("*")
             .execute()
         )
 
         if not result.data:
             raise HTTPException(404, "Access record not found")
 
-        return {"status": "deleted", "user_id": user_id, "building_id": building_id}
+        return {
+            "status": "deleted",
+            "user_id": user_id,
+            "building_id": building_id
+        }
 
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
-# User — View their building access
+# User — View their own building access
 # ============================================================
 @router.get("/me", summary="Get building access for the authenticated user")
 def my_access(current_user: CurrentUser = Depends(get_current_user)):
-    """
-    Returns the building IDs the authenticated user has access to.
-    """
 
-    # Bootstrap override
+    # Allow bootstrap admin universal access
     if current_user.user_id == "bootstrap":
         return [{
             "building_id": "ALL",
