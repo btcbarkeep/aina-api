@@ -11,7 +11,7 @@ bearer_scheme = HTTPBearer()
 
 
 # ============================================================
-# Current User object returned to backend + frontend
+# Current User returned to backend + frontend
 # ============================================================
 class CurrentUser(BaseModel):
     id: str
@@ -22,7 +22,7 @@ class CurrentUser(BaseModel):
 
 
 # ============================================================
-# Decode + lookup user
+# Decode token + resolve user
 # ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
@@ -70,61 +70,18 @@ def get_current_user(
     if payload.get("bootstrap_admin") is True:
         return CurrentUser(
             id="bootstrap",
-            email=email,
+            email=email or "bootstrap@ainaprotocol.com",
             role="admin",
             full_name="Bootstrap Admin",
             organization_name="System",
         )
 
     # -------------------------------------------------
-    # Lookup user in Supabase by email
+    # Standard authentication path
     # -------------------------------------------------
     if not email:
         raise unauthorized
 
-    client = get_supabase_client()
-
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("email", email)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
-
-    user = result.data
-    if not user:
-        raise unauthorized
-
-    role = user.get("role") or role_from_token or "hoa"
-
-    return CurrentUser(
-        id=user["id"],
-        email=user["email"],
-        role=role,
-        full_name=user.get("full_name"),
-        organization_name=user.get("organization_name"),
-    )
-
-
-    # -------------------------------------------------
-    # CRON / BOOTSTRAP ADMIN OVERRIDE
-    # -------------------------------------------------
-    if payload.get("bootstrap_admin") is True:
-        return CurrentUser(
-            id="bootstrap",
-            email=email,
-            role="admin",
-            full_name="Bootstrap Admin",
-            organization_name="System",
-        )
-
-    # -------------------------------------------------
-    # Lookup user in Supabase by email
-    # -------------------------------------------------
     client = get_supabase_client()
 
     try:
