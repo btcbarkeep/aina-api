@@ -1,5 +1,3 @@
-# dependencies/auth.py
-
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -13,10 +11,10 @@ bearer_scheme = HTTPBearer()
 
 
 # ============================================================
-# Current User object returned to frontend & other routes
+# Current User object returned to backend + frontend
 # ============================================================
 class CurrentUser(BaseModel):
-    user_id: str
+    id: str                      # Supabase UUID
     email: str
     role: str
     full_name: Optional[str] = None
@@ -24,13 +22,14 @@ class CurrentUser(BaseModel):
 
 
 # ============================================================
-# Decode JWT + Lookup user in Supabase
+# Decode + lookup user using email (sub)
 # ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ) -> CurrentUser:
 
     token = credentials.credentials
+
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired authentication token",
@@ -38,31 +37,30 @@ def get_current_user(
     )
 
     # -------------------------------------------------
-    # Decode token with expiration validation
+    # Decode JWT
     # -------------------------------------------------
     try:
         payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
-            options={"verify_exp": True},  # 🔥 REQUIRED
+            options={"verify_exp": True},
         )
     except JWTError:
         raise unauthorized
 
     email = payload.get("sub")
-    user_id = payload.get("user_id")
     role_from_token = payload.get("role")
 
-    if not email or not user_id:
+    if not email:
         raise unauthorized
 
     # -------------------------------------------------
-    # Bootstrap Admin Override
+    # BOOTSTRAP ADMIN OVERRIDE
     # -------------------------------------------------
-    if user_id == "bootstrap" and role_from_token == "admin":
+    if payload.get("bootstrap_admin") is True:
         return CurrentUser(
-            user_id="bootstrap",
+            id="bootstrap",
             email=email,
             role="admin",
             full_name="Bootstrap Admin",
@@ -70,7 +68,7 @@ def get_current_user(
         )
 
     # -------------------------------------------------
-    # Lookup user in Supabase
+    # Lookup user in Supabase by email
     # -------------------------------------------------
     client = get_supabase_client()
 
@@ -78,29 +76,22 @@ def get_current_user(
         result = (
             client.table("users")
             .select("*")
-            .eq("id", user_id)
+            .eq("email", email)
             .single()
             .execute()
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Supabase error during user lookup: {str(e)}",
-        )
-
-    if not result.data:
-        raise unauthorized
+        raise HTTPException(500, f"Supabase error: {e}")
 
     user = result.data
+    if not user:
+        raise unauthorized
 
-    # Ensure role is never null
-    role = user.get("role") or "hoa"
+    # Role fallback to Supabase row
+    role = user.get("role") or role_from_token or "hoa"
 
-    # -------------------------------------------------
-    # Return strongly-typed CurrentUser object
-    # -------------------------------------------------
     return CurrentUser(
-        user_id=user["id"],
+        id=user["id"],
         email=user["email"],
         role=role,
         full_name=user.get("full_name"),
@@ -112,30 +103,11 @@ def get_current_user(
 # Role Requirement Wrapper
 # ============================================================
 def requires_role(allowed_roles: list[str]):
-    """
-    Dependency factory ensuring the current user has one of the allowed roles.
-    """
     def checker(current_user: CurrentUser = Depends(get_current_user)):
         if current_user.role not in allowed_roles:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires one of the roles: {allowed_roles}",
+                status_code=403,
+                detail=f"Requires one of: {allowed_roles}",
             )
         return current_user
-
     return checker
-
-
-# ============================================================
-# Admin Requirement Wrapper (shortcut)
-# ============================================================
-def require_admin(current_user: CurrentUser = Depends(get_current_user)):
-    """
-    Shortcut dependency used in admin routes.
-    """
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
-        )
-    return current_user
