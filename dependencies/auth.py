@@ -36,7 +36,9 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    # -------------------------------------------------
     # Decode JWT
+    # -------------------------------------------------
     try:
         payload = jwt.decode(
             token,
@@ -50,8 +52,63 @@ def get_current_user(
     email = payload.get("sub")
     role_from_token = payload.get("role")
 
+    # -------------------------------------------------
+    # ⭐ CRON TOKEN OVERRIDE — bypass Supabase
+    # -------------------------------------------------
+    if payload.get("cron") is True:
+        return CurrentUser(
+            id="cron",
+            email=email or "cron@ainaprotocol.com",
+            role="admin",
+            full_name="Cron Job",
+            organization_name="System",
+        )
+
+    # -------------------------------------------------
+    # BOOTSTRAP ADMIN OVERRIDE
+    # -------------------------------------------------
+    if payload.get("bootstrap_admin") is True:
+        return CurrentUser(
+            id="bootstrap",
+            email=email,
+            role="admin",
+            full_name="Bootstrap Admin",
+            organization_name="System",
+        )
+
+    # -------------------------------------------------
+    # Lookup user in Supabase by email
+    # -------------------------------------------------
     if not email:
         raise unauthorized
+
+    client = get_supabase_client()
+
+    try:
+        result = (
+            client.table("users")
+            .select("*")
+            .eq("email", email)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase error: {e}")
+
+    user = result.data
+    if not user:
+        raise unauthorized
+
+    role = user.get("role") or role_from_token or "hoa"
+
+    return CurrentUser(
+        id=user["id"],
+        email=user["email"],
+        role=role,
+        full_name=user.get("full_name"),
+        organization_name=user.get("organization_name"),
+    )
+
 
     # -------------------------------------------------
     # CRON / BOOTSTRAP ADMIN OVERRIDE
