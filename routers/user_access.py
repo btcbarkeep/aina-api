@@ -45,8 +45,8 @@ def list_user_access():
         )
         return result.data or []
     except Exception as e:
-        raise HTTPException(500, f"Supabase query failed: {e}")
-        
+        raise HTTPException(500, f"Supabase error: {e}")
+
 
 # ============================================================
 # Helper — Validate User + Building exist
@@ -60,7 +60,6 @@ def validate_user_and_building(client, user_id: str, building_id: str):
         .single()
         .execute()
     )
-
     if not user.data:
         raise HTTPException(404, f"User {user_id} not found")
 
@@ -72,13 +71,12 @@ def validate_user_and_building(client, user_id: str, building_id: str):
         .single()
         .execute()
     )
-
     if not building.data:
         raise HTTPException(404, f"Building {building_id} not found")
 
 
 # ============================================================
-# Admin — Grant user access to a building
+# Admin — Grant user access
 # ============================================================
 @router.post(
     "/",
@@ -110,18 +108,18 @@ def add_user_access(payload: UserBuildingAccessCreate):
                 "user_id": payload.user_id,
                 "building_id": payload.building_id,
             })
-            .select("*")  # REQUIRED
+            .select("*")  # Required to return created row
             .execute()
         )
 
         return result.data[0]
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase insert failed: {e}")
+        raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
-# Admin — Remove user access for a building
+# Admin — Remove access
 # ============================================================
 @router.delete(
     "/{user_id}/{building_id}",
@@ -144,14 +142,10 @@ def delete_user_access(user_id: str, building_id: str):
         if not result.data:
             raise HTTPException(404, "Access record not found")
 
-        return {
-            "status": "deleted",
-            "user_id": user_id,
-            "building_id": building_id
-        }
+        return {"status": "deleted", "user_id": user_id, "building_id": building_id}
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase delete error: {e}")
+        raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
@@ -180,8 +174,7 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
             .execute()
         )
 
-        # Format: [{ building_id: uuid }, ...]
         return result.data or []
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase fetch failed: {e}")
+        raise HTTPException(500, f"Supabase error: {e}")
