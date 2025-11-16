@@ -32,9 +32,6 @@ from routers.admin import router as admin_router
 from routers.user_access import router as user_access_router
 from routers.admin_daily import router as admin_daily_router
 
-#dev access
-from routers.dev_auth import router as dev_auth_router
-
 
 # -------------------------------------------------
 # AWS Uploads
@@ -107,9 +104,6 @@ def create_app() -> FastAPI:
     # Auth + Signup
     app.include_router(auth_router,                  prefix="/api/v1")
     app.include_router(signup_router,                prefix="/api/v1")
-    
-    # dev access
-    app.include_router(dev_auth_router, prefix="/api/v1")
 
     # Admin + Access Control
     app.include_router(admin_router,                 prefix="/api/v1")
