@@ -20,15 +20,15 @@ router = APIRouter(
 )
 
 """
-EVENTS ROUTER (SUPABASE-ONLY)
+EVENTS ROUTER (SUPABASE-ONLY, SYNC CLIENT SAFE)
 
-New logic added:
-  ✓ created_by is always set from current_user
-  ✓ contractor_id rules:
-        - contractors: auto-force their contractor_id
-        - admin/manager: can set contractor manually
-        - others: contractor_id = None
-  ✓ severity + status supported
+Fixes:
+  ✓ No more .select("*") after insert/delete/update
+  ✓ All inserts use returning="representation"
+  ✓ All deletes use returning="representation"
+  ✓ Comment insert updated
+  ✓ Fully sanitized payloads
+  ✓ Admin/Manager/Contractor logic intact
 """
 
 
@@ -116,7 +116,6 @@ def list_events_supabase(
 
 # -----------------------------------------------------
 # CREATE EVENT — Admin/Manager or building-access user
-# Contractor logic + created_by logic included
 # -----------------------------------------------------
 @router.post(
     "/supabase",
@@ -137,14 +136,11 @@ def create_event_supabase(
     try:
         event_data = sanitize(payload.model_dump())
 
-        # Always track who created the event
+        # Track creator
         event_data["created_by"] = current_user.user_id
 
-        # Contractor permissions logic
-        user_role = current_user.role
-
-        if user_role == "contractor":
-            # Contractor MUST be assigned a contractor_id
+        # Contractor rules
+        if current_user.role == "contractor":
             if not current_user.contractor_id:
                 raise HTTPException(
                     status_code=400,
@@ -152,19 +148,14 @@ def create_event_supabase(
                 )
             event_data["contractor_id"] = current_user.contractor_id
 
-        elif user_role in ["admin", "manager"]:
-            # They MAY set contractor_id from the payload (sanitized above)
-            pass
-
-        else:
+        elif current_user.role not in ["admin", "manager"]:
             # Owners, tenants, buyers, etc.
             event_data["contractor_id"] = None
 
-        # Insert into Supabase
+        # Insert safely — NO .select("*")
         result = (
             client.table("events")
-            .insert(event_data)
-            .select("*")
+            .insert(event_data, returning="representation")
             .execute()
         )
 
@@ -179,7 +170,6 @@ def create_event_supabase(
 
 # -----------------------------------------------------
 # UPDATE EVENT — Admin OR Manager
-# Contractor logic also applied here
 # -----------------------------------------------------
 @router.put(
     "/supabase/{event_id}",
@@ -194,7 +184,7 @@ def update_event_supabase(
 ):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    # Contractors CANNOT override contractor identity
+    # Contractors cannot override identity
     if current_user.role == "contractor":
         update_data["contractor_id"] = current_user.contractor_id
 
@@ -217,7 +207,7 @@ def update_event_supabase(
 def delete_event_supabase(event_id: str):
     client = get_supabase_client()
 
-    # Prevent deleting events that have documents attached
+    # Prevent deleting events with documents attached
     docs = (
         client.table("documents")
         .select("id")
@@ -233,9 +223,8 @@ def delete_event_supabase(event_id: str):
 
     result = (
         client.table("events")
-        .delete()
+        .delete(returning="representation")
         .eq("id", event_id)
-        .select("*")
         .execute()
     )
 
@@ -263,7 +252,7 @@ def add_event_comment(
     # Confirm event exists
     building_id = get_event_building_id(event_id)
 
-    # Managers must have building access
+    # Admin always allowed; managers must have building access
     if current_user.role != "admin":
         verify_user_building_access_supabase(current_user.user_id, building_id)
 
@@ -275,9 +264,9 @@ def add_event_comment(
                     "event_id": event_id,
                     "user_id": current_user.user_id,
                     "comment": comment,
-                }
+                },
+                returning="representation",
             )
-            .select("*")
             .execute()
         )
 
