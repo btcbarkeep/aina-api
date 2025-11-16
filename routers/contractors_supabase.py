@@ -20,6 +20,7 @@ router = APIRouter(
     tags=["Contractors"],
 )
 
+
 # -----------------------------------------------------
 # Helper — sanitize payload
 # -----------------------------------------------------
@@ -37,11 +38,6 @@ def sanitize(data: dict) -> dict:
 # Permission — Contractor Access Rules
 # -----------------------------------------------------
 def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
-    """
-    Contractors can only see THEIR own events & data.
-    Admin + Manager can see all.
-    Other roles cannot see contractor data.
-    """
     if current_user.role in ["admin", "manager"]:
         return
 
@@ -91,7 +87,7 @@ class ContractorUpdate(BaseModel):
 
 
 # -----------------------------------------------------
-# LIST CONTRACTORS — any authenticated user
+# LIST CONTRACTORS
 # -----------------------------------------------------
 @router.get(
     "/",
@@ -109,7 +105,6 @@ def list_contractors(
         .order("company_name", desc=False)
         .execute()
     )
-
     return result.data or []
 
 
@@ -137,47 +132,44 @@ def get_contractor(
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Contractor not found")
+        raise HTTPException(404, "Contractor not found")
 
     return result.data
 
 
 # -----------------------------------------------------
-# CREATE CONTRACTOR — Admin Only
+# CREATE CONTRACTOR — Admin
 # -----------------------------------------------------
 @router.post(
     "/",
     response_model=ContractorRead,
     dependencies=[Depends(requires_role(["admin"]))],
-    summary="Create a contractor (Admin only)"
+    summary="Create a contractor"
 )
-def create_contractor(
-    payload: ContractorCreate,
-):
+def create_contractor(payload: ContractorCreate):
     client = get_supabase_client()
     data = sanitize(payload.model_dump())
 
     result = (
         client.table("contractors")
-        .insert(data)
-        .select("*")
+        .insert(data, returning="representation")    # ✅ FIXED
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=500, detail="Insert failed")
+        raise HTTPException(500, "Insert failed")
 
     return result.data[0]
 
 
 # -----------------------------------------------------
-# UPDATE CONTRACTOR — Admin Only
+# UPDATE CONTRACTOR — Admin
 # -----------------------------------------------------
 @router.put(
     "/{contractor_id}",
     response_model=ContractorRead,
     dependencies=[Depends(requires_role(["admin"]))],
-    summary="Update a contractor (Admin only)",
+    summary="Update a contractor",
 )
 def update_contractor(
     contractor_id: str,
@@ -188,23 +180,23 @@ def update_contractor(
     result = update_record("contractors", contractor_id, update_data)
 
     if result["status"] != "ok":
-        raise HTTPException(status_code=500, detail=result["detail"])
+        raise HTTPException(500, result["detail"])
 
     return result["data"]
 
 
 # -----------------------------------------------------
-# DELETE CONTRACTOR — Admin Only (safe delete)
+# DELETE CONTRACTOR — Admin
 # -----------------------------------------------------
 @router.delete(
     "/{contractor_id}",
     dependencies=[Depends(requires_role(["admin"]))],
-    summary="Delete a contractor (Admin only)"
+    summary="Delete a contractor"
 )
 def delete_contractor(contractor_id: str):
     client = get_supabase_client()
 
-    # Safety check — prevent deleting contractors with events
+    # Prevent deleting if events reference contractor
     events = (
         client.table("events")
         .select("id")
@@ -214,20 +206,19 @@ def delete_contractor(contractor_id: str):
 
     if events.data:
         raise HTTPException(
-            status_code=400,
-            detail="Cannot delete contractor: events reference this contractor."
+            400,
+            "Cannot delete contractor: events reference this contractor."
         )
 
     result = (
         client.table("contractors")
-        .delete()
+        .delete(returning="representation")     # ✅ FIXED
         .eq("id", contractor_id)
-        .select("*")
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Contractor not found")
+        raise HTTPException(404, "Contractor not found")
 
     return {"status": "deleted", "id": contractor_id}
 
@@ -237,7 +228,7 @@ def delete_contractor(contractor_id: str):
 # -----------------------------------------------------
 @router.get(
     "/{contractor_id}/events",
-    summary="List all events performed by this contractor",
+    summary="List all events performed by this contractor"
 )
 def get_contractor_events(
     contractor_id: str,
@@ -255,12 +246,11 @@ def get_contractor_events(
         .limit(limit)
         .execute()
     )
-
     return result.data or []
 
 
 # -----------------------------------------------------
-# GET BUILDINGS WHERE CONTRACTOR HAS WORKED
+# GET BUILDINGS FOR CONTRACTOR
 # -----------------------------------------------------
 @router.get(
     "/{contractor_id}/buildings",
@@ -296,11 +286,11 @@ def get_contractor_buildings(
 
 
 # -----------------------------------------------------
-# CONTRACTOR STATS — event breakdown
+# CONTRACTOR STATS
 # -----------------------------------------------------
 @router.get(
     "/{contractor_id}/stats",
-    summary="Get contractor event statistics & breakdown",
+    summary="Get contractor event statistics"
 )
 def get_contractor_stats(
     contractor_id: str,
