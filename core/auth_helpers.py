@@ -113,8 +113,9 @@ def create_user_no_password(
 ):
     """
     Creates a user in the Supabase 'users' table.
-    Password is not set until they visit the set-password page.
+    Password is not set until they visit set-password page.
     """
+
     client = get_supabase_client()
 
     # 1️⃣ Check if user already exists
@@ -127,49 +128,47 @@ def create_user_no_password(
             .execute()
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Supabase lookup failed: {e}",
-        )
+        raise HTTPException(status_code=500, detail=f"Supabase lookup failed: {e}")
 
     if existing.data:
         raise HTTPException(
             status_code=400,
-            detail="A user with this email already exists.",
+            detail="A user with this email already exists."
         )
 
-    # 2️⃣ Insert new user
+    # 2️⃣ Insert new user (no username column)
     user_id = str(uuid4())
     now = datetime.utcnow().isoformat()
 
     payload = {
         "id": user_id,
         "email": email,
-        "username": email,
         "full_name": full_name,
         "organization_name": organization_name,
         "phone": phone,
-        "role": role,  # HOA, contractor, admin, etc.
-        "hashed_password": None,
+        "role": role,                 # hoa / contractor / admin / etc.
+        "hashed_password": None,      # will be set in /auth/set-password
+        "reset_token": None,
+        "reset_token_expires": None,
         "created_at": now,
         "updated_at": now,
     }
 
     try:
-        result = client.table("users").insert(payload).execute()
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Supabase insert failed: {e}",
+        result = (
+            client.table("users")
+            .insert(payload)
+            .select("*")
+            .single()
+            .execute()
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase insert failed: {e}")
 
     if not result.data:
-        raise HTTPException(
-            status_code=500,
-            detail="Supabase returned no data.",
-        )
+        raise HTTPException(status_code=500, detail="Supabase returned no data.")
 
-    return result.data[0]
+    return result.data
 
 
 # ============================================================
