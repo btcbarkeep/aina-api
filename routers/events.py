@@ -10,9 +10,8 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import safe_update
-
 from models.event import EventCreate, EventUpdate, EventRead
+
 
 router = APIRouter(
     prefix="/events",
@@ -99,24 +98,27 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     event_data = sanitize(payload.model_dump())
     event_data["created_by"] = current_user.id
 
+    # Contractor linking
     if current_user.role == "contractor":
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id.")
         event_data["contractor_id"] = current_user.contractor_id
 
+    # Building access check for non-admin roles
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
     result = (
         client.table("events")
         .insert(event_data, returning="representation")
+        .single()
         .execute()
     )
 
     if not result.data:
         raise HTTPException(500, "Insert failed")
 
-    return result.data[0]
+    return result.data
 
 
 # -----------------------------------------------------
@@ -128,13 +130,24 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     summary="Update Event",
 )
 def update_event(event_id: str, payload: EventUpdate):
+    client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    updated = safe_update("events", {"id": event_id}, update_data)
-    if not updated:
+    try:
+        result = (
+            client.table("events")
+            .update(update_data)
+            .eq("id", event_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase update error: {e}")
+
+    if not result.data:
         raise HTTPException(404, "Event not found")
 
-    return updated
+    return result.data
 
 
 # -----------------------------------------------------
@@ -148,6 +161,7 @@ def update_event(event_id: str, payload: EventUpdate):
 def delete_event(event_id: str):
     client = get_supabase_client()
 
+    # Cannot delete if documents reference this event
     docs = (
         client.table("documents")
         .select("id")
@@ -158,12 +172,16 @@ def delete_event(event_id: str):
     if docs.data:
         raise HTTPException(400, "Cannot delete event: documents exist.")
 
-    result = (
-        client.table("events")
-        .delete(returning="representation")
-        .eq("id", event_id)
-        .execute()
-    )
+    try:
+        result = (
+            client.table("events")
+            .delete(returning="representation")
+            .eq("id", event_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase delete error: {e}")
 
     if not result.data:
         raise HTTPException(404, "Event not found")
