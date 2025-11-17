@@ -1,9 +1,11 @@
+# routers/documents.py
+
 from fastapi import APIRouter, HTTPException, Depends
 
 from dependencies.auth import (
     get_current_user,
-    requires_role,
     CurrentUser,
+    requires_permission,    # ⭐ NEW permission system
 )
 
 from core.supabase_client import get_supabase_client
@@ -14,6 +16,7 @@ from models.document import (
     DocumentUpdate,
     DocumentRead,
 )
+
 
 router = APIRouter(
     prefix="/documents",
@@ -36,7 +39,7 @@ def sanitize(data: dict) -> dict:
 # -----------------------------------------------------
 # Helper — Check building access
 # -----------------------------------------------------
-def verify_user_building_access_supabase(user_id: str, building_id: str):
+def verify_user_building_access(user_id: str, building_id: str):
     client = get_supabase_client()
     if not client:
         raise HTTPException(500, "Supabase not configured")
@@ -52,7 +55,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
     if not result.data:
         raise HTTPException(
             403,
-            "User does not have access to this building.",
+            "User does not have access to this building."
         )
 
 
@@ -77,15 +80,15 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
-# LIST DOCUMENTS (any authenticated user)
+# LIST DOCUMENTS — any authenticated user
 # -----------------------------------------------------
 @router.get(
-    "/supabase",
-    summary="List Documents from Supabase",
+    "",
+    summary="List Documents",
+    dependencies=[Depends(requires_permission("documents:read"))],
 )
-def list_documents_supabase(
+def list_documents(
     limit: int = 100,
-    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
@@ -104,20 +107,24 @@ def list_documents_supabase(
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT — Admin/Manager OR building-access user
+# CREATE DOCUMENT
+# Roles:
+#   • documents:write required
+#   • If NOT admin: must have building access
 # -----------------------------------------------------
 @router.post(
-    "/supabase",
+    "",
     response_model=DocumentRead,
-    summary="Create Document in Supabase",
+    summary="Create Document",
+    dependencies=[Depends(requires_permission("documents:write"))],
 )
-def create_document_supabase(
+def create_document(
     payload: DocumentCreate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
-    # Determine building ID for RBAC
+    # Determine building for RBAC
     if payload.event_id:
         building_id = get_event_building_id(payload.event_id)
     elif payload.building_id:
@@ -125,12 +132,12 @@ def create_document_supabase(
     else:
         raise HTTPException(
             400,
-            "Either event_id OR building_id must be provided.",
+            "Either event_id OR building_id must be provided."
         )
 
-    # Enforce building access for non-admin/manager
-    if current_user.role not in ["admin", "manager"]:
-        verify_user_building_access_supabase(current_user.id, building_id)
+    # Non-super users must have building access
+    if current_user.role not in ["admin", "super_admin"]:
+        verify_user_building_access(current_user.id, building_id)
 
     try:
         doc_data = sanitize(payload.model_dump())
@@ -151,16 +158,16 @@ def create_document_supabase(
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT — admin + manager
+# UPDATE DOCUMENT — documents:write
 # -----------------------------------------------------
 @router.put(
-    "/supabase/{document_id}",
-    summary="Update Document in Supabase",
-    dependencies=[Depends(requires_role(["admin", "manager"]))],
+    "/{document_id}",
+    summary="Update Document",
+    dependencies=[Depends(requires_permission("documents:write"))],
 )
-def update_document_supabase(
+def update_document(
     document_id: str,
-    payload: DocumentUpdate,
+    payload: DocumentUpdate
 ):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
@@ -173,14 +180,14 @@ def update_document_supabase(
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT — admin + manager
+# DELETE DOCUMENT — documents:write
 # -----------------------------------------------------
 @router.delete(
-    "/supabase/{document_id}",
-    summary="Delete Document in Supabase",
-    dependencies=[Depends(requires_role(["admin", "manager"]))],
+    "/{document_id}",
+    summary="Delete Document",
+    dependencies=[Depends(requires_permission("documents:write"))],
 )
-def delete_document_supabase(document_id: str):
+def delete_document(document_id: str):
     client = get_supabase_client()
 
     try:
