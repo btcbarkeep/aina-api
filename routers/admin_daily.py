@@ -6,50 +6,62 @@ from datetime import datetime, timedelta
 
 from dependencies.auth import (
     get_current_user,
-    requires_role,
     CurrentUser,
 )
 
+# NEW permission system
+from core.permission_helpers import requires_permission
+
+# Supabase helpers
 from core.supabase_client import get_supabase_client
+from core.supabase_helpers import safe_select
 from core.notifications import send_email
 
 
 router = APIRouter(
     prefix="/admin-daily",
     tags=["Admin Daily Update"],
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    dependencies=[Depends(requires_permission("users:read"))],
 )
 
+
 # ============================================================
-# Helper — safely fetch table rows
+# Helper — safely fetch full table rows
 # ============================================================
-def fetch_rows(client, table: str):
-    result = (
-        client.table(table)
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return result.data or []
+def fetch_rows(table: str):
+    """Returns all rows from a table using safe_select."""
+    rows = safe_select(table)
+    return rows or []
 
 
 # ============================================================
-# Safe timestamp compare
+# Timestamp parsing helper
+# ============================================================
+def parse_timestamp(value):
+    """Parse Supabase timestamps safely."""
+    if not value:
+        return None
+
+    if isinstance(value, str):
+        try:
+            # Supabase returns ISO8601 with Z
+            return datetime.fromisoformat(value.replace("Z", ""))
+        except Exception:
+            return None
+
+    if isinstance(value, datetime):
+        return value
+
+    return None
+
+
+# ============================================================
+# Check if object is created in the last 24 hours
 # ============================================================
 def is_within_last_24h(obj, since: datetime):
-    raw = obj.get("created_at")
-    if not raw:
+    ts = parse_timestamp(obj.get("created_at"))
+    if not ts:
         return False
-
-    # Supabase sometimes returns ISO string, sometimes Python datetime
-    if isinstance(raw, str):
-        try:
-            ts = datetime.fromisoformat(raw.replace("Z", ""))
-        except Exception:
-            return False
-    else:
-        ts = raw
-
     return ts >= since
 
 
@@ -64,12 +76,15 @@ def get_daily_snapshot():
     now = datetime.utcnow()
     since = now - timedelta(hours=24)
 
-    snapshot = {}
+    snapshot = {
+        "generated_at": now.isoformat(),
+        "time_range": f"{since.isoformat()} → {now.isoformat()}",
+    }
 
     # --------------------------------------------------------
     # BUILDINGS
     # --------------------------------------------------------
-    buildings = fetch_rows(client, "buildings")
+    buildings = fetch_rows("buildings")
     snapshot["buildings_total"] = len(buildings)
     snapshot["new_buildings"] = [
         b for b in buildings if is_within_last_24h(b, since)
@@ -80,13 +95,12 @@ def get_daily_snapshot():
     # --------------------------------------------------------
     # EVENTS
     # --------------------------------------------------------
-    events = fetch_rows(client, "events")
+    events = fetch_rows("events")
     snapshot["events_total"] = len(events)
     snapshot["new_events"] = [
         e for e in events if is_within_last_24h(e, since)
     ]
 
-    # Buildings that had new events today
     updated_b_ids = {
         e.get("building_id")
         for e in snapshot["new_events"]
@@ -99,12 +113,13 @@ def get_daily_snapshot():
             "name": building_lookup.get(bid, {}).get("name", "Unknown"),
         }
         for bid in updated_b_ids
+        if bid is not None
     ]
 
     # --------------------------------------------------------
     # DOCUMENTS
     # --------------------------------------------------------
-    documents = fetch_rows(client, "documents")
+    documents = fetch_rows("documents")
     snapshot["documents_total"] = len(documents)
     snapshot["new_documents"] = [
         d for d in documents if is_within_last_24h(d, since)
@@ -113,14 +128,15 @@ def get_daily_snapshot():
     # --------------------------------------------------------
     # USERS
     # --------------------------------------------------------
-    users = fetch_rows(client, "users")
+    users = fetch_rows("users")
     snapshot["users_total"] = len(users)
     snapshot["new_users"] = [
         u for u in users if is_within_last_24h(u, since)
     ]
 
-    # Active users = those who created events/docs today
+    # Active users = created an event or uploaded a doc
     active_user_ids = set()
+
     for e in snapshot["new_events"]:
         if e.get("created_by"):
             active_user_ids.add(e["created_by"])
@@ -135,8 +151,8 @@ def get_daily_snapshot():
     # CONTRACTOR ACTIVITY
     # --------------------------------------------------------
     contractors = [u for u in users if u.get("role") == "contractor"]
-    contractor_events = {}
 
+    contractor_events = {}
     for e in snapshot["new_events"]:
         cid = e.get("created_by")
         if cid:
@@ -144,46 +160,40 @@ def get_daily_snapshot():
 
     snapshot["contractor_activity"] = contractor_events
 
-    # Most active contractor
     if contractor_events:
         top_id = max(contractor_events, key=contractor_events.get)
         snapshot["most_active_contractor"] = next(
-            (u for u in contractors if u["id"] == top_id), None
+            (u for u in contractors if u["id"] == top_id),
+            None
         )
     else:
         snapshot["most_active_contractor"] = None
 
     # --------------------------------------------------------
-    # SYSTEM HEALTH
+    # SYSTEM HEALTH (placeholders for now)
     # --------------------------------------------------------
-    snapshot["cron_status"] = "SUCCESS"  # Cron ran successfully
-    snapshot["api_errors_24h"] = 0       # TODO: add real metrics later
-    snapshot["api_requests_24h"] = 0     # TODO: add logging later
-
-    # --------------------------------------------------------
-    # Metadata
-    # --------------------------------------------------------
-    snapshot["generated_at"] = now.isoformat()
-    snapshot["time_range"] = f"{since.isoformat()} → {now.isoformat()}"
+    snapshot["cron_status"] = "SUCCESS"
+    snapshot["api_errors_24h"] = 0
+    snapshot["api_requests_24h"] = 0
 
     return snapshot
 
 
 # ============================================================
-# Email Formatting
+# Format email content
 # ============================================================
 def format_daily_email(s):
     lines = []
     add = lines.append
 
     add("Aina Protocol — Daily System Update\n")
-    add(f"Date: {s['generated_at']}")
+    add(f"Generated: {s['generated_at']}")
     add(f"Range: {s['time_range']}\n")
 
     # BUILDINGS
     add("=== Buildings ===")
     add(f"Total Buildings: {s['buildings_total']}")
-    add(f"New Buildings (24h): {len(s['new_buildings'])}")
+    add(f"New Buildings: {len(s['new_buildings'])}")
     add(f"Buildings Updated Today: {len(s['buildings_updated_today'])}")
     for b in s["buildings_updated_today"]:
         add(f" • {b['name']} (ID: {b['building_id']})")
@@ -192,21 +202,21 @@ def format_daily_email(s):
     # EVENTS
     add("=== Events ===")
     add(f"Total Events: {s['events_total']}")
-    add(f"New Events (24h): {len(s['new_events'])}\n")
+    add(f"New Events: {len(s['new_events'])}\n")
 
     # DOCUMENTS
     add("=== Documents ===")
     add(f"Total Documents: {s['documents_total']}")
-    add(f"New Documents (24h): {len(s['new_documents'])}\n")
+    add(f"New Documents: {len(s['new_documents'])}\n")
 
     # USERS
     add("=== Users ===")
     add(f"Total Users: {s['users_total']}")
-    add(f"New Users Today: {len(s['new_users'])}")
-    add(f"Active Users (created events/docs): {s['active_users_count']}\n")
+    add(f"New Users: {len(s['new_users'])}")
+    add(f"Active Users: {s['active_users_count']}\n")
 
     # CONTRACTORS
-    add("=== Contractor Activity ===")
+    add("=== Contractors ===")
     if s["most_active_contractor"]:
         m = s["most_active_contractor"]
         add(f"Most Active Contractor: {m.get('full_name') or m['email']}")
@@ -218,8 +228,8 @@ def format_daily_email(s):
     # SYSTEM HEALTH
     add("=== System Health ===")
     add(f"Cron Status: {s['cron_status']}")
-    add(f"API Requests (24h): {s['api_requests_24h']}")
-    add(f"API Errors (24h): {s['api_errors_24h']}")
+    add(f"API Requests: {s['api_requests_24h']}")
+    add(f"API Errors: {s['api_errors_24h']}")
     add("")
 
     add("End of report.")
@@ -227,24 +237,24 @@ def format_daily_email(s):
 
 
 # ============================================================
-# POST — Send Daily Report
+# POST — Send Daily Email
 # ============================================================
 @router.post("/send")
 def send_daily_update(current_user: CurrentUser = Depends(get_current_user)):
     snapshot = get_daily_snapshot()
-    body = format_daily_email(snapshot)
+    email_body = format_daily_email(snapshot)
 
     send_email(
         subject="Aina Protocol — Daily Update",
-        body=body,
+        body=email_body,
     )
 
-    return JSONResponse({"status": "sent", "snapshot": snapshot})
+    return JSONResponse({"success": True, "snapshot": snapshot})
 
 
 # ============================================================
-# GET — Preview (JSON)
+# GET — Preview Snapshot (JSON)
 # ============================================================
 @router.get("/preview")
 def preview_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
-    return get_daily_snapshot()
+    return {"success": True, "data": get_daily_snapshot()}
