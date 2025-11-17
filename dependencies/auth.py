@@ -1,12 +1,12 @@
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
 from pydantic import BaseModel
+from supabase import Client
 
 from core.config import settings
 from core.supabase_client import get_supabase_client
-from core.roles import ROLE_PERMISSIONS  # Permissions table
+from core.roles import ROLE_PERMISSIONS  # Your existing role/permission map
 
 bearer_scheme = HTTPBearer()
 
@@ -25,10 +25,10 @@ class CurrentUser(BaseModel):
 
 
 # ============================================================
-# Decode token + resolve user from Supabase
+# Decode token + resolve user from Supabase Auth
 # ============================================================
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> CurrentUser:
 
     token = credentials.credentials
@@ -39,29 +39,38 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    client: Client = get_supabase_client()
+    if not client:
+        raise HTTPException(500, "Supabase client not configured")
+
     # ---------------------------------------------------------
-    # Decode JWT
+    # Attempt Supabase JWT validation
+    # (Supabase will reject invalid/expired tokens automatically)
     # ---------------------------------------------------------
     try:
-        payload = jwt.decode(
-            token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
-            options={"verify_exp": True},
-        )
-    except JWTError:
+        auth_resp = client.auth.get_user(token)
+        if not auth_resp or not auth_resp.user:
+            raise unauthorized
+        supabase_user = auth_resp.user
+    except Exception:
         raise unauthorized
 
-    email = payload.get("sub")
-    role_from_token = payload.get("role")
+    # Extract core values
+    user_id = supabase_user.id
+    email = supabase_user.email
+
+    if not email:
+        raise unauthorized
+
+    metadata = supabase_user.user_metadata or {}
 
     # ---------------------------------------------------------
-    # CRON TOKEN (bypass Supabase)
+    # CRON TOKEN OVERRIDE
     # ---------------------------------------------------------
-    if payload.get("cron") is True:
+    if metadata.get("cron") is True:
         return CurrentUser(
             id="cron",
-            email=email or "cron@ainaprotocol.com",
+            email=email,
             role="admin",
             full_name="Cron Job",
             organization_name="System",
@@ -72,10 +81,10 @@ def get_current_user(
     # ---------------------------------------------------------
     # BOOTSTRAP ADMIN OVERRIDE
     # ---------------------------------------------------------
-    if payload.get("bootstrap_admin") is True:
+    if metadata.get("bootstrap_admin") is True:
         return CurrentUser(
             id="bootstrap",
-            email=email or "bootstrap@ainaprotocol.com",
+            email=email,
             role="admin",
             full_name="Bootstrap Admin",
             organization_name="System",
@@ -84,55 +93,38 @@ def get_current_user(
         )
 
     # ---------------------------------------------------------
-    # Normal user path
+    # Normal Supabase user path
     # ---------------------------------------------------------
-    if not email:
-        raise unauthorized
 
-    client = get_supabase_client()
+    # Pull role and custom data from user_metadata
+    role = metadata.get("role", "hoa")
+    full_name = metadata.get("full_name")
+    organization_name = metadata.get("organization_name")
+    phone = metadata.get("phone")
+    contractor_id = metadata.get("contractor_id")
 
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("email", email)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
-
-    user = result.data
-    if not user:
-        raise unauthorized
-
-    # ---------------------------------------------------------
-    # Determine final role
-    # ---------------------------------------------------------
-    role = user.get("role") or role_from_token or "hoa"
-
-    # fallback to safe role if unknown
+    # Validate role
     if role not in ROLE_PERMISSIONS:
         role = "hoa"
 
-    # ---------------------------------------------------------
-    # Return enriched CurrentUser
-    # ---------------------------------------------------------
     return CurrentUser(
-        id=user["id"],
-        email=user["email"],
+        id=user_id,
+        email=email,
         role=role,
-        full_name=user.get("full_name"),
-        organization_name=user.get("organization_name"),
-        phone=user.get("phone"),
-        contractor_id=user.get("contractor_id"),
+        full_name=full_name,
+        organization_name=organization_name,
+        phone=phone,
+        contractor_id=contractor_id,
     )
 
 
 # ============================================================
-# Role Requirement Wrapper (simple role checking)
+# Role Requirement Wrapper
 # ============================================================
 def requires_role(allowed_roles: list[str]):
+    """
+    Enforce that the current user's role is in the allowed roles.
+    """
     def checker(current_user: CurrentUser = Depends(get_current_user)):
         if current_user.role not in allowed_roles:
             raise HTTPException(
