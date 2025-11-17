@@ -159,12 +159,11 @@ def approve_request(
     # ---- 100% FIX: use service-role ONLY ----
     try:
         user_resp = client.auth.admin.create_user(
-            {
-                "email": email,
-                "email_confirm": True,
-                "user_metadata": metadata,
-            }
+            email=email,
+            email_confirm=False,
+            user_metadata=metadata,
         )
+
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
