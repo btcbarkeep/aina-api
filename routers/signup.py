@@ -6,15 +6,11 @@ from datetime import datetime
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
-    requires_permission,   # ⭐ NEW permission-based RBAC
+    requires_permission,
 )
 
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
-from core.auth_helpers import (
-    create_user_no_password,
-    generate_password_setup_token,
-)
 
 from models.signup import SignupRequestCreate
 
@@ -26,7 +22,7 @@ router = APIRouter(
 
 
 # -----------------------------------------------------
-# Helper — Get signup request by UUID
+# Helper — Get signup request
 # -----------------------------------------------------
 def get_signup_request_by_id(request_id: str):
     client = get_supabase_client()
@@ -77,7 +73,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # --- User Confirmation Email ---
+    # User Confirmation Email
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -95,7 +91,7 @@ Aina Protocol Team
     except Exception as e:
         print("Email send failed (user):", e)
 
-    # --- Admin Notification Email ---
+    # Admin Notification Email
     try:
         send_email(
             subject="New Signup Request - Aina Protocol",
@@ -121,8 +117,7 @@ Request ID: {signup["id"]}
 
 
 # -----------------------------------------------------
-# 2️⃣ ADMIN — List all signup requests
-# permissions: access:read
+# 2️⃣ ADMIN — List signup requests
 # -----------------------------------------------------
 @router.get(
     "/requests",
@@ -148,10 +143,6 @@ def list_requests():
 # Helper — Secure Role Assignment
 # -----------------------------------------------------
 def validate_role_assignment(requested_role: str, current_user: CurrentUser):
-    """
-    Prevent ANY admin from assigning the super_admin role.
-    Only super_admin may approve/provision super_admin.
-    """
     if requested_role == "super_admin" and current_user.role != "super_admin":
         raise HTTPException(
             403,
@@ -160,8 +151,7 @@ def validate_role_assignment(requested_role: str, current_user: CurrentUser):
 
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve signup request
-# permissions: access:write
+# 3️⃣ ADMIN — Approve signup request (Supabase Auth)
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
@@ -181,20 +171,39 @@ def approve_request(
 
     requested_role = req.get("requester_role") or "hoa"
 
-    # 🔐 Secure role assignment (prevents privilege escalation)
+    # Secure role assignment
     validate_role_assignment(requested_role, current_user)
 
-    # Create user account
+    # ---------------------------------------------------------
+    # Create user in Supabase Auth (no password)
+    # Sends password-setup email automatically
+    # ---------------------------------------------------------
+    metadata = {
+        "full_name": req.get("full_name"),
+        "organization_name": req.get("organization_name"),
+        "phone": req.get("phone"),
+        "contractor_id": None,
+        "role": requested_role,
+    }
+
     try:
-        user = create_user_no_password(
-            full_name=req.get("full_name"),
-            email=req["email"],
-            organization_name=req.get("organization_name"),
-            phone=req.get("phone"),
-            role=requested_role,
+        user_resp = client.auth.admin.create_user(
+            {
+                "email": req["email"],
+                "email_confirm": True,
+                "user_metadata": metadata,
+            }
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
+
+    # ---------------------------------------------------------
+    # Send invite email (password setup)
+    # ---------------------------------------------------------
+    try:
+        client.auth.admin.invite_user_by_email(req["email"])
+    except Exception as e:
+        print("Password setup email error:", e)
 
     # Mark request approved
     try:
@@ -208,28 +217,6 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Send password setup link
-    token = generate_password_setup_token(req["email"])
-
-    try:
-        send_email(
-            subject="Aina Protocol - Create Your Password",
-            body=f"""
-Aloha {req.get('full_name')},
-
-Your Aina Protocol account has been approved!
-
-Click below to set your password:
-https://app.ainaprotocol.com/set-password?token={token}
-
-Mahalo,
-Aina Protocol Team
-""",
-            to=req["email"],
-        )
-    except Exception as e:
-        print("Password setup email failed:", e)
-
     return {
         "status": "approved",
         "email": req["email"],
@@ -239,7 +226,6 @@ Aina Protocol Team
 
 # -----------------------------------------------------
 # 4️⃣ ADMIN — Reject signup request
-# permissions: access:write
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/reject",
@@ -268,7 +254,7 @@ def reject_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Notify the user
+    # Notify user
     try:
         send_email(
             subject="Aina Protocol - Signup Request Update",
@@ -286,4 +272,4 @@ Aina Protocol Team
     except Exception as e:
         print("Rejection email failed:", e)
 
-    return {"status": "rejected", "request_id": request_id}
+    return {"status": "rejected", "request_id": request_id"}
