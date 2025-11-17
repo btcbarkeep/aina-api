@@ -7,6 +7,12 @@ import traceback
 
 print(f"[DEBUG] Supabase SDK version: {getattr(supabase, '__version__', 'unknown')}")
 
+print("------ SUPABASE URL DEBUG ------")
+print("RAW:", repr(settings.SUPABASE_URL))
+print("LEN:", len(settings.SUPABASE_URL))
+print("--------------------------------")
+
+
 
 # ============================================================
 # Create Supabase Client (User + Admin API)
