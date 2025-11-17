@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     SMTP_PASS: Optional[str] = Field(None, env="SMTP_PASS")
     SMTP_TO: Optional[str] = Field(None, env="SMTP_TO")
 
-    # 👇 Destination for daily admin report emails
+    # Admin report destination
     ADMIN_REPORT_EMAIL: Optional[str] = Field(None, env="ADMIN_REPORT_EMAIL")
 
     # -------------------------------------------------
@@ -63,8 +63,8 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     class Config:
         case_sensitive = True
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+        # ❌ Removed env_file=".env"
+        # Render will now use REAL environment variables
 
 
 # Instantiate settings
