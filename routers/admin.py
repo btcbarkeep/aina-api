@@ -36,8 +36,6 @@ class AdminCreateUser(BaseModel):
     organization_name: Optional[str] = None
     phone: Optional[str] = None
     role: str = "hoa"
-
-    # Optional per-user permission overrides
     permissions: Optional[List[str]] = None
 
 
@@ -46,36 +44,38 @@ class AdminUpdateUser(BaseModel):
     organization_name: Optional[str] = None
     phone: Optional[str] = None
     role: Optional[str] = None
-
-    # Optional per-user permission overrides
     permissions: Optional[List[str]] = None
 
 
 # -----------------------------------------------------
 # Normalize Supabase list_users() result
-# (SDK v2 returns a LIST, older versions returned an object)
 # -----------------------------------------------------
 def extract_user_list(result):
-    """
-    Normalizes list_users() output to a list of user objects.
-    """
     if isinstance(result, list):
         return result
-
     if isinstance(result, dict) and "users" in result:
         return result["users"]
-
     users_attr = getattr(result, "users", None)
     if users_attr is not None:
         return users_attr
-
     return []
 
 
 # -----------------------------------------------------
-# Helper: Prevent dangerous role changes
+# Helper: Validate role change
 # -----------------------------------------------------
-def validate_role_change(requestor: CurrentUser, desired_role: str):
+def validate_role_change(
+    requestor: CurrentUser,
+    desired_role: str,
+    target_user_id: Optional[str] = None,
+):
+    """
+    requestor = the person making the request
+    desired_role = the role being assigned
+    target_user_id = None → user creation (no demotion check)
+    target_user_id != None → editing existing user
+    """
+
     if desired_role not in ALLOWED_ROLES:
         raise HTTPException(400, f"Invalid role: {desired_role}")
 
@@ -87,25 +87,43 @@ def validate_role_change(requestor: CurrentUser, desired_role: str):
     except Exception as e:
         raise HTTPException(500, f"Error reading Supabase users: {e}")
 
+    # Who are current super_admins?
     super_admin_ids = [
         u.id
         for u in all_users
         if (u.user_metadata or {}).get("role") == "super_admin"
     ]
 
-    # Cannot assign admin/super_admin unless YOU are super_admin
+    # -------------------------------------------------
+    # 1) ONLY super_admin may assign admin/super_admin roles
+    # -------------------------------------------------
     if desired_role in ("admin", "super_admin") and requestor.role != "super_admin":
         raise HTTPException(
             403, "Only a super_admin may assign admin or super_admin roles."
         )
 
-    # Prevent demoting the last super_admin
-    if (
-        desired_role != "super_admin"
-        and requestor.id in super_admin_ids
-        and len(super_admin_ids) == 1
-    ):
-        raise HTTPException(400, "Cannot demote the last remaining super_admin.")
+    # -------------------------------------------------
+    # 2) DEMOTION CHECK — ONLY for updating existing users
+    # -------------------------------------------------
+    if target_user_id is not None:
+        # Find target user's current role
+        target_user = next((u for u in all_users if u.id == target_user_id), None)
+
+        if not target_user:
+            raise HTTPException(404, "Target user not found")
+
+        target_role = (target_user.user_metadata or {}).get("role", "hoa")
+
+        # If target is a super_admin and we try to change them to any other role
+        if (
+            target_role == "super_admin"
+            and desired_role != "super_admin"
+            and len(super_admin_ids) == 1
+        ):
+            raise HTTPException(400, "Cannot demote the last remaining super_admin.")
+
+    # If creating a new user — no demotion logic applies.
+    return
 
 
 # -----------------------------------------------------
@@ -131,7 +149,7 @@ def prevent_deleting_last_super_admin(user_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ CREATE USER
+# 1️⃣ CREATE USER (FIXED)
 # -----------------------------------------------------
 @router.post(
     "/create-account",
@@ -142,7 +160,9 @@ def admin_create_account(
     payload: AdminCreateUser,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    validate_role_change(current_user, payload.role)
+
+    # NEW: Creating a user → target_user_id=None
+    validate_role_change(current_user, payload.role, target_user_id=None)
 
     client = get_supabase_client()
 
@@ -166,7 +186,7 @@ def admin_create_account(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation failed: {e}")
 
-    # Send password setup email
+    # Send password setup invite
     try:
         client.auth.admin.invite_user_by_email(payload.email)
     except Exception as e:
@@ -226,11 +246,11 @@ def list_users(role: str | None = None):
 
 
 # -----------------------------------------------------
-# 3️⃣ GET ONE USER
+# 3️⃣ GET USER
 # -----------------------------------------------------
 @router.get(
     "/users/{user_id}",
-    summary="Admin: Get one user",
+    summary="Admin: Get user",
     dependencies=[Depends(requires_permission("users:read"))],
 )
 def get_user(user_id: str):
@@ -264,7 +284,7 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ UPDATE USER
+# 4️⃣ UPDATE USER (uses new demotion logic)
 # -----------------------------------------------------
 @router.patch(
     "/users/{user_id}",
@@ -292,11 +312,11 @@ def update_user(
 
     current_meta = resp.user.user_metadata or {}
 
-    # Validate role change if provided
     new_role = updates.get("role", current_meta.get("role", "hoa"))
-    validate_role_change(current_user, new_role)
 
-    # Merge metadata
+    # NEW: Validate demotion properly for existing users
+    validate_role_change(current_user, new_role, target_user_id=user_id)
+
     merged = {**current_meta, **updates, "role": new_role}
 
     try:
@@ -338,7 +358,7 @@ def delete_user(
 
 
 # -----------------------------------------------------
-# 6️⃣ RESEND PASSWORD SETUP LINK
+# 6️⃣ RESEND PASSWORD SETUP
 # -----------------------------------------------------
 @router.post(
     "/users/{user_id}/resend-password",
