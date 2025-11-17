@@ -20,7 +20,6 @@ router = APIRouter(
     tags=["Admin"],
 )
 
-
 # -----------------------------------------------------
 # Allowed System Roles
 # -----------------------------------------------------
@@ -69,13 +68,6 @@ def validate_role_change(
     desired_role: str,
     target_user_id: Optional[str] = None,
 ):
-    """
-    requestor = the person making the request
-    desired_role = the role being assigned
-    target_user_id = None → user creation (no demotion check)
-    target_user_id != None → editing existing user
-    """
-
     if desired_role not in ALLOWED_ROLES:
         raise HTTPException(400, f"Invalid role: {desired_role}")
 
@@ -87,26 +79,16 @@ def validate_role_change(
     except Exception as e:
         raise HTTPException(500, f"Error reading Supabase users: {e}")
 
-    # Who are current super_admins?
     super_admin_ids = [
-        u.id
-        for u in all_users
-        if (u.user_metadata or {}).get("role") == "super_admin"
+        u.id for u in all_users if (u.user_metadata or {}).get("role") == "super_admin"
     ]
 
-    # -------------------------------------------------
-    # 1) ONLY super_admin may assign admin/super_admin roles
-    # -------------------------------------------------
     if desired_role in ("admin", "super_admin") and requestor.role != "super_admin":
         raise HTTPException(
             403, "Only a super_admin may assign admin or super_admin roles."
         )
 
-    # -------------------------------------------------
-    # 2) DEMOTION CHECK — ONLY for updating existing users
-    # -------------------------------------------------
     if target_user_id is not None:
-        # Find target user's current role
         target_user = next((u for u in all_users if u.id == target_user_id), None)
 
         if not target_user:
@@ -114,7 +96,6 @@ def validate_role_change(
 
         target_role = (target_user.user_metadata or {}).get("role", "hoa")
 
-        # If target is a super_admin and we try to change them to any other role
         if (
             target_role == "super_admin"
             and desired_role != "super_admin"
@@ -122,7 +103,6 @@ def validate_role_change(
         ):
             raise HTTPException(400, "Cannot demote the last remaining super_admin.")
 
-    # If creating a new user — no demotion logic applies.
     return
 
 
@@ -139,9 +119,7 @@ def prevent_deleting_last_super_admin(user_id: str):
         raise HTTPException(500, f"Supabase read error: {e}")
 
     super_admin_ids = [
-        u.id
-        for u in all_users
-        if (u.user_metadata or {}).get("role") == "super_admin"
+        u.id for u in all_users if (u.user_metadata or {}).get("role") == "super_admin"
     ]
 
     if user_id in super_admin_ids and len(super_admin_ids) == 1:
@@ -149,7 +127,7 @@ def prevent_deleting_last_super_admin(user_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ CREATE USER (FIXED)
+# 1️⃣ CREATE USER — GoTrue-safe version
 # -----------------------------------------------------
 @router.post(
     "/create-account",
@@ -173,26 +151,25 @@ def admin_create_account(
         "permissions": payload.permissions or [],
     }
 
-    # 1️⃣ Create the user
+    # -------- FIX: GoTrue-safe payload (dict only) --------
+    create_payload = {
+        "email": payload.email,
+        "email_confirm": False,    # important!
+        "user_metadata": metadata,
+    }
+
+    # 1️⃣ CREATE USER
     try:
-        user_resp = client.auth.admin.create_user(
-            {
-                "email": payload.email,
-                "email_confirm": True,
-                "user_metadata": metadata,
-            }
-        )
+        user_resp = client.auth.admin.create_user(create_payload)
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation failed: {e}")
 
-    # 2️⃣ Send invite (unless user exists)
+    # 2️⃣ INVITE — safe wrapper
     try:
         client.auth.admin.invite_user_by_email(payload.email)
-
     except Exception as e:
         msg = str(e).lower()
-        if "already been registered" in msg or "already registered" in msg:
-            # Safe to ignore
+        if "already registered" in msg or "already been registered" in msg:
             pass
         else:
             raise HTTPException(500, f"Failed to send invite email: {e}")
@@ -200,7 +177,7 @@ def admin_create_account(
     return {
         "success": True,
         "data": {
-            "user_id": user_resp.user.id,
+            "user_id": getattr(user_resp, "user", {}).get("id"),
             "email": payload.email,
         },
     }
@@ -230,7 +207,6 @@ def list_users(role: str | None = None):
     for u in users:
         meta = u.user_metadata or {}
         u_role = meta.get("role", "hoa")
-        u_permissions = meta.get("permissions", [])
 
         if role is None or u_role == role:
             results.append({
@@ -241,7 +217,7 @@ def list_users(role: str | None = None):
                 "phone": meta.get("phone"),
                 "role": u_role,
                 "contractor_id": meta.get("contractor_id"),
-                "permissions": u_permissions,
+                "permissions": meta.get("permissions", []),
                 "created_at": getattr(u, "created_at", None),
             })
 
@@ -289,7 +265,7 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ UPDATE USER (uses new demotion logic)
+# 4️⃣ UPDATE USER
 # -----------------------------------------------------
 @router.patch(
     "/users/{user_id}",
@@ -319,7 +295,6 @@ def update_user(
 
     new_role = updates.get("role", current_meta.get("role", "hoa"))
 
-    # NEW: Validate demotion properly for existing users
     validate_role_change(current_user, new_role, target_user_id=user_id)
 
     merged = {**current_meta, **updates, "role": new_role}
