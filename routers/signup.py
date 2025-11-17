@@ -2,7 +2,6 @@
 
 from core.config import settings
 
-
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 
@@ -15,6 +14,7 @@ from dependencies.auth import (
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
 from models.signup import SignupRequestCreate
+
 
 router = APIRouter(
     prefix="/signup",
@@ -74,7 +74,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # Optional emails
+    # Optional email notifications
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -133,10 +133,8 @@ def approve_request(
     request_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    client = get_supabase_client()  # ✔ ALWAYS service role key
+    client = get_supabase_client()  # ✔ service role key
 
-    print("🔑 USING KEY:", settings.SUPABASE_SERVICE_ROLE_KEY[:6], "********")
-    
     req = get_signup_request_by_id(request_id)
 
     if req["status"] != "pending":
@@ -147,6 +145,7 @@ def approve_request(
 
     validate_role_assignment(requested_role, current_user)
 
+    # Metadata provided to Supabase Auth
     metadata = {
         "full_name": req.get("full_name"),
         "organization_name": req.get("organization_name"),
@@ -156,24 +155,34 @@ def approve_request(
         "contractor_id": None,
     }
 
-    # ---- 100% FIX: use service-role ONLY ----
-    try:
-        user_resp = client.auth.admin.create_user(
-            email=email,
-            email_confirm=False,
-            user_metadata=metadata,
-        )
+    # -------------------------------------------------
+    # 🔥 100% Compatible Create User Payload (Legacy SDK)
+    # -------------------------------------------------
+    payload = {
+        "email": email,
+        "password": "",  # Required for older versions even if empty
+        "email_confirm": False,
+        "user_metadata": metadata,
+        "app_metadata": {"provider": "email"},
+        "invited": True  # Allow invite flow
+    }
 
+    try:
+        user_resp = client.auth.admin.create_user(payload)
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # Send invite - OK if already exists
+    # -------------------------------------------------
+    # Send invite (acceptable if user already exists)
+    # -------------------------------------------------
     try:
-        client.auth.admin.invite_user_by_email(email)
+        client.auth.admin.invite_user_by_email({"email": email})
     except Exception:
         pass
 
+    # -------------------------------------------------
     # Update signup request status
+    # -------------------------------------------------
     try:
         (
             client.table("signup_requests")
