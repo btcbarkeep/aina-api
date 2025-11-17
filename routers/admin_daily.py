@@ -9,7 +9,7 @@ from dependencies.auth import (
     CurrentUser,
 )
 
-# NEW permission system
+# NEW RBAC permission system
 from core.permission_helpers import requires_permission
 
 # Supabase helpers
@@ -169,7 +169,7 @@ def get_daily_snapshot():
         snapshot["most_active_contractor"] = None
 
     # --------------------------------------------------------
-    # SYSTEM HEALTH (placeholders for now)
+    # SYSTEM HEALTH
     # --------------------------------------------------------
     snapshot["cron_status"] = "SUCCESS"
     snapshot["api_errors_24h"] = 0
@@ -239,7 +239,11 @@ def format_daily_email(s):
 # POST — Send Daily Email
 # ============================================================
 @router.post("/send")
-def send_daily_update(current_user: CurrentUser = Depends(get_current_user)):
+def send_daily_update(
+    current_user: CurrentUser = Depends(get_current_user),
+    _: None = Depends(requires_permission("admin:daily_send")),
+):
+    """Send the daily email — only admin & super_admin."""
     snapshot = get_daily_snapshot()
     email_body = format_daily_email(snapshot)
 
@@ -255,5 +259,8 @@ def send_daily_update(current_user: CurrentUser = Depends(get_current_user)):
 # GET — Preview Snapshot (JSON)
 # ============================================================
 @router.get("/preview")
-def preview_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
+def preview_daily_snapshot(
+    current_user: CurrentUser = Depends(get_current_user),
+    _: None = Depends(requires_permission("admin:daily_send")),
+):
     return {"success": True, "data": get_daily_snapshot()}
