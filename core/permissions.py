@@ -1,10 +1,23 @@
 # core/permissions.py
 
+"""
+ROLE_PERMISSIONS defines the permissions granted to each role.
+
+Rules:
+- super_admin has unrestricted access ("*").
+- admin gets full system management permissions (but not super_admin).
+- Lower roles only get read/write access relevant to their responsibilities.
+- Special system-level actions (e.g., admin-daily reports) are included.
+"""
+
 ROLE_PERMISSIONS = {
     # ----------------------------------------------------
-    # Full System Access
+    # Full System Access (Master)
     # ----------------------------------------------------
-    "super_admin": ["*"],
+    "super_admin": [
+        "*",                    # unrestricted
+        "admin:daily_send",     # explicitly included
+    ],
 
     # ----------------------------------------------------
     # System Admin
@@ -17,7 +30,7 @@ ROLE_PERMISSIONS = {
         "access:read", "access:write",
         "contractors:read", "contractors:write",
 
-        # ⭐ NEW — needed for POST /admin-daily/send
+        # ⭐ REQUIRED FOR POST /admin-daily/send
         "admin:daily_send",
     ],
 
