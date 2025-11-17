@@ -1,45 +1,41 @@
-# core/permission_helpers.py
-
 from fastapi import Depends, HTTPException
 from dependencies.auth import get_current_user, CurrentUser
 from core.permissions import ROLE_PERMISSIONS
 
 
 # -----------------------------------------------------
-# Build union: role permissions + per-user metadata overrides
+# Collect effective permissions:
+#   • role-based permissions
+#   • user-specific permission overrides from user_metadata["permissions"]
 # -----------------------------------------------------
 def get_effective_permissions(user: CurrentUser) -> set:
-    # Super admin bypass
+    # Super admin = master key
     if user.role == "super_admin":
         return {"*"}
 
     role_perms = set(ROLE_PERMISSIONS.get(user.role, []))
 
-    # User metadata overrides
-    user_perms = set()
-    raw = getattr(user, "permissions", [])
-    if isinstance(raw, list):
-        user_perms = set(raw)
+    # Handle optional per-user permission overrides
+    user_overrides = set()
+    raw = getattr(user, "permissions", None)
 
-    return role_perms.union(user_perms)
+    if isinstance(raw, list):
+        user_overrides = set(raw)
+
+    return role_perms.union(user_overrides)
 
 
 # -----------------------------------------------------
-# Core permission evaluation
+# Permission evaluation
 # -----------------------------------------------------
 def has_permission(user: CurrentUser, permission: str) -> bool:
     effective = get_effective_permissions(user)
 
-    # wildcard '*' means all permissions granted
+    # Wildcard grants everything
     if "*" in effective:
         return True
 
-    # contractor staff inherit contractor read/write rules
-    if user.role in ["contractor", "contractor_staff"]:
-        # They get the permissions defined in ROLE_PERMISSIONS
-        # And additional user overrides
-        return permission in effective
-
+    # Normal permission check
     return permission in effective
 
 
@@ -48,8 +44,8 @@ def has_permission(user: CurrentUser, permission: str) -> bool:
 # -----------------------------------------------------
 def requires_permission(permission: str):
     """
-    Attach to any route:
-        dependencies=[Depends(requires_permission("events:write"))]
+    Usage:
+        @router.post("/", dependencies=[Depends(requires_permission("events:write"))])
     """
 
     def dependency(current_user: CurrentUser = Depends(get_current_user)):
