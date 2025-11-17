@@ -132,6 +132,8 @@ def approve_request(
 ):
     client = get_supabase_client()  # ✔ ALWAYS service role key
 
+    print("🔑 USING KEY:", settings.SUPABASE_SERVICE_ROLE_KEY[:6], "********")
+    
     req = get_signup_request_by_id(request_id)
 
     if req["status"] != "pending":
