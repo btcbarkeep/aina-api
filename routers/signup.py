@@ -21,7 +21,7 @@ router = APIRouter(
 
 
 # -----------------------------------------------------
-# Helper — Get signup request
+# Helper — Fetch Signup Request
 # -----------------------------------------------------
 def get_signup_request_by_id(request_id: str):
     client = get_supabase_client()
@@ -44,7 +44,7 @@ def get_signup_request_by_id(request_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ PUBLIC — Submit signup request
+# 1️⃣ PUBLIC — Submit Signup Request
 # -----------------------------------------------------
 @router.post("/request", summary="Public: Submit signup request")
 def request_access(payload: SignupRequestCreate):
@@ -60,9 +60,10 @@ def request_access(payload: SignupRequestCreate):
         "requester_role": payload.requester_role,
         "notes": payload.notes,
         "status": "pending",
-        "created_at": datetime.utcnow().isoformat(),
+        # Let Supabase handle created_at
     }
 
+    # Insert request
     try:
         result = (
             client.table("signup_requests")
@@ -92,7 +93,7 @@ Aina Protocol Team
     except Exception as e:
         print("Email send failed (user):", e)
 
-    # Admin notification email
+    # Admin alert email
     try:
         send_email(
             subject="New Signup Request - Aina Protocol",
@@ -118,7 +119,7 @@ Request ID: {signup['id']}
 
 
 # -----------------------------------------------------
-# 2️⃣ ADMIN — List signup requests
+# 2️⃣ ADMIN — List Signup Requests
 # -----------------------------------------------------
 @router.get(
     "/requests",
@@ -141,7 +142,7 @@ def list_requests():
 
 
 # -----------------------------------------------------
-# Helper — Secure Role Assignment
+# Helper — Validate Role Assignment
 # -----------------------------------------------------
 def validate_role_assignment(requested_role: str, current_user: CurrentUser):
     if requested_role == "super_admin" and current_user.role != "super_admin":
@@ -152,7 +153,7 @@ def validate_role_assignment(requested_role: str, current_user: CurrentUser):
 
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve signup request
+# 3️⃣ ADMIN — Approve Signup Request
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
@@ -173,9 +174,10 @@ def approve_request(
     email = req["email"].strip().lower()
     requested_role = req.get("requester_role") or "hoa"
 
-    # secure role assignment
+    # Prevent unauthorized role escalation
     validate_role_assignment(requested_role, current_user)
 
+    # Metadata stored in Supabase Auth user record
     metadata = {
         "full_name": req.get("full_name"),
         "organization_name": req.get("organization_name"),
@@ -183,24 +185,31 @@ def approve_request(
         "role": requested_role,
     }
 
-    # Create user in Supabase Auth (no password)
+    # -------------------------------------------------
+    # Create Supabase Auth User (no password yet)
+    # -------------------------------------------------
     try:
         user_resp = client.auth.admin.create_user(
             {
                 "email": email,
+                "email_confirm": False,
                 "user_metadata": metadata,
             }
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # Send invite email (password setup)
+    # -------------------------------------------------
+    # Send password setup email
+    # -------------------------------------------------
     try:
         client.auth.admin.invite_user_by_email(email)
     except Exception as e:
         print("Password setup email error:", e)
 
+    # -------------------------------------------------
     # Update signup request status
+    # -------------------------------------------------
     try:
         (
             client.table("signup_requests")
@@ -225,7 +234,7 @@ def approve_request(
 
 
 # -----------------------------------------------------
-# 4️⃣ ADMIN — Reject signup request
+# 4️⃣ ADMIN — Reject Signup Request
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/reject",
@@ -243,6 +252,7 @@ def reject_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
+    # Update row
     try:
         (
             client.table("signup_requests")
