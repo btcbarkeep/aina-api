@@ -1,10 +1,12 @@
+# routers/signup.py
+
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 
 from dependencies.auth import (
     get_current_user,
-    requires_role,
     CurrentUser,
+    requires_permission,   # ⭐ NEW permission-based RBAC
 )
 
 from core.supabase_client import get_supabase_client
@@ -75,7 +77,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # --- User Notification Email ---
+    # --- User Confirmation Email ---
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -91,7 +93,7 @@ Aina Protocol Team
             to=payload.email,
         )
     except Exception as e:
-        print("Email send failed:", e)
+        print("Email send failed (user):", e)
 
     # --- Admin Notification Email ---
     try:
@@ -101,7 +103,7 @@ Aina Protocol Team
 New signup request received:
 
 Organization: {payload.organization_name or "(none)"}
-Role: {payload.requester_role or "(none)"}
+Requested Role: {payload.requester_role or "(none)"}
 Name: {payload.full_name}
 Email: {payload.email}
 Phone: {payload.phone or "(none)"}
@@ -120,11 +122,12 @@ Request ID: {signup["id"]}
 
 # -----------------------------------------------------
 # 2️⃣ ADMIN — List all signup requests
+# permissions: access:read
 # -----------------------------------------------------
 @router.get(
     "/requests",
     summary="Admin: List signup requests",
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    dependencies=[Depends(requires_permission("access:read"))],
 )
 def list_requests():
     client = get_supabase_client()
@@ -142,28 +145,28 @@ def list_requests():
 
 
 # -----------------------------------------------------
-# Helper — Enforce role security
+# Helper — Secure Role Assignment
 # -----------------------------------------------------
 def validate_role_assignment(requested_role: str, current_user: CurrentUser):
     """
     Prevent ANY admin from assigning the super_admin role.
-    Only super_admin may assign super_admin.
+    Only super_admin may approve/provision super_admin.
     """
-
     if requested_role == "super_admin" and current_user.role != "super_admin":
         raise HTTPException(
-            status_code=403,
-            detail="Only a super_admin can approve or assign the super_admin role.",
+            403,
+            "Only a super_admin can assign the super_admin role.",
         )
 
 
 # -----------------------------------------------------
 # 3️⃣ ADMIN — Approve signup request
+# permissions: access:write
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    dependencies=[Depends(requires_permission("access:write"))],
 )
 def approve_request(
     request_id: str,
@@ -178,10 +181,10 @@ def approve_request(
 
     requested_role = req.get("requester_role") or "hoa"
 
-    # 🔐 SECURE ROLE ASSIGNMENT CHECK
+    # 🔐 Secure role assignment (prevents privilege escalation)
     validate_role_assignment(requested_role, current_user)
 
-    # Create user with the SAFE role
+    # Create user account
     try:
         user = create_user_no_password(
             full_name=req.get("full_name"),
@@ -193,7 +196,7 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # Update signup request status
+    # Mark request approved
     try:
         client.table("signup_requests").update(
             {
@@ -205,7 +208,7 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Password setup email
+    # Send password setup link
     token = generate_password_setup_token(req["email"])
 
     try:
@@ -236,11 +239,12 @@ Aina Protocol Team
 
 # -----------------------------------------------------
 # 4️⃣ ADMIN — Reject signup request
+# permissions: access:write
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
+    dependencies=[Depends(requires_permission("access:write"))],
 )
 def reject_request(
     request_id: str,
@@ -264,7 +268,7 @@ def reject_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    # Rejection email
+    # Notify the user
     try:
         send_email(
             subject="Aina Protocol - Signup Request Update",
