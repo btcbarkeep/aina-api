@@ -36,7 +36,8 @@ class AdminCreateUser(BaseModel):
     organization_name: Optional[str] = None
     phone: Optional[str] = None
     role: str = "hoa"
-    # ⭐ NEW — optional per-user overrides at create time
+
+    # Optional per-user permission overrides
     permissions: Optional[List[str]] = None
 
 
@@ -45,13 +46,34 @@ class AdminUpdateUser(BaseModel):
     organization_name: Optional[str] = None
     phone: Optional[str] = None
     role: Optional[str] = None
-    # ⭐ NEW — optional per-user overrides at update time
+
+    # Optional per-user permission overrides
     permissions: Optional[List[str]] = None
 
 
 # -----------------------------------------------------
+# Normalize Supabase list_users() result
+# (SDK v2 returns a LIST, older versions returned an object)
+# -----------------------------------------------------
+def extract_user_list(result):
+    """
+    Normalizes list_users() output to a list of user objects.
+    """
+    if isinstance(result, list):
+        return result
+
+    if isinstance(result, dict) and "users" in result:
+        return result["users"]
+
+    users_attr = getattr(result, "users", None)
+    if users_attr is not None:
+        return users_attr
+
+    return []
+
+
+# -----------------------------------------------------
 # Helper: Prevent dangerous role changes
-# (uses Supabase Auth users)
 # -----------------------------------------------------
 def validate_role_change(requestor: CurrentUser, desired_role: str):
     if desired_role not in ALLOWED_ROLES:
@@ -59,26 +81,30 @@ def validate_role_change(requestor: CurrentUser, desired_role: str):
 
     client = get_supabase_client()
 
-    # List super_admins from Supabase Auth
     try:
-        users = client.auth.admin.list_users()
+        raw = client.auth.admin.list_users()
+        all_users = extract_user_list(raw)
     except Exception as e:
         raise HTTPException(500, f"Error reading Supabase users: {e}")
 
     super_admin_ids = [
-        u.id for u in users.users
+        u.id
+        for u in all_users
         if (u.user_metadata or {}).get("role") == "super_admin"
     ]
 
     # Cannot assign admin/super_admin unless YOU are super_admin
     if desired_role in ("admin", "super_admin") and requestor.role != "super_admin":
         raise HTTPException(
-            403,
-            "Only a super_admin may assign admin or super_admin roles."
+            403, "Only a super_admin may assign admin or super_admin roles."
         )
 
     # Prevent demoting the last super_admin
-    if desired_role != "super_admin" and requestor.id in super_admin_ids and len(super_admin_ids) == 1:
+    if (
+        desired_role != "super_admin"
+        and requestor.id in super_admin_ids
+        and len(super_admin_ids) == 1
+    ):
         raise HTTPException(400, "Cannot demote the last remaining super_admin.")
 
 
@@ -89,12 +115,14 @@ def prevent_deleting_last_super_admin(user_id: str):
     client = get_supabase_client()
 
     try:
-        users = client.auth.admin.list_users()
+        raw = client.auth.admin.list_users()
+        all_users = extract_user_list(raw)
     except Exception as e:
         raise HTTPException(500, f"Supabase read error: {e}")
 
     super_admin_ids = [
-        u.id for u in users.users
+        u.id
+        for u in all_users
         if (u.user_metadata or {}).get("role") == "super_admin"
     ]
 
@@ -103,7 +131,7 @@ def prevent_deleting_last_super_admin(user_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ CREATE USER (Supabase Auth)
+# 1️⃣ CREATE USER
 # -----------------------------------------------------
 @router.post(
     "/create-account",
@@ -124,11 +152,9 @@ def admin_create_account(
         "phone": payload.phone,
         "role": payload.role,
         "contractor_id": None,
-        # ⭐ include per-user overrides if provided
         "permissions": payload.permissions or [],
     }
 
-    # Create user in Supabase Auth
     try:
         user_resp = client.auth.admin.create_user(
             {
@@ -140,11 +166,11 @@ def admin_create_account(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation failed: {e}")
 
-    # Send invite (password setup)
+    # Send password setup email
     try:
         client.auth.admin.invite_user_by_email(payload.email)
     except Exception as e:
-        raise HTTPException(500, f"Failed to send Supabase invite email: {e}")
+        raise HTTPException(500, f"Failed to send invite email: {e}")
 
     return {
         "success": True,
@@ -156,7 +182,7 @@ def admin_create_account(
 
 
 # -----------------------------------------------------
-# 2️⃣ LIST USERS (Supabase Auth)
+# 2️⃣ LIST USERS
 # -----------------------------------------------------
 @router.get(
     "/users",
@@ -166,22 +192,23 @@ def admin_create_account(
 def list_users(role: str | None = None):
     client = get_supabase_client()
 
-    if role is not None and role not in ALLOWED_ROLES:
+    if role and role not in ALLOWED_ROLES:
         raise HTTPException(400, f"Invalid role filter: {role}")
 
     try:
-        users = client.auth.admin.list_users()
+        raw = client.auth.admin.list_users()
+        users = extract_user_list(raw)
     except Exception as e:
         raise HTTPException(500, f"Supabase list users failed: {e}")
 
-    filtered = []
-    for u in users.users or []:
+    results = []
+    for u in users:
         meta = u.user_metadata or {}
         u_role = meta.get("role", "hoa")
-        u_perms = meta.get("permissions", [])
+        u_permissions = meta.get("permissions", [])
 
         if role is None or u_role == role:
-            filtered.append({
+            results.append({
                 "id": u.id,
                 "email": u.email,
                 "full_name": meta.get("full_name"),
@@ -189,14 +216,13 @@ def list_users(role: str | None = None):
                 "phone": meta.get("phone"),
                 "role": u_role,
                 "contractor_id": meta.get("contractor_id"),
-                "permissions": u_perms,
+                "permissions": u_permissions,
                 "created_at": getattr(u, "created_at", None),
             })
 
-    # Sort by Supabase creation date desc (if available)
-    filtered.sort(key=lambda u: u.get("created_at") or "", reverse=True)
+    results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
 
-    return {"success": True, "data": filtered}
+    return {"success": True, "data": results}
 
 
 # -----------------------------------------------------
@@ -211,14 +237,14 @@ def get_user(user_id: str):
     client = get_supabase_client()
 
     try:
-        user_resp = client.auth.admin.get_user_by_id(user_id)
+        resp = client.auth.admin.get_user_by_id(user_id)
     except Exception as e:
         raise HTTPException(500, f"Supabase read error: {e}")
 
-    if not user_resp.user:
+    if not resp.user:
         raise HTTPException(404, "User not found")
 
-    u = user_resp.user
+    u = resp.user
     meta = u.user_metadata or {}
 
     return {
@@ -238,7 +264,7 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ UPDATE USER (Supabase Auth)
+# 4️⃣ UPDATE USER
 # -----------------------------------------------------
 @router.patch(
     "/users/{user_id}",
@@ -252,45 +278,40 @@ def update_user(
 ):
     client = get_supabase_client()
 
-    # Only keep fields that were actually provided
-    update_meta = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if not update_meta:
-        raise HTTPException(400, "No valid fields to update")
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "No fields provided to update.")
 
-    # Fetch existing metadata to MERGE instead of overwrite
     try:
-        user_resp = client.auth.admin.get_user_by_id(user_id)
+        resp = client.auth.admin.get_user_by_id(user_id)
     except Exception as e:
         raise HTTPException(500, f"Supabase read error: {e}")
 
-    if not user_resp.user:
+    if not resp.user:
         raise HTTPException(404, "User not found")
 
-    existing_meta = user_resp.user.user_metadata or {}
+    current_meta = resp.user.user_metadata or {}
 
-    # If role is changing, validate it
-    new_role = update_meta.get("role", existing_meta.get("role", "hoa"))
+    # Validate role change if provided
+    new_role = updates.get("role", current_meta.get("role", "hoa"))
     validate_role_change(current_user, new_role)
 
-    # Merge metadata (existing + updates)
-    merged_meta = {**existing_meta, **update_meta}
-    merged_meta["role"] = new_role  # ensure final role is set
+    # Merge metadata
+    merged = {**current_meta, **updates, "role": new_role}
 
     try:
         client.auth.admin.update_user_by_id(
             user_id,
-            {
-                "user_metadata": merged_meta,
-            },
+            {"user_metadata": merged}
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    return {"success": True, "data": merged_meta}
+    return {"success": True, "data": merged}
 
 
 # -----------------------------------------------------
-# 5️⃣ DELETE USER (Supabase Auth)
+# 5️⃣ DELETE USER
 # -----------------------------------------------------
 @router.delete(
     "/users/{user_id}",
@@ -301,7 +322,6 @@ def delete_user(
     user_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-
     if user_id == current_user.id:
         raise HTTPException(400, "You cannot delete your own account.")
 
@@ -318,7 +338,7 @@ def delete_user(
 
 
 # -----------------------------------------------------
-# 6️⃣ RESEND PASSWORD SETUP (Supabase)
+# 6️⃣ RESEND PASSWORD SETUP LINK
 # -----------------------------------------------------
 @router.post(
     "/users/{user_id}/resend-password",
@@ -329,11 +349,11 @@ def resend_password_setup(user_id: str):
     client = get_supabase_client()
 
     try:
-        user_resp = client.auth.admin.get_user_by_id(user_id)
+        resp = client.auth.admin.get_user_by_id(user_id)
     except Exception:
         raise HTTPException(404, "User not found")
 
-    email = user_resp.user.email
+    email = resp.user.email
 
     try:
         client.auth.admin.invite_user_by_email(email)
