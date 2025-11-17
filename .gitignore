@@ -1,8 +1,16 @@
+# Python cache
 __pycache__/
 *.pyc
+
+# Environment files
 .env
-.venv/
 .env.*
+.venv/
+venv/
+
+# macOS junk files
 .DS_Store
-.env
-.env
+
+# Optional: IDE junk
+.vscode/
+.idea/
