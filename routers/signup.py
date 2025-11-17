@@ -104,7 +104,7 @@ def validate_role_assignment(requested_role: str, current_user: CurrentUser):
 @router.get(
     "/requests",
     summary="Admin: List signup requests",
-    dependencies=[Depends(requires_permission("access:read"))],
+    dependencies=[Depends(requires_permission("requests:read"))],
 )
 def list_requests():
     client = get_supabase_client()
@@ -127,7 +127,7 @@ def list_requests():
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
-    dependencies=[Depends(requires_permission("access:write"))],
+    dependencies=[Depends(requires_permission("requests:approve"))],
 )
 def approve_request(
     request_id: str,
@@ -155,9 +155,6 @@ def approve_request(
         "contractor_id": None,
     }
 
-    # -------------------------------------------------
-    # 🔥 100% Compatible Create User Payload (Legacy SDK)
-    # -------------------------------------------------
     payload = {
         "email": email,
         "email_confirm": False,
@@ -170,18 +167,13 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-
-    # -------------------------------------------------
-    # Send invite (acceptable if user already exists)
-    # -------------------------------------------------
+    # Send invite
     try:
         client.auth.admin.invite_user_by_email({"email": email})
     except Exception:
         pass
 
-    # -------------------------------------------------
-    # Update signup request status
-    # -------------------------------------------------
+    # Mark approved
     try:
         (
             client.table("signup_requests")
@@ -211,7 +203,7 @@ def approve_request(
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
-    dependencies=[Depends(requires_permission("access:write"))],
+    dependencies=[Depends(requires_permission("requests:approve"))],
 )
 def reject_request(
     request_id: str,
