@@ -8,17 +8,19 @@ from passlib.context import CryptContext
 
 from core.config import settings
 from core.supabase_client import get_supabase_client
+
 from core.auth_helpers import (
     hash_password,
     verify_password,
 )
 
+from core.supabase_helpers import safe_select, safe_update
 from dependencies.auth import get_current_user, CurrentUser
 
 
-# -----------------------------------------------------
+# ============================================================
 # Router Setup
-# -----------------------------------------------------
+# ============================================================
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"],
@@ -27,9 +29,9 @@ router = APIRouter(
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-# -----------------------------------------------------
+# ============================================================
 # Pydantic Models
-# -----------------------------------------------------
+# ============================================================
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -45,9 +47,9 @@ class SetPasswordRequest(BaseModel):
     password: str
 
 
-# -----------------------------------------------------
+# ============================================================
 # Helper: Create JWT Access Token
-# -----------------------------------------------------
+# ============================================================
 def _create_access_token(email: str, role: str, user_id: str):
     expiration = datetime.utcnow() + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
@@ -67,40 +69,33 @@ def _create_access_token(email: str, role: str, user_id: str):
     )
 
 
-# -----------------------------------------------------
-# LOGIN
-# -----------------------------------------------------
+# ============================================================
+# LOGIN ENDPOINT
+# ============================================================
 @router.post("/login", response_model=TokenResponse, summary="Authenticate user")
 def login(payload: LoginRequest):
-    client = get_supabase_client()
-
     # Fetch user
-    try:
-        result = (
-            client.table("users")
-            .select("*")
-            .eq("email", payload.email)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase query failed: {e}")
-
-    user = result.data
+    user = safe_select("users", {"email": payload.email}, single=True)
     if not user:
         raise HTTPException(401, "Invalid email or password")
 
+    # Optional: Prevent login without password being set
     hashed_pw = user.get("hashed_password")
     if not hashed_pw:
         raise HTTPException(
             401,
-            "Password not set — complete setup link first.",
+            "Password not set — please complete your setup email.",
         )
 
+    # Optional: Support disabled accounts
+    if user.get("disabled") is True:
+        raise HTTPException(403, "Account disabled — contact administrator.")
+
+    # Verify password
     if not verify_password(payload.password, hashed_pw):
         raise HTTPException(401, "Invalid email or password")
 
-    # Issue token with user's real role from DB
+    # Issue token with user's DB role
     token = _create_access_token(
         email=user["email"],
         role=user.get("role", "hoa"),
@@ -110,9 +105,9 @@ def login(payload: LoginRequest):
     return TokenResponse(access_token=token)
 
 
-# -----------------------------------------------------
-# DEV-ONLY ADMIN LOGIN (safe for development only)
-# -----------------------------------------------------
+# ============================================================
+# DEV-ONLY LOGIN (SAFEGUARDED)
+# ============================================================
 @router.post("/dev-login", summary="Temporary admin login (development only)")
 def dev_login():
     if settings.ENV == "production":
@@ -121,7 +116,7 @@ def dev_login():
     token = jwt.encode(
         {
             "sub": "dev-admin@ainaprotocol.com",
-            "role": "admin",
+            "role": "super_admin",
             "user_id": "bootstrap",
             "exp": datetime.utcnow() + timedelta(hours=12),
         },
@@ -135,22 +130,20 @@ def dev_login():
     }
 
 
-# -----------------------------------------------------
-# CURRENT USER
-# -----------------------------------------------------
+# ============================================================
+# CURRENT USER ENDPOINT
+# ============================================================
 @router.get("/me", response_model=CurrentUser, summary="Current authenticated user")
 def read_me(current_user: CurrentUser = Depends(get_current_user)):
     return current_user
 
 
-# -----------------------------------------------------
+# ============================================================
 # SET PASSWORD AFTER ADMIN CREATED ACCOUNT
-# -----------------------------------------------------
+# ============================================================
 @router.post("/set-password", summary="Finish account setup by creating password")
 def set_password(payload: SetPasswordRequest):
-    client = get_supabase_client()
-
-    # Decode token safely
+    # Decode token
     try:
         decoded = jwt.decode(
             payload.token,
@@ -159,49 +152,47 @@ def set_password(payload: SetPasswordRequest):
         )
         email = decoded.get("sub")
         if not email:
-            raise Exception("No email in token")
+            raise Exception("Missing email")
     except JWTError:
         raise HTTPException(400, "Invalid or expired setup token")
 
     # Fetch user
-    result = (
-        client.table("users")
-        .select("*")
-        .eq("email", email)
-        .single()
-        .execute()
-    )
-
-    if not result.data:
+    user = safe_select("users", {"email": email}, single=True)
+    if not user:
         raise HTTPException(404, "User not found")
 
-    user = result.data
-
-    # Validate reset token & expiration
+    # Validate stored token
     stored_token = user.get("reset_token")
     if not stored_token or stored_token != payload.token:
         raise HTTPException(400, "Invalid reset token")
 
+    # Validate expiration
     expires = user.get("reset_token_expires")
     if expires:
         try:
             if datetime.fromisoformat(expires) < datetime.utcnow():
                 raise HTTPException(400, "Reset token expired")
         except Exception:
-            raise HTTPException(400, "Invalid expiration format")
+            raise HTTPException(400, "Invalid token expiration format")
 
-    # Store hashed password
+    # Save hashed password and clear token
     hashed_pw = hash_password(payload.password)
 
-    client.table("users").update(
+    updated = safe_update(
+        "users",
+        {"email": email},
         {
             "hashed_password": hashed_pw,
             "reset_token": None,
             "reset_token_expires": None,
-        }
-    ).eq("email", email).execute()
+            "updated_at": "now()",
+        },
+    )
+
+    if not updated:
+        raise HTTPException(500, "Failed storing password")
 
     return {
-        "status": "success",
+        "success": True,
         "message": "Password created successfully!",
     }
