@@ -1,3 +1,5 @@
+# routers/uploads.py
+
 from fastapi import (
     APIRouter, UploadFile, File, Form,
     Depends, HTTPException
@@ -11,7 +13,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
-    requires_permission,    # ⭐ NEW global-permission RBAC
+    requires_permission,
 )
 
 from core.supabase_client import get_supabase_client
@@ -53,7 +55,7 @@ def get_s3_client():
     AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
 
     if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME]):
-        raise RuntimeError("Missing AWS credentials or bucket name")
+        raise RuntimeError("Missing AWS credentials or bucket name.")
 
     s3 = boto3.client(
         "s3",
@@ -68,11 +70,11 @@ def get_s3_client():
 # Helper: Check building access
 # -----------------------------------------------------
 def verify_user_building_access(current_user: CurrentUser, building_id: str):
-    client = get_supabase_client()
-
-    # Admin/manager bypass (business logic)
+    # Admin/manager bypass
     if current_user.role in ["admin", "manager"]:
         return
+
+    client = get_supabase_client()
 
     result = (
         client.table("user_building_access")
@@ -94,6 +96,7 @@ def get_event_building_id(event_id: str | None):
         return None
 
     client = get_supabase_client()
+
     result = (
         client.table("events")
         .select("building_id")
@@ -103,7 +106,7 @@ def get_event_building_id(event_id: str | None):
     )
 
     if not result.data:
-        raise HTTPException(404, "Event not found")
+        raise HTTPException(404, "Event not found.")
 
     return result.data["building_id"]
 
@@ -125,24 +128,33 @@ async def upload_document(
 ):
     """
     Uploads a document to S3 and creates a Supabase record.
+
     Applies:
-      • Permission-based RBAC (upload:write)
-      • Building access checks
-      • Event→Building validation
+      • Global permission system (upload:write)
+      • Building access rules
+      • Event → building validation
     """
 
-    # Validate event belongs to building
+    # -------------------------------------------------
+    # Validate event belongs to building (if provided)
+    # -------------------------------------------------
     event_building = get_event_building_id(event_id)
     if event_building and event_building != building_id:
         raise HTTPException(400, "Event does not belong to this building.")
 
+    # -------------------------------------------------
     # Building access checks
+    # -------------------------------------------------
     verify_user_building_access(current_user, building_id)
 
+    # -------------------------------------------------
+    # Start upload
+    # -------------------------------------------------
     try:
         s3, bucket, region = get_s3_client()
 
         clean_filename = safe_filename(file.filename)
+
         safe_category = (
             category.strip().replace(" ", "_").lower()
             if category else "general"
@@ -169,7 +181,9 @@ async def upload_document(
             ExpiresIn=86400,
         )
 
-        # Insert Supabase row
+        # -------------------------------------------------
+        # Create Supabase document record
+        # -------------------------------------------------
         payload = sanitize({
             "event_id": event_id,
             "building_id": building_id,
@@ -182,15 +196,20 @@ async def upload_document(
         })
 
         client = get_supabase_client()
+
         result = (
             client.table("documents")
             .insert(payload, returning="representation")
+            .single()
             .execute()
         )
 
         if not result.data:
-            raise HTTPException(500, "Supabase insert failed")
+            raise HTTPException(500, "Supabase insert returned no data.")
 
+        # -------------------------------------------------
+        # Response
+        # -------------------------------------------------
         return {
             "upload": {
                 "filename": clean_filename,
@@ -198,8 +217,8 @@ async def upload_document(
                 "presigned_url": presigned_url,
                 "uploaded_at": datetime.utcnow().isoformat(),
             },
-            "document": result.data[0],
+            "document": result.data,
         }
 
     except (NoCredentialsError, ClientError) as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"S3 error: {e}")
