@@ -21,7 +21,7 @@ from core.notifications import send_email
 router = APIRouter(
     prefix="/admin-daily",
     tags=["Admin Daily Update"],
-    dependencies=[Depends(requires_permission("users:read"))],
+    dependencies=[Depends(requires_permission("admin:daily_send"))],
 )
 
 
@@ -44,7 +44,6 @@ def parse_timestamp(value):
 
     if isinstance(value, str):
         try:
-            # Supabase returns ISO8601 with Z
             return datetime.fromisoformat(value.replace("Z", ""))
         except Exception:
             return None
