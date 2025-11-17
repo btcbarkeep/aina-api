@@ -159,7 +159,6 @@ def approve_request(
         "email": email,
         "email_confirm": False,
         "user_metadata": metadata,
-        "invited": True,
     }
 
     try:
@@ -167,11 +166,12 @@ def approve_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # Send invite
+    # Send invitation
     try:
         client.auth.admin.invite_user_by_email({"email": email})
     except Exception:
         pass
+
 
     # Mark approved
     try:
