@@ -13,7 +13,7 @@ from core.config import settings
 from core.logging_config import logger
 
 # -------------------------------------------------
-# Routers — Updated (NO more _supabase, NO more /api/v1)
+# Routers — Updated (NO _supabase, NO /api/v1)
 # -------------------------------------------------
 from routers.auth import router as auth_router
 from routers.signup import router as signup_router
@@ -28,8 +28,9 @@ from routers.contractor_events import router as contractor_events_router
 from routers.uploads import router as uploads_router
 from routers.health import router as health_router
 
-# NOTE: admin + admin_daily removed unless you want them restored
-# (you can add them back and I’ll update paths for them)
+# Admin Routers — restored
+from routers.admin import router as admin_router
+from routers.admin_daily import router as admin_daily_router
 
 
 # -------------------------------------------------
@@ -71,7 +72,9 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def handle_http(request: Request, exc: StarletteHTTPException):
         if exc.status_code in (401, 403, 500):
-            logger.warning(f"HTTP {exc.status_code} at {request.url} — {exc.detail}")
+            logger.warning(
+                f"HTTP {exc.status_code} at {request.url} — {exc.detail}"
+            )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @app.exception_handler(Exception)
@@ -99,6 +102,10 @@ def create_app() -> FastAPI:
     app.include_router(documents_router)
     app.include_router(contractors_router)
     app.include_router(contractor_events_router)
+
+    # Admin
+    app.include_router(admin_router)
+    app.include_router(admin_daily_router)
 
     # Uploads
     app.include_router(uploads_router)
