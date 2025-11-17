@@ -2,17 +2,44 @@
 
 from fastapi import HTTPException
 
-def supabase_error(error: Exception, message: str = "Supabase error"):
+
+def extract_supabase_error(error: Exception) -> str:
     """
-    Extracts and formats Supabase Python client errors into
-    a readable, consistent HTTPException message.
+    Safely extract readable details from Supabase Python client errors.
+    Handles:
+      • PostgREST errors
+      • GoTrue (Auth) errors
+      • Generic Python exceptions
     """
 
+    # Case 1 — Supabase Auth / GoTrue errors
+    if hasattr(error, "message"):
+        try:
+            return str(error.message)
+        except Exception:
+            pass
+
+    # Case 2 — Supabase errors with args (common)
+    if hasattr(error, "args") and error.args:
+        try:
+            return str(error.args[0])
+        except Exception:
+            pass
+
+    # Case 3 — Plain string fallback
     try:
-        # Supabase errors often have .message or .args
-        detail = str(error)
+        return str(error)
     except Exception:
-        detail = "Unknown Supabase error"
+        return "Unknown Supabase error"
+
+
+def supabase_error(error: Exception, message: str = "Supabase error"):
+    """
+    Convert Supabase / database errors into clean HTTPExceptions.
+    Always raises — caller should wrap with try/except.
+    """
+
+    detail = extract_supabase_error(error)
 
     raise HTTPException(
         status_code=500,
