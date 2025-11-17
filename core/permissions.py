@@ -1,5 +1,3 @@
-# core/permissions.py
-
 """
 ROLE_PERMISSIONS defines the permissions granted to each role.
 
@@ -17,6 +15,7 @@ ROLE_PERMISSIONS = {
     "super_admin": [
         "*",                    # unrestricted
         "admin:daily_send",     # explicitly included
+        "admin:set_password",   # ⭐ allow super admin to set any password
     ],
 
     # ----------------------------------------------------
@@ -32,6 +31,9 @@ ROLE_PERMISSIONS = {
 
         # ⭐ REQUIRED FOR POST /admin-daily/send
         "admin:daily_send",
+
+        # ⭐ NEW — REQUIRED FOR POST /auth/admin-set-password
+        "admin:set_password",
     ],
 
     # ----------------------------------------------------
