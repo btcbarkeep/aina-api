@@ -32,8 +32,8 @@ from routers.health import router as health_router
 from routers.admin import router as admin_router
 from routers.admin_daily import router as admin_daily_router
 
-# ⭐ NEW — Admin Set Password Router
-from routers.admin_set_password import router as admin_set_password_router
+# ❌ REMOVED — legacy Admin Set Password Router
+# from routers.admin_set_password import router as admin_set_password_router
 
 
 # -------------------------------------------------
@@ -110,8 +110,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(admin_daily_router)
 
-    # ⭐ NEW — Admin Set Password
-    app.include_router(admin_set_password_router)
+    # ❌ REMOVED — Admin Set Password (Supabase now handles password setup/reset)
+    # app.include_router(admin_set_password_router)
 
     # Uploads
     app.include_router(uploads_router)
