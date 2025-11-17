@@ -7,8 +7,8 @@ from core.supabase_client import get_supabase_client
 
 
 router = APIRouter(
-    prefix="/auth",
-    tags=["Auth Admin"],
+    prefix="/admin",
+    tags=["Admin"],
     dependencies=[Depends(requires_permission("admin:set_password"))],
 )
 
