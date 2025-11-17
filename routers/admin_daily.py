@@ -9,10 +9,7 @@ from dependencies.auth import (
     CurrentUser,
 )
 
-# Permission-based global RBAC
 from core.permission_helpers import requires_permission
-
-# Supabase helpers
 from core.supabase_client import get_supabase_client
 from core.supabase_helpers import safe_select
 from core.notifications import send_email
@@ -25,73 +22,50 @@ router = APIRouter(
 )
 
 
-# ============================================================
-# Helper — safely fetch all table rows
-# ============================================================
+# ----------------------------------------------------------
+# Supabase Auth users replacement
+# ----------------------------------------------------------
+def fetch_auth_users():
+    """Return list of all Supabase Auth users (service role only)."""
+    client = get_supabase_client()
+    try:
+        raw = client.auth.admin.list_users()
+        return raw.get("users", raw) if isinstance(raw, dict) else raw
+    except Exception as e:
+        raise HTTPException(500, f"Supabase Auth fetch failed: {e}")
+
+
+# ----------------------------------------------------------
+# Basic fetch helper
+# ----------------------------------------------------------
 def fetch_rows(table: str):
-    """
-    Uses safe_select() to return every row for a table.
-    Always returns list (never None).
-    """
     rows = safe_select(table)
     return rows or []
 
 
-# ============================================================
-# Timestamp parsing helper
-# ============================================================
 def parse_timestamp(value):
-    """
-    Accepts Supabase UTC strings or naive datetimes.
-    Ensures result is a timezone-aware UTC datetime.
-    """
-
     if not value:
         return None
-
     if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if isinstance(value, str):
         try:
-            # Supabase ISO8601 fix
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except Exception:
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except:
             return None
-
     return None
 
 
-# ============================================================
-# Created within the last 24 hours
-# ============================================================
 def is_within_last_24h(obj, since: datetime):
-    ts = parse_timestamp(obj.get("created_at"))
-    if not ts:
-        return False
-    return ts >= since
+    ts = parse_timestamp(obj.get("created_at") or obj.get("created_at"))
+    return ts and ts >= since
 
 
-# ============================================================
-# DAILY SNAPSHOT BUILDER
-# ============================================================
+# ----------------------------------------------------------
+# DAILY SNAPSHOT
+# ----------------------------------------------------------
 def get_daily_snapshot():
-    """
-    Builds a complete system snapshot of:
-    - Buildings
-    - Events
-    - Documents
-    - Users
-    - Contractor activity
-    - System health (placeholders)
-
-    All using Supabase.
-    """
     client = get_supabase_client()
     if not client:
         raise HTTPException(500, "Supabase not configured")
@@ -104,18 +78,15 @@ def get_daily_snapshot():
         "time_range": f"{since.isoformat()} → {now.isoformat()}",
     }
 
-    # --------------------------------------------------------
+    # ------------------------------------------------------
     # BUILDINGS
-    # --------------------------------------------------------
     buildings = fetch_rows("buildings")
     snapshot["buildings_total"] = len(buildings)
     snapshot["new_buildings"] = [b for b in buildings if is_within_last_24h(b, since)]
-
     building_lookup = {b["id"]: b for b in buildings}
 
-    # --------------------------------------------------------
+    # ------------------------------------------------------
     # EVENTS
-    # --------------------------------------------------------
     events = fetch_rows("events")
     snapshot["events_total"] = len(events)
     snapshot["new_events"] = [e for e in events if is_within_last_24h(e, since)]
@@ -130,64 +101,68 @@ def get_daily_snapshot():
             "name": building_lookup.get(bid, {}).get("name", "Unknown"),
         }
         for bid in updated_building_ids
-        if bid is not None
     ]
 
-    # --------------------------------------------------------
+    # ------------------------------------------------------
     # DOCUMENTS
-    # --------------------------------------------------------
     documents = fetch_rows("documents")
     snapshot["documents_total"] = len(documents)
-    snapshot["new_documents"] = [d for d in documents if is_within_last_24h(d, since)]
+    snapshot["new_documents"] = [
+        d for d in documents if is_within_last_24h(d, since)
+    ]
 
-    # --------------------------------------------------------
-    # USERS
-    # --------------------------------------------------------
-    users = fetch_rows("users")
-    snapshot["users_total"] = len(users)
-    snapshot["new_users"] = [u for u in users if is_within_last_24h(u, since)]
+    # ------------------------------------------------------
+    # USERS (Supabase Auth)
+    auth_users = fetch_auth_users()
+    snapshot["users_total"] = len(auth_users)
 
+    # New users in last 24 hours
+    snapshot["new_users"] = [
+        u for u in auth_users
+        if is_within_last_24h(u, since)
+    ]
+
+    # Active users (events + documents)
     active_user_ids = set()
-
-    # Activity from events
     for e in snapshot["new_events"]:
-        uid = e.get("created_by")
-        if uid:
-            active_user_ids.add(uid)
+        if e.get("created_by"):
+            active_user_ids.add(e["created_by"])
 
-    # Activity from documents
     for d in snapshot["new_documents"]:
-        uid = d.get("uploaded_by")
-        if uid:
-            active_user_ids.add(uid)
+        if d.get("uploaded_by"):
+            active_user_ids.add(d["uploaded_by"])
 
     snapshot["active_users_count"] = len(active_user_ids)
 
-    # --------------------------------------------------------
-    # CONTRACTOR ACTIVITY
-    # --------------------------------------------------------
-    contractors = [u for u in users if u.get("role") == "contractor"]
+    # ------------------------------------------------------
+    # CONTRACTORS (role from user_metadata)
+    contractors = [
+        u for u in auth_users
+        if (u.get("user_metadata") or {}).get("role") == "contractor"
+    ]
 
     contractor_events = {}
     for e in snapshot["new_events"]:
-        cid = e.get("created_by")
-        if cid:
-            contractor_events[cid] = contractor_events.get(cid, 0) + 1
+        uid = e.get("created_by")
+        if uid:
+            contractor_events[uid] = contractor_events.get(uid, 0) + 1
 
     snapshot["contractor_activity"] = contractor_events
 
     if contractor_events:
         top_id = max(contractor_events, key=contractor_events.get)
         snapshot["most_active_contractor"] = next(
-            (u for u in contractors if u["id"] == top_id),
+            (
+                u for u in contractors
+                if u.get("id") == top_id
+            ),
             None,
         )
     else:
         snapshot["most_active_contractor"] = None
 
-    # --------------------------------------------------------
-    # SYSTEM HEALTH (placeholder values)
-    # --------------------------------------------------------
+    # ------------------------------------------------------
+    # System health
     snapshot["cron_status"] = "SUCCESS"
     snapshot["api_requests_24h"] = 0
     snapshot["api_errors_24h"] = 0
@@ -195,11 +170,10 @@ def get_daily_snapshot():
     return snapshot
 
 
-# ============================================================
+# ----------------------------------------------------------
 # EMAIL FORMATTER
-# ============================================================
+# ----------------------------------------------------------
 def format_daily_email(s):
-    """Return a clean plain text email body."""
     lines = []
     add = lines.append
 
@@ -211,8 +185,6 @@ def format_daily_email(s):
     add(f"Total Buildings: {s['buildings_total']}")
     add(f"New Buildings: {len(s['new_buildings'])}")
     add(f"Buildings Updated Today: {len(s['buildings_updated_today'])}")
-    for b in s["buildings_updated_today"]:
-        add(f" • {b['name']} (ID: {b['building_id']})")
     add("")
 
     add("=== Events ===")
@@ -229,9 +201,11 @@ def format_daily_email(s):
     add(f"Active Users: {s['active_users_count']}\n")
 
     add("=== Contractors ===")
-    if s["most_active_contractor"]:
-        mc = s["most_active_contractor"]
-        add(f"Most Active Contractor: {mc.get('full_name') or mc.get('email')}")
+    mc = s["most_active_contractor"]
+    if mc:
+        meta = mc.get("user_metadata") or {}
+        name = meta.get("full_name") or mc.get("email")
+        add(f"Most Active Contractor: {name}")
         add(f"Events Today: {s['contractor_activity'][mc['id']]}")
     else:
         add("No contractor activity in last 24h")
@@ -247,9 +221,9 @@ def format_daily_email(s):
     return "\n".join(lines)
 
 
-# ============================================================
-# POST — Send Daily Update Email
-# ============================================================
+# ----------------------------------------------------------
+# POST — Send Daily Email
+# ----------------------------------------------------------
 @router.post("/send")
 def send_daily_update(current_user: CurrentUser = Depends(get_current_user)):
     snapshot = get_daily_snapshot()
@@ -263,9 +237,9 @@ def send_daily_update(current_user: CurrentUser = Depends(get_current_user)):
     return JSONResponse({"success": True, "snapshot": snapshot})
 
 
-# ============================================================
+# ----------------------------------------------------------
 # GET — Preview Snapshot (no email)
-# ============================================================
+# ----------------------------------------------------------
 @router.get("/preview")
 def preview_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
     return {"success": True, "data": get_daily_snapshot()}
