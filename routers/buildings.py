@@ -1,17 +1,16 @@
-# routers/buildings_supabase.py
+# routers/buildings.py
 
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from datetime import datetime
 
-from dependencies.auth import (
-    get_current_user,
-    requires_role,
-    CurrentUser,
-    requires_permission,   # ⭐ NEW
-)
+from dependencies.auth import get_current_user, CurrentUser
+from core.permission_helpers import requires_permission
 
 from core.supabase_client import get_supabase_client
+from core.supabase_helpers import safe_select, safe_insert, safe_update
+from core.utils import sanitize
+
 from models.building import BuildingCreate, BuildingUpdate, BuildingRead
 
 
@@ -22,29 +21,20 @@ router = APIRouter(
 
 
 # ============================================================
-# Helper — normalize payload ("" → None)
-# ============================================================
-def sanitize(data: dict) -> dict:
-    clean = {}
-    for k, v in data.items():
-        if isinstance(v, str) and v.strip() == "":
-            clean[k] = None
-        else:
-            clean[k] = v
-    return clean
-
-
-# ============================================================
 # GET — LIST BUILDINGS
-# roles: ANY authenticated user
+# Requires: buildings:read
 # ============================================================
-@router.get("/supabase", summary="List Buildings")
-def list_buildings_supabase(
+@router.get(
+    "",
+    summary="List Buildings",
+    dependencies=[Depends(requires_permission("buildings:read"))],
+)
+def list_buildings(
     limit: int = 100,
     name: Optional[str] = None,
     city: Optional[str] = None,
     state: Optional[str] = None,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
@@ -58,8 +48,8 @@ def list_buildings_supabase(
         if state:
             query = query.ilike("state", f"%{state}%")
 
-        result = query.execute()
-        return result.data or []
+        res = query.execute()
+        return {"success": True, "data": res.data or []}
 
     except Exception as e:
         raise HTTPException(500, f"Supabase fetch error: {e}")
@@ -67,107 +57,87 @@ def list_buildings_supabase(
 
 # ============================================================
 # POST — CREATE BUILDING
-# roles: admin ONLY (no property_manager)
+# Requires: buildings:write
 # ============================================================
 @router.post(
-    "/supabase",
+    "",
     response_model=BuildingRead,
-    dependencies=[Depends(requires_permission("buildings:write"))],
     summary="Create Building",
+    dependencies=[Depends(requires_permission("buildings:write"))],
 )
-def create_building_supabase(payload: BuildingCreate):
-    client = get_supabase_client()
+def create_building(payload: BuildingCreate):
     data = sanitize(payload.model_dump())
 
     try:
-        insert_result = (
-            client.table("buildings")
-            .insert(data, returning="representation")
-            .execute()
-        )
-
-        if not insert_result.data:
-            raise HTTPException(500, "Insert failed")
-
-        return insert_result.data[0]
-
+        created = safe_insert("buildings", data)
+        return created
     except Exception as e:
         msg = str(e)
         if "duplicate" in msg.lower():
             raise HTTPException(400, f"Building '{payload.name}' already exists.")
-        raise HTTPException(500, msg)
+        raise
 
 
 # ============================================================
 # PUT — UPDATE BUILDING
-# roles: admin ONLY (no property_manager)
+# Requires: buildings:write
 # ============================================================
 @router.put(
-    "/supabase/{building_id}",
+    "/{building_id}",
     response_model=BuildingRead,
+    summary="Update Building",
     dependencies=[Depends(requires_permission("buildings:write"))],
-    summary="Update Building"
 )
-def update_building_supabase(
+def update_building(
     building_id: str,
     payload: BuildingUpdate,
 ):
-    client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    try:
-        update_result = (
-            client.table("buildings")
-            .update(update_data, returning="representation")
-            .eq("id", building_id)
-            .execute()
-        )
+    updated = safe_update("buildings", {"id": building_id}, update_data)
 
-        if not update_result.data:
-            raise HTTPException(404, f"Building '{building_id}' not found")
+    if not updated:
+        raise HTTPException(404, f"Building '{building_id}' not found")
 
-        return update_result.data[0]
-
-    except Exception as e:
-        raise HTTPException(500, f"Update failed: {e}")
+    return updated
 
 
 # ============================================================
 # DELETE — DELETE BUILDING
-# roles: admin ONLY
+# Requires: buildings:write
 # ============================================================
 @router.delete(
-    "/supabase/{building_id}",
-    dependencies=[Depends(requires_permission("buildings:write"))],
+    "/{building_id}",
     summary="Delete Building",
+    dependencies=[Depends(requires_permission("buildings:write"))],
 )
 def delete_building(building_id: str):
     client = get_supabase_client()
 
     try:
-        delete_result = (
+        res = (
             client.table("buildings")
             .delete(returning="representation")
             .eq("id", building_id)
             .execute()
         )
-
-        if not delete_result.data:
-            raise HTTPException(404, f"Building '{building_id}' not found")
-
-        return {"status": "deleted", "id": building_id}
-
     except Exception as e:
         raise HTTPException(500, f"Delete failed: {e}")
+
+    if not res.data:
+        raise HTTPException(404, f"Building '{building_id}' not found")
+
+    return {"success": True, "deleted_id": building_id}
 
 
 # ============================================================
 # GET — EVENTS FOR BUILDING
-# roles: ANY authenticated user
+# Requires: buildings:read
 # ============================================================
 @router.get(
-    "/supabase/{building_id}/events",
-    summary="List events for a building"
+    "/{building_id}/events",
+    summary="List events for a building",
+    dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def get_building_events(
     building_id: str,
@@ -198,16 +168,17 @@ def get_building_events(
     if status:
         query = query.eq("status", status)
 
-    return query.execute().data or []
+    return {"success": True, "data": query.execute().data or []}
 
 
 # ============================================================
-# GET — UNIT LIST (inferred from events)
-# roles: ANY authenticated user
+# GET — UNIT LIST (from events)
+# Requires: buildings:read
 # ============================================================
 @router.get(
-    "/supabase/{building_id}/units",
-    summary="List units inferred from events"
+    "/{building_id}/units",
+    summary="List units inferred from events",
+    dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def get_building_units(
     building_id: str,
@@ -215,7 +186,7 @@ def get_building_units(
 ):
     client = get_supabase_client()
 
-    events = (
+    res = (
         client.table("events")
         .select("unit_number")
         .eq("building_id", building_id)
@@ -223,9 +194,10 @@ def get_building_units(
         .execute()
     ).data or []
 
-    units = sorted({e["unit_number"] for e in events if e["unit_number"]})
+    units = sorted({e["unit_number"] for e in res if e["unit_number"]})
 
     return {
+        "success": True,
         "building_id": building_id,
         "units": units,
         "unit_count": len(units),
@@ -233,16 +205,17 @@ def get_building_units(
 
 
 # ============================================================
-# GET — CONTRACTORS WHO WORKED ON BUILDING
-# roles: ANY authenticated user
+# GET — CONTRACTORS WHO WORKED ON A BUILDING
+# Requires: buildings:read
 # ============================================================
 @router.get(
-    "/supabase/{building_id}/contractors",
-    summary="Contractors who worked on this building"
+    "/{building_id}/contractors",
+    summary="Contractors who worked on this building",
+    dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def get_building_contractors(
     building_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
@@ -255,7 +228,7 @@ def get_building_contractors(
     ).data or []
 
     if not events:
-        return []
+        return {"success": True, "data": []}
 
     contractor_ids = list({e["contractor_id"] for e in events})
 
@@ -267,11 +240,11 @@ def get_building_contractors(
     ).data or []
 
     contractor_map = {c["id"]: c for c in contractors}
-
     summary = {}
 
     for e in events:
         cid = e["contractor_id"]
+
         if cid not in summary:
             summary[cid] = {
                 "contractor": contractor_map.get(cid),
@@ -300,31 +273,25 @@ def get_building_contractors(
         })
         output.append(out)
 
-    return output
+    return {"success": True, "data": output}
 
 
 # ============================================================
 # GET — FULL BUILDING REPORT
-# roles: ANY authenticated user
+# Requires: buildings:read
 # ============================================================
 @router.get(
-    "/supabase/{building_id}/report",
-    summary="Full building report"
+    "/{building_id}/report",
+    summary="Full building report",
+    dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def get_building_report(
     building_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
-    building = (
-        client.table("buildings")
-        .select("*")
-        .eq("id", building_id)
-        .single()
-        .execute()
-    ).data
-
+    building = safe_select("buildings", {"id": building_id}, single=True)
     if not building:
         raise HTTPException(404, "Building not found")
 
@@ -337,8 +304,7 @@ def get_building_report(
     ).data or []
 
     units = sorted({e["unit_number"] for e in events if e["unit_number"]})
-
-    contractors = get_building_contractors(building_id, current_user)
+    contractors = get_building_contractors(building_id, current_user)["data"]
 
     stats = {
         "total_events": len(events),
@@ -352,10 +318,13 @@ def get_building_report(
         stats["severity_counts"][sev] = stats["severity_counts"].get(sev, 0) + 1
 
     return {
-        "building": building,
-        "stats": stats,
-        "units": units,
-        "events": events,
-        "contractors": contractors,
-        "generated_at": datetime.utcnow().isoformat(),
+        "success": True,
+        "data": {
+            "building": building,
+            "stats": stats,
+            "units": units,
+            "events": events,
+            "contractors": contractors,
+            "generated_at": datetime.utcnow().isoformat(),
+        }
     }
