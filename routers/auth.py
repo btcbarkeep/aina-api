@@ -196,3 +196,27 @@ def set_password(payload: SetPasswordRequest):
         "success": True,
         "message": "Password created successfully!",
     }
+
+
+# ---------------------------------------------------------
+# POST /auth/initiate-password-setup
+# Sends a Supabase password-reset (recovery) email
+# ---------------------------------------------------------
+class PasswordSetupRequest(BaseModel):
+    email: str
+
+@router.post("/initiate-password-setup", summary="Send password setup/recovery email")
+def initiate_password_setup(payload: PasswordSetupRequest):
+    """
+    Sends a Supabase recovery email which includes a token
+    that can be used with POST /auth/set-password.
+    """
+    client = get_supabase_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        result = client.auth.reset_password_email(payload.email)
+        return {"success": True, "message": "Password setup email sent."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase error: {e}")
