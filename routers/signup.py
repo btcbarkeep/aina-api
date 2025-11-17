@@ -21,9 +21,9 @@ router = APIRouter(
     tags=["Signup"],
 )
 
-# -----------------------------------------------------
+# =====================================================
 # Helper — Fetch Signup Request
-# -----------------------------------------------------
+# =====================================================
 def get_signup_request_by_id(request_id: str):
     client = get_supabase_client()
 
@@ -44,13 +44,12 @@ def get_signup_request_by_id(request_id: str):
     return result.data
 
 
-# -----------------------------------------------------
-# 1️⃣ PUBLIC — Submit Signup Request
-# -----------------------------------------------------
+# =====================================================
+# 1️⃣ PUBLIC — Submit Request
+# =====================================================
 @router.post("/request", summary="Public: Submit signup request")
 def request_access(payload: SignupRequestCreate):
     client = get_supabase_client()
-
     email = payload.email.strip().lower()
 
     request_data = {
@@ -74,7 +73,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # Optional email notifications
+    # Optional: confirmation email
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -87,9 +86,9 @@ def request_access(payload: SignupRequestCreate):
     return {"status": "success", "request_id": signup["id"]}
 
 
-# -----------------------------------------------------
+# =====================================================
 # Helper — Validate Role Assignment
-# -----------------------------------------------------
+# =====================================================
 def validate_role_assignment(requested_role: str, current_user: CurrentUser):
     if requested_role == "super_admin" and current_user.role != "super_admin":
         raise HTTPException(
@@ -98,9 +97,9 @@ def validate_role_assignment(requested_role: str, current_user: CurrentUser):
         )
 
 
-# -----------------------------------------------------
-# 2️⃣ ADMIN — List Signup Requests
-# -----------------------------------------------------
+# =====================================================
+# 2️⃣ ADMIN — List Requests
+# =====================================================
 @router.get(
     "/requests",
     summary="Admin: List signup requests",
@@ -121,9 +120,32 @@ def list_requests():
         raise HTTPException(500, f"Supabase fetch error: {e}")
 
 
-# -----------------------------------------------------
-# 3️⃣ ADMIN — Approve Signup Request
-# -----------------------------------------------------
+# =====================================================
+# Shared helper — Create Supabase Auth User
+# =====================================================
+def create_supabase_user(email: str, metadata: dict):
+    """
+    Creates a GoTrue-safe user via Supabase Auth Admin API.
+    MUST ONLY include keys supported by GoTrue.
+    """
+    client = get_supabase_client()
+
+    payload = {
+        "email": email,
+        "email_confirm": False,
+        "user_metadata": metadata,
+    }
+
+    try:
+        resp = client.auth.admin.create_user(payload)
+        return resp
+    except Exception as e:
+        raise HTTPException(500, f"Supabase user creation error: {e}")
+
+
+# =====================================================
+# 3️⃣ ADMIN — Approve Request
+# =====================================================
 @router.post(
     "/requests/{request_id}/approve",
     summary="Admin: Approve signup request",
@@ -133,7 +155,7 @@ def approve_request(
     request_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    client = get_supabase_client()  # ✔ service role key
+    client = get_supabase_client()
 
     req = get_signup_request_by_id(request_id)
 
@@ -145,35 +167,24 @@ def approve_request(
 
     validate_role_assignment(requested_role, current_user)
 
-    # Metadata provided to Supabase Auth
+    # 🚀 FINAL GoTrue-safe metadata (no forbidden keys)
     metadata = {
         "full_name": req.get("full_name"),
         "organization_name": req.get("organization_name"),
         "phone": req.get("phone"),
         "role": requested_role,
-        "permissions": [],
-        "contractor_id": None,
     }
 
-    payload = {
-        "email": email,
-        "email_confirm": False,
-        "user_metadata": metadata,
-    }
+    # 1) CREATE USER
+    create_supabase_user(email, metadata)
 
-    try:
-        user_resp = client.auth.admin.create_user(payload)
-    except Exception as e:
-        raise HTTPException(500, f"Supabase user creation error: {e}")
-
-    # Send invitation
+    # 2) SEND INVITE (optional)
     try:
         client.auth.admin.invite_user_by_email({"email": email})
     except Exception:
         pass
 
-
-    # Mark approved
+    # 3) UPDATE REQUEST STATUS
     try:
         (
             client.table("signup_requests")
@@ -197,9 +208,9 @@ def approve_request(
     }
 
 
-# -----------------------------------------------------
-# 4️⃣ ADMIN — Reject Signup Request
-# -----------------------------------------------------
+# =====================================================
+# 4️⃣ ADMIN — Reject Request
+# =====================================================
 @router.post(
     "/requests/{request_id}/reject",
     summary="Admin: Reject signup request",
@@ -210,7 +221,6 @@ def reject_request(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
-
     req = get_signup_request_by_id(request_id)
 
     if req["status"] != "pending":
@@ -232,7 +242,4 @@ def reject_request(
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    return {
-        "status": "rejected",
-        "request_id": request_id,
-    }
+    return {"status": "rejected", "request_id": request_id}
