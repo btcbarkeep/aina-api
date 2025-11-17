@@ -2,7 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.supabase_client import get_supabase_client
-from dependencies.auth import get_current_user, CurrentUser, requires_role
+from dependencies.auth import (
+    get_current_user,
+    CurrentUser,
+    requires_permission,
+)
 
 
 router = APIRouter(
@@ -28,8 +32,8 @@ def sanitize(data: dict) -> dict:
 # Pydantic Models
 # ============================================================
 class UserBuildingAccessCreate(BaseModel):
-    user_id: str        # Supabase UUID
-    building_id: str    # Supabase UUID
+    user_id: str
+    building_id: str
 
 
 class UserBuildingAccessRead(BaseModel):
@@ -39,11 +43,12 @@ class UserBuildingAccessRead(BaseModel):
 
 # ============================================================
 # Admin — List all access
+# permission: user_access:read
 # ============================================================
 @router.get(
     "/",
-    summary="Admin: List all user building access entries",
-    dependencies=[Depends(requires_role(["admin"]))],
+    summary="List all user building access entries",
+    dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_user_access():
     client = get_supabase_client()
@@ -64,7 +69,7 @@ def list_user_access():
 # Helper — Validate User & Building exist
 # ============================================================
 def validate_user_and_building(client, user_id: str, building_id: str):
-    # Validate user
+    # Validate user exists
     user = (
         client.table("users")
         .select("id")
@@ -75,7 +80,7 @@ def validate_user_and_building(client, user_id: str, building_id: str):
     if not user.data:
         raise HTTPException(404, f"User {user_id} not found")
 
-    # Validate building
+    # Validate building exists
     building = (
         client.table("buildings")
         .select("id")
@@ -89,19 +94,20 @@ def validate_user_and_building(client, user_id: str, building_id: str):
 
 # ============================================================
 # Admin — Grant user access
+# permission: user_access:write
 # ============================================================
 @router.post(
     "/",
-    summary="Admin: Grant a user building access",
-    dependencies=[Depends(requires_role(["admin"]))],
+    summary="Grant a user building access",
+    dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def add_user_access(payload: UserBuildingAccessCreate):
     client = get_supabase_client()
 
-    # Validate foreign keys
+    # Validate user + building exist
     validate_user_and_building(client, payload.user_id, payload.building_id)
 
-    # Prevent duplicates
+    # Prevent duplicate access rows
     existing = (
         client.table("user_building_access")
         .select("user_id")
@@ -132,12 +138,13 @@ def add_user_access(payload: UserBuildingAccessCreate):
 
 
 # ============================================================
-# Admin — Remove access
+# Admin — Remove user access
+# permission: user_access:write
 # ============================================================
 @router.delete(
     "/{user_id}/{building_id}",
-    summary="Admin: Remove building access for a user",
-    dependencies=[Depends(requires_role(["admin"]))],
+    summary="Remove building access for a user",
+    dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def delete_user_access(user_id: str, building_id: str):
     client = get_supabase_client()
@@ -166,11 +173,12 @@ def delete_user_access(user_id: str, building_id: str):
 
 # ============================================================
 # User — View their own building access
+# ANY authenticated user
 # ============================================================
 @router.get("/me", summary="Get building access for the authenticated user")
 def my_access(current_user: CurrentUser = Depends(get_current_user)):
 
-    # Bootstrap admin universal access
+    # Bootstrap admin = universal access, special case
     if current_user.id == "bootstrap":
         return [{
             "building_id": "ALL",
@@ -183,7 +191,7 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
         result = (
             client.table("user_building_access")
             .select("building_id")
-            .eq("user_id", current_user.id)     # <-- FIXED
+            .eq("user_id", current_user.id)
             .execute()
         )
 
