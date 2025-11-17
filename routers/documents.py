@@ -9,12 +9,12 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import safe_update
 from models.document import (
     DocumentCreate,
     DocumentUpdate,
     DocumentRead,
 )
+
 
 router = APIRouter(
     prefix="/documents",
@@ -114,13 +114,14 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     result = (
         client.table("documents")
         .insert(doc_data, returning="representation")
+        .single()
         .execute()
     )
 
     if not result.data:
         raise HTTPException(500, "Insert failed")
 
-    return result.data[0]
+    return result.data
 
 
 # -----------------------------------------------------
@@ -132,13 +133,24 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     dependencies=[Depends(requires_permission("documents:write"))],
 )
 def update_document(document_id: str, payload: DocumentUpdate):
+    client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    updated = safe_update("documents", {"id": document_id}, update_data)
-    if not updated:
+    try:
+        result = (
+            client.table("documents")
+            .update(update_data)
+            .eq("id", document_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase update error: {e}")
+
+    if not result.data:
         raise HTTPException(404, "Document not found")
 
-    return updated
+    return result.data
 
 
 # -----------------------------------------------------
@@ -152,12 +164,16 @@ def update_document(document_id: str, payload: DocumentUpdate):
 def delete_document(document_id: str):
     client = get_supabase_client()
 
-    result = (
-        client.table("documents")
-        .delete(returning="representation")
-        .eq("id", document_id)
-        .execute()
-    )
+    try:
+        result = (
+            client.table("documents")
+            .delete(returning="representation")
+            .eq("id", document_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase delete error: {e}")
 
     if not result.data:
         raise HTTPException(404, "Document not found")
