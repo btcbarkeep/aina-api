@@ -4,11 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 
 from dependencies.auth import get_current_user, CurrentUser
-from core.permission_helpers import has_permission, requires_permission
+from core.permission_helpers import requires_permission
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import safe_select
-from core.utils import sanitize
 
 
 router = APIRouter(
@@ -19,13 +17,14 @@ router = APIRouter(
 
 # ============================================================
 # GET — EVENTS BY CONTRACTOR
+#
 # Permissions:
 #   • super_admin → can view any
 #   • admin → can view any
 #   • property_manager / hoa → can view any (per RBAC)
 #   • contractor → can ONLY view their own events
 #   • contractor_staff → can ONLY view their own events
-#   • owner / tenant / buyer → never
+#   • owner / tenant / buyer → deny
 #
 # Uses "contractors:read"
 # ============================================================
@@ -49,16 +48,12 @@ def list_contractor_events(
     contractor_roles = ["contractor", "contractor_staff"]
 
     if current_user.role in contractor_roles:
-        # contractor/staff must match ID exactly
-        if current_user.id != contractor_id:
+        # Important: after migration, contractor linkage comes from metadata
+        if current_user.contractor_id != contractor_id:
             raise HTTPException(
                 403,
                 "You may only view events associated with your own contractor account."
             )
-
-    # Example:
-    # If RBAC someday allows restricting HOA or PM access,
-    # it will automatically update via "contractors:read".
 
     # --------------------------------------------------------
     # FETCH EVENTS
