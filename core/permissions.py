@@ -1,16 +1,21 @@
+# ============================================
+# CENTRALIZED ROLE → PERMISSIONS MAP
+# ============================================
 ROLE_PERMISSIONS = {
-    # ----------------------------------------------------
-    # Full System Access (Master)
-    # ----------------------------------------------------
+
+    # =====================================================
+    # SUPER ADMIN — Full access to everything
+    # =====================================================
     "super_admin": [
         "*",
+        # Explicit system-level permissions
         "admin:daily_send",
         "admin:set_password",
     ],
 
-    # ----------------------------------------------------
-    # System Admin
-    # ----------------------------------------------------
+    # =====================================================
+    # SYSTEM ADMIN
+    # =====================================================
     "admin": [
         "users:read", "users:write",
         "buildings:read", "buildings:write",
@@ -19,26 +24,30 @@ ROLE_PERMISSIONS = {
         "access:read", "access:write",
         "contractors:read", "contractors:write",
 
+        # Required for daily summary emails
         "admin:daily_send",
+
+        # Required for POST /admin/admin-set-password
         "admin:set_password",
     ],
 
-    # ----------------------------------------------------
-    # Property Manager (NO building access assignment)
-    # ----------------------------------------------------
+    # =====================================================
+    # PROPERTY MANAGER — cannot create/edit buildings
+    # =====================================================
     "property_manager": [
         "buildings:read",
+
         "events:read", "events:write",
         "documents:read", "documents:write",
         "contractors:read",
 
-        # ❌ Removed: "access:write"
-        "access:read",
+        # You previously allowed this — keeping it as-is
+        "access:read", "access:write",
     ],
 
-    # ----------------------------------------------------
-    # HOA Manager
-    # ----------------------------------------------------
+    # =====================================================
+    # AOAO MANAGER
+    # =====================================================
     "hoa": [
         "buildings:read",
         "events:read", "events:write",
@@ -46,9 +55,9 @@ ROLE_PERMISSIONS = {
         "contractors:read",
     ],
 
-    # ----------------------------------------------------
-    # HOA Staff
-    # ----------------------------------------------------
+    # =====================================================
+    # AOAO STAFF
+    # =====================================================
     "hoa_staff": [
         "buildings:read",
         "events:read", "events:write",
@@ -56,24 +65,28 @@ ROLE_PERMISSIONS = {
         "contractors:read",
     ],
 
-    # ----------------------------------------------------
-    # Contractor + Staff
-    # ----------------------------------------------------
+    # =====================================================
+    # CONTRACTOR
+    # =====================================================
     "contractor": [
         "events:read", "events:write",
         "documents:read", "documents:write",
         "contractors:read",
     ],
 
+    # =====================================================
+    # CONTRACTOR STAFF
+    # =====================================================
     "contractor_staff": [
-        "events:read", "events:write",
+        "events:read",
+        "events:write",
         "documents:read",
         "contractors:read",
     ],
 
-    # ----------------------------------------------------
-    # Audit Roles
-    # ----------------------------------------------------
+    # =====================================================
+    # AUDITOR
+    # =====================================================
     "auditor": [
         "events:read",
         "documents:read",
@@ -81,32 +94,35 @@ ROLE_PERMISSIONS = {
         "contractors:read",
     ],
 
-    # ----------------------------------------------------
-    # Owner / Tenant
-    # ----------------------------------------------------
+    # =====================================================
+    # OWNER
+    # =====================================================
     "owner": [
         "events:read",
         "documents:read",
         "buildings:read",
     ],
 
+    # =====================================================
+    # TENANT
+    # =====================================================
     "tenant": [
         "events:read",
         "documents:read",
         "buildings:read",
     ],
 
-    # ----------------------------------------------------
-    # AinaReports Buyer
-    # ----------------------------------------------------
+    # =====================================================
+    # BUYER — AinaReports purchasers
+    # =====================================================
     "buyer": [
         "buildings:read",
         "events:read",
         "documents:read",
     ],
 
-    # ----------------------------------------------------
-    # Guest
-    # ----------------------------------------------------
+    # =====================================================
+    # FALLBACK
+    # =====================================================
     "guest": [],
 }
