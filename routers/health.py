@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+# routers/health.py
+
+from fastapi import APIRouter
 from core.supabase_client import ping_supabase
 
 router = APIRouter(
@@ -6,40 +8,48 @@ router = APIRouter(
     tags=["Health"],
 )
 
+
 # -----------------------------------------------------
-# DB HEALTH CHECK
+# GET /health/db
+# Checks Supabase connection + table queries
+# No auth required
 # -----------------------------------------------------
-@router.get("/db", summary="Database / Supabase health check")
-async def db_health_check():
+@router.get("/db", summary="Supabase / DB health check")
+async def health_db():
     """
-    Verifies connectivity to Supabase.
-    This endpoint intentionally requires NO AUTH,
-    so Render or external monitors can check health.
+    Verifies full Supabase connectivity.
+    - Checks if URL + key are configured
+    - Attempts to query several tables
+    - Returns row-count + error details per table
+    
+    Safe for external health monitors (no auth required).
     """
     try:
-        response = ping_supabase()
+        status = ping_supabase()
+        return {
+            "service": "Supabase",
+            "status": status.get("status", "unknown"),
+            "details": status,
+        }
+
     except Exception as e:
         return {
             "service": "Supabase",
             "status": "error",
-            "detail": str(e),
+            "error": str(e),
         }
 
-    return {
-        "service": "Supabase",
-        **response
-    }
 
 # -----------------------------------------------------
-# APP HEALTH CHECK
+# GET /health/app
+# Simple API health check for Render
 # -----------------------------------------------------
 @router.get("/app", summary="App health check")
-async def app_health_check():
+async def health_app():
     """
-    Basic application health check.
-    Useful for Render's health checks or uptime monitors.
+    Lightweight health check for Render or uptime monitors.
     """
     return {
         "service": "Aina API",
-        "status": "ok"
+        "status": "ok",
     }
