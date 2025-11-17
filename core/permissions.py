@@ -1,21 +1,11 @@
-"""
-ROLE_PERMISSIONS defines the permissions granted to each role.
-
-Rules:
-- super_admin has unrestricted access ("*").
-- admin gets full system management permissions (but not super_admin).
-- Lower roles only get read/write access relevant to their responsibilities.
-- Special system-level actions (e.g., admin-daily reports) are included.
-"""
-
 ROLE_PERMISSIONS = {
     # ----------------------------------------------------
     # Full System Access (Master)
     # ----------------------------------------------------
     "super_admin": [
-        "*",                    # unrestricted
-        "admin:daily_send",     # explicitly included
-        "admin:set_password",   # ⭐ allow super admin to set any password
+        "*",
+        "admin:daily_send",
+        "admin:set_password",
     ],
 
     # ----------------------------------------------------
@@ -29,21 +19,20 @@ ROLE_PERMISSIONS = {
         "access:read", "access:write",
         "contractors:read", "contractors:write",
 
-        # ⭐ REQUIRED FOR POST /admin-daily/send
         "admin:daily_send",
-
-        # ⭐ NEW — REQUIRED FOR POST /auth/admin-set-password
         "admin:set_password",
     ],
 
     # ----------------------------------------------------
-    # Property Manager
+    # Property Manager (NO building access assignment)
     # ----------------------------------------------------
     "property_manager": [
         "buildings:read",
         "events:read", "events:write",
         "documents:read", "documents:write",
         "contractors:read",
+
+        # ❌ Removed: "access:write"
         "access:read",
     ],
 
@@ -68,7 +57,7 @@ ROLE_PERMISSIONS = {
     ],
 
     # ----------------------------------------------------
-    # Contractors
+    # Contractor + Staff
     # ----------------------------------------------------
     "contractor": [
         "events:read", "events:write",
@@ -83,7 +72,7 @@ ROLE_PERMISSIONS = {
     ],
 
     # ----------------------------------------------------
-    # Auditors
+    # Audit Roles
     # ----------------------------------------------------
     "auditor": [
         "events:read",
@@ -93,7 +82,7 @@ ROLE_PERMISSIONS = {
     ],
 
     # ----------------------------------------------------
-    # Owners / Tenants
+    # Owner / Tenant
     # ----------------------------------------------------
     "owner": [
         "events:read",
@@ -108,7 +97,7 @@ ROLE_PERMISSIONS = {
     ],
 
     # ----------------------------------------------------
-    # AinaReports Purchasers
+    # AinaReports Buyer
     # ----------------------------------------------------
     "buyer": [
         "buildings:read",
@@ -117,7 +106,7 @@ ROLE_PERMISSIONS = {
     ],
 
     # ----------------------------------------------------
-    # No Access
+    # Guest
     # ----------------------------------------------------
     "guest": [],
 }
