@@ -32,6 +32,9 @@ from routers.health import router as health_router
 from routers.admin import router as admin_router
 from routers.admin_daily import router as admin_daily_router
 
+# ⭐ NEW — Admin Set Password Router
+from routers.admin_set_password import router as admin_set_password_router
+
 
 # -------------------------------------------------
 # Create the Application
@@ -106,6 +109,9 @@ def create_app() -> FastAPI:
     # Admin
     app.include_router(admin_router)
     app.include_router(admin_daily_router)
+
+    # ⭐ NEW — Admin Set Password
+    app.include_router(admin_set_password_router)
 
     # Uploads
     app.include_router(uploads_router)
