@@ -11,7 +11,6 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
-
 from models.signup import SignupRequestCreate
 
 
@@ -51,9 +50,11 @@ def get_signup_request_by_id(request_id: str):
 def request_access(payload: SignupRequestCreate):
     client = get_supabase_client()
 
+    email = payload.email.strip().lower()
+
     request_data = {
         "full_name": payload.full_name,
-        "email": payload.email,
+        "email": email,
         "phone": payload.phone,
         "organization_name": payload.organization_name,
         "requester_role": payload.requester_role,
@@ -73,7 +74,7 @@ def request_access(payload: SignupRequestCreate):
 
     signup = result.data[0]
 
-    # User Confirmation Email
+    # User confirmation email
     try:
         send_email(
             subject="Aina Protocol - Signup Request Received",
@@ -86,12 +87,12 @@ We will review it shortly.
 Mahalo,
 Aina Protocol Team
 """,
-            to=payload.email,
+            to=email,
         )
     except Exception as e:
         print("Email send failed (user):", e)
 
-    # Admin Notification Email
+    # Admin notification email
     try:
         send_email(
             subject="New Signup Request - Aina Protocol",
@@ -101,13 +102,13 @@ New signup request received:
 Organization: {payload.organization_name or "(none)"}
 Requested Role: {payload.requester_role or "(none)"}
 Name: {payload.full_name}
-Email: {payload.email}
+Email: {email}
 Phone: {payload.phone or "(none)"}
 
 Notes:
 {payload.notes or "(none)"}
 
-Request ID: {signup["id"]}
+Request ID: {signup['id']}
 """,
         )
     except Exception as e:
@@ -151,7 +152,7 @@ def validate_role_assignment(requested_role: str, current_user: CurrentUser):
 
 
 # -----------------------------------------------------
-# 3️⃣ ADMIN — Approve signup request (Supabase Auth)
+# 3️⃣ ADMIN — Approve signup request
 # -----------------------------------------------------
 @router.post(
     "/requests/{request_id}/approve",
@@ -169,57 +170,56 @@ def approve_request(
     if req["status"] != "pending":
         raise HTTPException(400, "Request already processed")
 
+    email = req["email"].strip().lower()
     requested_role = req.get("requester_role") or "hoa"
 
-    # Secure role assignment
+    # secure role assignment
     validate_role_assignment(requested_role, current_user)
 
-    # ---------------------------------------------------------
-    # Create user in Supabase Auth (no password)
-    # Sends password-setup email automatically
-    # ---------------------------------------------------------
     metadata = {
         "full_name": req.get("full_name"),
         "organization_name": req.get("organization_name"),
         "phone": req.get("phone"),
-        "contractor_id": None,
         "role": requested_role,
     }
 
+    # Create user in Supabase Auth (no password)
     try:
         user_resp = client.auth.admin.create_user(
             {
-                "email": req["email"],
-                "email_confirm": True,
+                "email": email,
                 "user_metadata": metadata,
             }
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
 
-    # ---------------------------------------------------------
     # Send invite email (password setup)
-    # ---------------------------------------------------------
     try:
-        client.auth.admin.invite_user_by_email(req["email"])
+        client.auth.admin.invite_user_by_email(email)
     except Exception as e:
         print("Password setup email error:", e)
 
-    # Mark request approved
+    # Update signup request status
     try:
-        client.table("signup_requests").update(
-            {
-                "status": "approved",
-                "approved_at": datetime.utcnow().isoformat(),
-            },
-            returning="representation",
-        ).eq("id", request_id).execute()
+        (
+            client.table("signup_requests")
+            .update(
+                {
+                    "status": "approved",
+                    "approved_at": datetime.utcnow().isoformat(),
+                },
+                returning="representation",
+            )
+            .eq("id", request_id)
+            .execute()
+        )
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
     return {
         "status": "approved",
-        "email": req["email"],
+        "email": email,
         "assigned_role": requested_role,
     }
 
@@ -244,13 +244,18 @@ def reject_request(
         raise HTTPException(400, "Request already processed")
 
     try:
-        client.table("signup_requests").update(
-            {
-                "status": "rejected",
-                "rejected_at": datetime.utcnow().isoformat(),
-            },
-            returning="representation",
-        ).eq("id", request_id).execute()
+        (
+            client.table("signup_requests")
+            .update(
+                {
+                    "status": "rejected",
+                    "rejected_at": datetime.utcnow().isoformat(),
+                },
+                returning="representation",
+            )
+            .eq("id", request_id)
+            .execute()
+        )
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
@@ -272,4 +277,7 @@ Aina Protocol Team
     except Exception as e:
         print("Rejection email failed:", e)
 
-    return {"status": "rejected", "request_id": request_id"}
+    return {
+        "status": "rejected",
+        "request_id": request_id,
+    }
