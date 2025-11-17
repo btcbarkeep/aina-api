@@ -16,6 +16,9 @@ ROLE_PERMISSIONS = {
         "documents:read", "documents:write",
         "access:read", "access:write",
         "contractors:read", "contractors:write",
+
+        # ⭐ NEW — needed for POST /admin-daily/send
+        "admin:daily_send",
     ],
 
     # ----------------------------------------------------
