@@ -6,7 +6,6 @@ router = APIRouter(
     tags=["Health"],
 )
 
-
 # -----------------------------------------------------
 # DB HEALTH CHECK
 # -----------------------------------------------------
@@ -17,7 +16,6 @@ async def db_health_check():
     This endpoint intentionally requires NO AUTH,
     so Render or external monitors can check health.
     """
-
     try:
         response = ping_supabase()
     except Exception as e:
@@ -31,7 +29,6 @@ async def db_health_check():
         "service": "Supabase",
         **response
     }
-
 
 # -----------------------------------------------------
 # APP HEALTH CHECK
