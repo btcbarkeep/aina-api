@@ -5,52 +5,40 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-# Ensure local imports resolve correctly
+# Ensure local imports resolve
 sys.path.append(os.path.dirname(__file__))
 
-# Core / Config
+# Core
 from core.config import settings
 from core.logging_config import logger
 
 # -------------------------------------------------
-# Routers: Data / Supabase-backed
-# -------------------------------------------------
-from routers.buildings_supabase import router as buildings_router
-from routers.events_supabase import router as events_router
-from routers.documents_supabase import router as documents_router
-
-# Contractors (new)
-from routers.contractors_supabase import router as contractors_router
-from routers.contractor_events_supabase import router as contractor_events_router
-
-# -------------------------------------------------
-# Routers: Auth / Admin
+# Routers — Updated (NO more _supabase, NO more /api/v1)
 # -------------------------------------------------
 from routers.auth import router as auth_router
 from routers.signup import router as signup_router
-from routers.admin import router as admin_router
 from routers.user_access import router as user_access_router
-from routers.admin_daily import router as admin_daily_router
 
+from routers.buildings import router as buildings_router
+from routers.events import router as events_router
+from routers.documents import router as documents_router
+from routers.contractors import router as contractors_router
+from routers.contractor_events import router as contractor_events_router
 
-# -------------------------------------------------
-# AWS Uploads
-# -------------------------------------------------
 from routers.uploads import router as uploads_router
-
-# -------------------------------------------------
-# Health
-# -------------------------------------------------
 from routers.health import router as health_router
 
+# NOTE: admin + admin_daily removed unless you want them restored
+# (you can add them back and I’ll update paths for them)
+
 
 # -------------------------------------------------
-# Create Application
+# Create the Application
 # -------------------------------------------------
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.PROJECT_NAME,
-        version="0.5.0",
+        version="1.0.0",
         description="Aina Protocol API — Supabase-powered Real Estate Reporting",
     )
 
@@ -66,27 +54,24 @@ def create_app() -> FastAPI:
     )
 
     # -------------------------------------------------
-    # Startup Logic
+    # Startup logging
     # -------------------------------------------------
     @app.on_event("startup")
     async def on_startup():
         logger.info("🚀 Starting Aina Protocol API")
-        print("\n📍 Registered /api/v1 Routes:\n")
+        print("\n📍 Registered Routes:\n")
         for route in app.routes:
-            if route.path.startswith("/api/v1"):
-                methods = ",".join(route.methods or [])
-                print(f"➡️ {methods:12s} {route.path}")
+            methods = ",".join(route.methods or [])
+            print(f"➡️ {methods:10s} {route.path}")
         print("\n✅ Route log complete.\n")
 
     # -------------------------------------------------
-    # Error Handling
+    # Error handling
     # -------------------------------------------------
     @app.exception_handler(StarletteHTTPException)
     async def handle_http(request: Request, exc: StarletteHTTPException):
         if exc.status_code in (401, 403, 500):
-            logger.warning(
-                f"HTTP {exc.status_code} at {request.url} — {exc.detail}"
-            )
+            logger.warning(f"HTTP {exc.status_code} at {request.url} — {exc.detail}")
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @app.exception_handler(Exception)
@@ -98,37 +83,31 @@ def create_app() -> FastAPI:
         )
 
     # -------------------------------------------------
-    # Register All Versioned Routers (/api/v1)
+    # Register Routers (NO /api/v1 prefix anymore)
     # -------------------------------------------------
 
-    # Auth + Signup
-    app.include_router(auth_router,                  prefix="/api/v1")
-    app.include_router(signup_router,                prefix="/api/v1")
+    # Auth
+    app.include_router(auth_router)
+    app.include_router(signup_router)
 
-    # Admin + Access Control
-    app.include_router(admin_router,                 prefix="/api/v1")
-    app.include_router(user_access_router,           prefix="/api/v1")
+    # Access Control
+    app.include_router(user_access_router)
 
-    # Supabase-backed Data Routers
-    app.include_router(buildings_router,             prefix="/api/v1")
-    app.include_router(events_router,                prefix="/api/v1")
-    app.include_router(documents_router,             prefix="/api/v1")
+    # Core Data Routers
+    app.include_router(buildings_router)
+    app.include_router(events_router)
+    app.include_router(documents_router)
+    app.include_router(contractors_router)
+    app.include_router(contractor_events_router)
 
-    # Contractors (directory + event mapping)
-    app.include_router(contractors_router,           prefix="/api/v1")
-    app.include_router(contractor_events_router,     prefix="/api/v1")
+    # Uploads
+    app.include_router(uploads_router)
 
-    # Daily admin automation
-    app.include_router(admin_daily_router,           prefix="/api/v1")
-
-    # S3 Uploads
-    app.include_router(uploads_router,               prefix="/api/v1")
-
-    # Health Checks
-    app.include_router(health_router,                prefix="/api/v1")
+    # Health
+    app.include_router(health_router)
 
     # -------------------------------------------------
-    # Root — Redirect to Cloudflare Login
+    # Root Redirect (Cloudflare Frontend)
     # -------------------------------------------------
     @app.get("/", include_in_schema=False)
     async def root():
@@ -137,5 +116,5 @@ def create_app() -> FastAPI:
     return app
 
 
-# Create the application instance
+# Create the global FastAPI instance
 app = create_app()
