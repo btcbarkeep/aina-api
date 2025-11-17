@@ -8,6 +8,7 @@ ROLE_PERMISSIONS = {
     # =====================================================
     "super_admin": [
         "*",
+
         # Explicit system-level permissions
         "admin:daily_send",
         "admin:set_password",
@@ -16,6 +17,9 @@ ROLE_PERMISSIONS = {
         "users:create",
         "users:update",
         "users:delete",
+
+        # Approval workflow
+        "requests:approve",
     ],
 
     # =====================================================
@@ -35,7 +39,7 @@ ROLE_PERMISSIONS = {
         # Documents
         "documents:read", "documents:write",
 
-        # Access control (building access assignment)
+        # Access control
         "access:read", "access:write",
 
         # Contractor management
@@ -44,6 +48,9 @@ ROLE_PERMISSIONS = {
         # System-level actions
         "admin:daily_send",
         "admin:set_password",
+
+        # Approval workflow
+        "requests:approve",
     ],
 
     # =====================================================
@@ -51,11 +58,9 @@ ROLE_PERMISSIONS = {
     # =====================================================
     "property_manager": [
         "buildings:read",
-
         "events:read", "events:write",
         "documents:read", "documents:write",
         "contractors:read",
-
         "access:read", "access:write",
     ],
 
