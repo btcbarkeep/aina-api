@@ -1,4 +1,4 @@
-# routers/contractors_supabase.py
+# routers/contractors.py
 
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
-    requires_role,
+    requires_permission,
 )
 
 from core.supabase_client import get_supabase_client
@@ -19,10 +19,9 @@ router = APIRouter(
     tags=["Contractors"],
 )
 
-
-# ============================================================
+# ------------------------------------------------------------
 # Helper — sanitize input
-# ============================================================
+# ------------------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
     for k, v in data.items():
@@ -33,35 +32,28 @@ def sanitize(data: dict) -> dict:
     return clean
 
 
-# ============================================================
-# Role-based contractor access rules
-# ============================================================
+# ------------------------------------------------------------
+# Contractor access logic
+# ------------------------------------------------------------
 def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
     """
-    Access rules:
-      - admin / super_admin / manager can access ANY contractor
-      - contractor can ONLY access their own contractor_id (stored in user row)
-      - hoa cannot access contractors at all
+    Access rules under permission system:
+
+      • contractors:read allows admins/managers/etc. to read ANY contractor
+      • contractors:write allows create/update/delete of ANY contractor
+
+      • contractors with role "contractor" can ONLY access their own ID,
+        regardless of permissions
     """
-
-    # Full access:
-    if current_user.role in ["admin", "super_admin", "manager"]:
-        return
-
-    # Contractor → must only access themselves
+    # Contractors restricted to themselves
     if current_user.role == "contractor":
-        # NOTE: Contractors are linked by user.id == contractor.id
         if current_user.id != contractor_id:
             raise HTTPException(403, "Contractors may only access their own profile.")
-        return
-
-    # HOA / other → no access
-    raise HTTPException(403, "You do not have permission to access contractor data.")
 
 
-# ============================================================
+# ------------------------------------------------------------
 # Models
-# ============================================================
+# ------------------------------------------------------------
 class ContractorBase(BaseModel):
     company_name: str
     phone: Optional[str] = None
@@ -93,18 +85,16 @@ class ContractorUpdate(BaseModel):
     logo_url: Optional[str] = None
 
 
-# ============================================================
+# ------------------------------------------------------------
 # LIST CONTRACTORS
-# ============================================================
+# ------------------------------------------------------------
 @router.get(
     "/",
     response_model=List[ContractorRead],
-    summary="List all contractors"
+    summary="List all contractors",
+    dependencies=[Depends(requires_permission("contractors:read"))],
 )
-def list_contractors(current_user: CurrentUser = Depends(get_current_user)):
-    if current_user.role not in ["admin", "super_admin", "manager"]:
-        raise HTTPException(403, "Only admin/manager roles can list all contractors.")
-
+def list_contractors():
     client = get_supabase_client()
 
     result = (
@@ -117,17 +107,18 @@ def list_contractors(current_user: CurrentUser = Depends(get_current_user)):
     return result.data or []
 
 
-# ============================================================
+# ------------------------------------------------------------
 # GET A CONTRACTOR
-# ============================================================
+# ------------------------------------------------------------
 @router.get(
     "/{contractor_id}",
     response_model=ContractorRead,
-    summary="Get contractor profile"
+    summary="Get contractor profile",
+    dependencies=[Depends(requires_permission("contractors:read"))],
 )
 def get_contractor(
     contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     ensure_contractor_access(current_user, contractor_id)
 
@@ -147,14 +138,14 @@ def get_contractor(
     return result.data
 
 
-# ============================================================
-# CREATE CONTRACTOR (Admin only)
-# ============================================================
+# ------------------------------------------------------------
+# CREATE CONTRACTOR
+# ------------------------------------------------------------
 @router.post(
     "/",
     response_model=ContractorRead,
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
-    summary="Create contractor"
+    summary="Create contractor",
+    dependencies=[Depends(requires_permission("contractors:write"))],
 )
 def create_contractor(payload: ContractorCreate):
     client = get_supabase_client()
@@ -172,19 +163,22 @@ def create_contractor(payload: ContractorCreate):
     return result.data[0]
 
 
-# ============================================================
-# UPDATE CONTRACTOR (Admin only)
-# ============================================================
+# ------------------------------------------------------------
+# UPDATE CONTRACTOR
+# ------------------------------------------------------------
 @router.put(
     "/{contractor_id}",
     response_model=ContractorRead,
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
-    summary="Update contractor"
+    summary="Update contractor",
+    dependencies=[Depends(requires_permission("contractors:write"))],
 )
 def update_contractor(
     contractor_id: str,
-    payload: ContractorUpdate
+    payload: ContractorUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
+    ensure_contractor_access(current_user, contractor_id)
+
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     result = update_record("contractors", contractor_id, update_data)
@@ -195,18 +189,23 @@ def update_contractor(
     return result["data"]
 
 
-# ============================================================
-# DELETE CONTRACTOR (Admin only)
-# ============================================================
+# ------------------------------------------------------------
+# DELETE CONTRACTOR
+# ------------------------------------------------------------
 @router.delete(
     "/{contractor_id}",
-    dependencies=[Depends(requires_role(["admin", "super_admin"]))],
-    summary="Delete contractor"
+    summary="Delete contractor",
+    dependencies=[Depends(requires_permission("contractors:write"))],
 )
-def delete_contractor(contractor_id: str):
+def delete_contractor(
+    contractor_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    ensure_contractor_access(current_user, contractor_id)
+
     client = get_supabase_client()
 
-    # Check if events reference this contractor
+    # Cannot delete if contractor has events
     events = (
         client.table("events")
         .select("id")
@@ -233,16 +232,17 @@ def delete_contractor(contractor_id: str):
     return {"status": "deleted", "id": contractor_id}
 
 
-# ============================================================
+# ------------------------------------------------------------
 # CONTRACTOR → EVENTS
-# ============================================================
+# ------------------------------------------------------------
 @router.get(
     "/{contractor_id}/events",
-    summary="List events submitted by this contractor"
+    summary="List events submitted by this contractor",
+    dependencies=[Depends(requires_permission("contractor_events:read"))],
 )
 def contractor_events(
     contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     ensure_contractor_access(current_user, contractor_id)
 
@@ -259,16 +259,17 @@ def contractor_events(
     return result.data or []
 
 
-# ============================================================
-# CONTRACTOR → BUILDINGS WORKED IN
-# ============================================================
+# ------------------------------------------------------------
+# CONTRACTOR → BUILDINGS
+# ------------------------------------------------------------
 @router.get(
     "/{contractor_id}/buildings",
-    summary="List buildings this contractor has submitted events for"
+    summary="List buildings this contractor worked in",
+    dependencies=[Depends(requires_permission("contractor_events:read"))],
 )
 def contractor_buildings(
     contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     ensure_contractor_access(current_user, contractor_id)
 
@@ -296,16 +297,17 @@ def contractor_buildings(
     return buildings.data or []
 
 
-# ============================================================
-# CONTRACTOR → STATISTICS
-# ============================================================
+# ------------------------------------------------------------
+# CONTRACTOR → STATS
+# ------------------------------------------------------------
 @router.get(
     "/{contractor_id}/stats",
-    summary="Get stats for contractor"
+    summary="Get contractor stats",
+    dependencies=[Depends(requires_permission("contractor_events:read"))],
 )
 def contractor_stats(
     contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     ensure_contractor_access(current_user, contractor_id)
 
