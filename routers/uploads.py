@@ -8,7 +8,12 @@ import os
 import re
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from dependencies.auth import get_current_user, CurrentUser
+from dependencies.auth import (
+    get_current_user,
+    CurrentUser,
+    requires_permission,    # ⭐ NEW global-permission RBAC
+)
+
 from core.supabase_client import get_supabase_client
 
 
@@ -16,10 +21,6 @@ router = APIRouter(
     prefix="/uploads",
     tags=["Uploads"],
 )
-
-"""
-UPLOAD ROUTER — FINALIZED + RBAC-CORRECT + SYNC-SAFE
-"""
 
 
 # -----------------------------------------------------
@@ -69,15 +70,14 @@ def get_s3_client():
 def verify_user_building_access(current_user: CurrentUser, building_id: str):
     client = get_supabase_client()
 
-    # Admin / manager bypass
+    # Admin/manager bypass (business logic)
     if current_user.role in ["admin", "manager"]:
         return
 
-    # Everyone else → check table
     result = (
         client.table("user_building_access")
         .select("id")
-        .eq("user_id", current_user.id)   # 🔥 FIXED
+        .eq("user_id", current_user.id)
         .eq("building_id", building_id)
         .execute()
     )
@@ -109,9 +109,13 @@ def get_event_building_id(event_id: str | None):
 
 
 # -----------------------------------------------------
-# UPLOAD DOCUMENT
+# UPLOAD DOCUMENT (permission: upload:write)
 # -----------------------------------------------------
-@router.post("/", summary="Upload a document file")
+@router.post(
+    "/",
+    summary="Upload a document file",
+    dependencies=[Depends(requires_permission("upload:write"))],
+)
 async def upload_document(
     file: UploadFile = File(...),
     building_id: str = Form(...),
@@ -121,15 +125,18 @@ async def upload_document(
 ):
     """
     Uploads a document to S3 and creates a Supabase record.
-    Applies RBAC + building access + event validation.
+    Applies:
+      • Permission-based RBAC (upload:write)
+      • Building access checks
+      • Event→Building validation
     """
 
-    # Validate event → building
+    # Validate event belongs to building
     event_building = get_event_building_id(event_id)
     if event_building and event_building != building_id:
         raise HTTPException(400, "Event does not belong to this building.")
 
-    # Building access check
+    # Building access checks
     verify_user_building_access(current_user, building_id)
 
     try:
@@ -162,7 +169,7 @@ async def upload_document(
             ExpiresIn=86400,
         )
 
-        # Insert Supabase row — SYNC SAFE
+        # Insert Supabase row
         payload = sanitize({
             "event_id": event_id,
             "building_id": building_id,
@@ -171,7 +178,7 @@ async def upload_document(
             "content_type": file.content_type,
             "size_bytes": getattr(file, "size", None),
             "created_at": datetime.utcnow().isoformat(),
-            "uploaded_by": current_user.id,    # 🔥 FIXED
+            "uploaded_by": current_user.id,
         })
 
         client = get_supabase_client()
@@ -195,4 +202,4 @@ async def upload_document(
         }
 
     except (NoCredentialsError, ClientError) as e:
-        raise HTTPException(500, detail=str(e))
+        raise HTTPException(500, str(e))
