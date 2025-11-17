@@ -11,17 +11,14 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import update_record
-
+from core.supabase_helpers import safe_update
 
 router = APIRouter(
     prefix="/contractors",
     tags=["Contractors"],
 )
 
-# ------------------------------------------------------------
-# Helper — sanitize input
-# ------------------------------------------------------------
+
 def sanitize(data: dict) -> dict:
     clean = {}
     for k, v in data.items():
@@ -32,28 +29,14 @@ def sanitize(data: dict) -> dict:
     return clean
 
 
-# ------------------------------------------------------------
-# Contractor access logic
-# ------------------------------------------------------------
 def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
-    """
-    Access rules under permission system:
-
-      • contractors:read allows admins/managers/etc. to read ANY contractor
-      • contractors:write allows create/update/delete of ANY contractor
-
-      • contractors with role "contractor" can ONLY access their own ID,
-        regardless of permissions
-    """
-    # Contractors restricted to themselves
-    if current_user.role == "contractor":
-        if current_user.id != contractor_id:
-            raise HTTPException(403, "Contractors may only access their own profile.")
+    if current_user.role in ["admin", "super_admin", "manager"]:
+        return
+    if current_user.role == "contractor" and current_user.id == contractor_id:
+        return
+    raise HTTPException(403, "Insufficient permissions")
 
 
-# ------------------------------------------------------------
-# Models
-# ------------------------------------------------------------
 class ContractorBase(BaseModel):
     company_name: str
     phone: Optional[str] = None
@@ -85,45 +68,21 @@ class ContractorUpdate(BaseModel):
     logo_url: Optional[str] = None
 
 
-# ------------------------------------------------------------
 # LIST CONTRACTORS
-# ------------------------------------------------------------
-@router.get(
-    "/",
-    response_model=List[ContractorRead],
-    summary="List all contractors",
-    dependencies=[Depends(requires_permission("contractors:read"))],
-)
-def list_contractors():
+@router.get("", response_model=List[ContractorRead])
+def list_contractors(current_user: CurrentUser = Depends(get_current_user)):
+    if current_user.role not in ["admin", "super_admin", "manager"]:
+        raise HTTPException(403, "Only admin/manager roles can list all contractors.")
     client = get_supabase_client()
-
-    result = (
-        client.table("contractors")
-        .select("*")
-        .order("company_name", desc=False)
-        .execute()
-    )
-
+    result = client.table("contractors").select("*").order("company_name").execute()
     return result.data or []
 
 
-# ------------------------------------------------------------
-# GET A CONTRACTOR
-# ------------------------------------------------------------
-@router.get(
-    "/{contractor_id}",
-    response_model=ContractorRead,
-    summary="Get contractor profile",
-    dependencies=[Depends(requires_permission("contractors:read"))],
-)
-def get_contractor(
-    contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-):
+# GET CONTRACTOR
+@router.get("/{contractor_id}", response_model=ContractorRead)
+def get_contractor(contractor_id: str, current_user: CurrentUser = Depends(get_current_user)):
     ensure_contractor_access(current_user, contractor_id)
-
     client = get_supabase_client()
-
     result = (
         client.table("contractors")
         .select("*")
@@ -131,81 +90,41 @@ def get_contractor(
         .single()
         .execute()
     )
-
     if not result.data:
         raise HTTPException(404, "Contractor not found")
-
     return result.data
 
 
-# ------------------------------------------------------------
 # CREATE CONTRACTOR
-# ------------------------------------------------------------
-@router.post(
-    "/",
-    response_model=ContractorRead,
-    summary="Create contractor",
-    dependencies=[Depends(requires_permission("contractors:write"))],
-)
+@router.post("", response_model=ContractorRead, dependencies=[Depends(requires_permission("contractors:write"))])
 def create_contractor(payload: ContractorCreate):
     client = get_supabase_client()
     data = sanitize(payload.model_dump())
-
     result = (
         client.table("contractors")
         .insert(data, returning="representation")
         .execute()
     )
-
     if not result.data:
         raise HTTPException(500, "Failed to create contractor")
-
     return result.data[0]
 
 
-# ------------------------------------------------------------
 # UPDATE CONTRACTOR
-# ------------------------------------------------------------
-@router.put(
-    "/{contractor_id}",
-    response_model=ContractorRead,
-    summary="Update contractor",
-    dependencies=[Depends(requires_permission("contractors:write"))],
-)
-def update_contractor(
-    contractor_id: str,
-    payload: ContractorUpdate,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    ensure_contractor_access(current_user, contractor_id)
-
+@router.put("/{contractor_id}", response_model=ContractorRead, dependencies=[Depends(requires_permission("contractors:write"))])
+def update_contractor(contractor_id: str, payload: ContractorUpdate):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
-
-    result = update_record("contractors", contractor_id, update_data)
-
-    if result["status"] != "ok":
-        raise HTTPException(500, result["detail"])
-
-    return result["data"]
+    updated = safe_update("contractors", {"id": contractor_id}, update_data)
+    if not updated:
+        raise HTTPException(404, "Contractor not found")
+    return updated
 
 
-# ------------------------------------------------------------
 # DELETE CONTRACTOR
-# ------------------------------------------------------------
-@router.delete(
-    "/{contractor_id}",
-    summary="Delete contractor",
-    dependencies=[Depends(requires_permission("contractors:write"))],
-)
-def delete_contractor(
-    contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    ensure_contractor_access(current_user, contractor_id)
-
+@router.delete("/{contractor_id}", dependencies=[Depends(requires_permission("contractors:write"))])
+def delete_contractor(contractor_id: str):
     client = get_supabase_client()
 
-    # Cannot delete if contractor has events
     events = (
         client.table("events")
         .select("id")
@@ -214,10 +133,7 @@ def delete_contractor(
     )
 
     if events.data:
-        raise HTTPException(
-            400,
-            "Cannot delete contractor — events reference this contractor.",
-        )
+        raise HTTPException(400, "Cannot delete contractor — events reference this contractor.")
 
     result = (
         client.table("contractors")
@@ -230,107 +146,3 @@ def delete_contractor(
         raise HTTPException(404, "Contractor not found")
 
     return {"status": "deleted", "id": contractor_id}
-
-
-# ------------------------------------------------------------
-# CONTRACTOR → EVENTS
-# ------------------------------------------------------------
-@router.get(
-    "/{contractor_id}/events",
-    summary="List events submitted by this contractor",
-    dependencies=[Depends(requires_permission("contractor_events:read"))],
-)
-def contractor_events(
-    contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    ensure_contractor_access(current_user, contractor_id)
-
-    client = get_supabase_client()
-
-    result = (
-        client.table("events")
-        .select("*")
-        .eq("created_by", contractor_id)
-        .order("occurred_at", desc=True)
-        .execute()
-    )
-
-    return result.data or []
-
-
-# ------------------------------------------------------------
-# CONTRACTOR → BUILDINGS
-# ------------------------------------------------------------
-@router.get(
-    "/{contractor_id}/buildings",
-    summary="List buildings this contractor worked in",
-    dependencies=[Depends(requires_permission("contractor_events:read"))],
-)
-def contractor_buildings(
-    contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    ensure_contractor_access(current_user, contractor_id)
-
-    client = get_supabase_client()
-
-    events = (
-        client.table("events")
-        .select("building_id")
-        .eq("created_by", contractor_id)
-        .execute()
-    ).data or []
-
-    if not events:
-        return []
-
-    building_ids = sorted({e["building_id"] for e in events})
-
-    buildings = (
-        client.table("buildings")
-        .select("*")
-        .in_("id", building_ids)
-        .execute()
-    )
-
-    return buildings.data or []
-
-
-# ------------------------------------------------------------
-# CONTRACTOR → STATS
-# ------------------------------------------------------------
-@router.get(
-    "/{contractor_id}/stats",
-    summary="Get contractor stats",
-    dependencies=[Depends(requires_permission("contractor_events:read"))],
-)
-def contractor_stats(
-    contractor_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    ensure_contractor_access(current_user, contractor_id)
-
-    client = get_supabase_client()
-
-    rows = (
-        client.table("events")
-        .select("severity,status,event_type")
-        .eq("created_by", contractor_id)
-        .execute()
-    ).data or []
-
-    def count(field):
-        out = {}
-        for r in rows:
-            v = r.get(field)
-            if v:
-                out[v] = out.get(v, 0) + 1
-        return out
-
-    return {
-        "total_events": len(rows),
-        "by_severity": count("severity"),
-        "by_status": count("status"),
-        "by_type": count("event_type"),
-    }
