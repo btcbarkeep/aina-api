@@ -1,27 +1,24 @@
-# routers/documents.py
-
 from fastapi import APIRouter, HTTPException, Depends
 
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
-    requires_permission,    # ⭐ NEW permission system
+    requires_permission,
 )
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import update_record
-
+from core.supabase_helpers import safe_update
 from models.document import (
     DocumentCreate,
     DocumentUpdate,
     DocumentRead,
 )
 
-
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
+
 
 # -----------------------------------------------------
 # Helper — sanitize payloads ("" → None)
@@ -39,11 +36,8 @@ def sanitize(data: dict) -> dict:
 # -----------------------------------------------------
 # Helper — Check building access
 # -----------------------------------------------------
-def verify_user_building_access(user_id: str, building_id: str):
+def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
-    if not client:
-        raise HTTPException(500, "Supabase not configured")
-
     result = (
         client.table("user_building_access")
         .select("id")
@@ -53,10 +47,7 @@ def verify_user_building_access(user_id: str, building_id: str):
     )
 
     if not result.data:
-        raise HTTPException(
-            403,
-            "User does not have access to this building."
-        )
+        raise HTTPException(403, "User does not have access to this building.")
 
 
 # -----------------------------------------------------
@@ -64,7 +55,6 @@ def verify_user_building_access(user_id: str, building_id: str):
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
-
     result = (
         client.table("events")
         .select("building_id")
@@ -72,115 +62,85 @@ def get_event_building_id(event_id: str) -> str:
         .single()
         .execute()
     )
-
     if not result.data:
         raise HTTPException(404, "Event not found")
-
     return result.data["building_id"]
 
 
 # -----------------------------------------------------
-# LIST DOCUMENTS — any authenticated user
+# LIST DOCUMENTS
 # -----------------------------------------------------
-@router.get(
-    "",
-    summary="List Documents",
-    dependencies=[Depends(requires_permission("documents:read"))],
-)
-def list_documents(
-    limit: int = 100,
-):
+@router.get("", summary="List Documents")
+def list_documents(limit: int = 100, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
-
-    try:
-        result = (
-            client.table("documents")
-            .select("*")
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return result.data or []
-
-    except Exception as e:
-        raise HTTPException(500, f"Supabase fetch error: {e}")
+    result = (
+        client.table("documents")
+        .select("*")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
 
 
 # -----------------------------------------------------
 # CREATE DOCUMENT
-# Roles:
-#   • documents:write required
-#   • If NOT admin: must have building access
 # -----------------------------------------------------
 @router.post(
     "",
     response_model=DocumentRead,
-    summary="Create Document",
     dependencies=[Depends(requires_permission("documents:write"))],
+    summary="Create Document",
 )
-def create_document(
-    payload: DocumentCreate,
-    current_user: CurrentUser = Depends(get_current_user),
-):
+def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
 
-    # Determine building for RBAC
+    # Determine building
     if payload.event_id:
         building_id = get_event_building_id(payload.event_id)
     elif payload.building_id:
         building_id = payload.building_id
     else:
-        raise HTTPException(
-            400,
-            "Either event_id OR building_id must be provided."
-        )
+        raise HTTPException(400, "event_id OR building_id is required.")
 
-    # Non-super users must have building access
-    if current_user.role not in ["admin", "super_admin"]:
-        verify_user_building_access(current_user.id, building_id)
+    # Non-admins must have access
+    if current_user.role not in ["admin", "manager"]:
+        verify_user_building_access_supabase(current_user.id, building_id)
 
-    try:
-        doc_data = sanitize(payload.model_dump())
+    doc_data = sanitize(payload.model_dump())
 
-        result = (
-            client.table("documents")
-            .insert(doc_data, returning="representation")
-            .execute()
-        )
+    result = (
+        client.table("documents")
+        .insert(doc_data, returning="representation")
+        .execute()
+    )
 
-        if not result.data:
-            raise HTTPException(500, "Insert failed")
+    if not result.data:
+        raise HTTPException(500, "Insert failed")
 
-        return result.data[0]
-
-    except Exception as e:
-        raise HTTPException(500, f"Supabase insert error: {e}")
+    return result.data[0]
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT — documents:write
+# UPDATE DOCUMENT
 # -----------------------------------------------------
 @router.put(
     "/{document_id}",
     summary="Update Document",
     dependencies=[Depends(requires_permission("documents:write"))],
 )
-def update_document(
-    document_id: str,
-    payload: DocumentUpdate
-):
+def update_document(document_id: str, payload: DocumentUpdate):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    result = update_record("documents", document_id, update_data)
+    updated = safe_update("documents", {"id": document_id}, update_data)
+    if not updated:
+        raise HTTPException(404, "Document not found")
 
-    if result["status"] != "ok":
-        raise HTTPException(500, result["detail"])
-
-    return result["data"]
+    return updated
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT — documents:write
+# DELETE DOCUMENT
 # -----------------------------------------------------
 @router.delete(
     "/{document_id}",
@@ -190,18 +150,14 @@ def update_document(
 def delete_document(document_id: str):
     client = get_supabase_client()
 
-    try:
-        result = (
-            client.table("documents")
-            .delete(returning="representation")
-            .eq("id", document_id)
-            .execute()
-        )
+    result = (
+        client.table("documents")
+        .delete(returning="representation")
+        .eq("id", document_id)
+        .execute()
+    )
 
-        if not result.data:
-            raise HTTPException(404, "Document not found")
+    if not result.data:
+        raise HTTPException(404, "Document not found")
 
-        return {"status": "deleted", "id": document_id}
-
-    except Exception as e:
-        raise HTTPException(500, f"Supabase delete error: {e}")
+    return {"status": "deleted", "id": document_id}
