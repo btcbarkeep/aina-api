@@ -1,5 +1,3 @@
-# core/config.py
-
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import AnyHttpUrl, Field
@@ -36,17 +34,12 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: List[str] = []
 
     # -------------------------------------------------
-    # JWT / Auth
-    # -------------------------------------------------
-    JWT_SECRET_KEY: str = Field(..., env="JWT_SECRET_KEY")
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day token expiry
-
-    # -------------------------------------------------
-    # Supabase (Primary DB)
+    # Supabase (Primary DB & Auth)
     # -------------------------------------------------
     SUPABASE_URL: Optional[str] = Field(None, env="SUPABASE_URL")
-    SUPABASE_API_KEY: Optional[str] = Field(None, env="SUPABASE_API_KEY")
+    SUPABASE_ANON_KEY: Optional[str] = Field(None, env="SUPABASE_ANON_KEY")
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = Field(None, env="SUPABASE_SERVICE_ROLE_KEY")
+    SUPABASE_JWT_SECRET: Optional[str] = Field(None, env="SUPABASE_JWT_SECRET")
 
     # -------------------------------------------------
     # SMTP Email Notifications
@@ -57,8 +50,13 @@ class Settings(BaseSettings):
     SMTP_PASS: Optional[str] = Field(None, env="SMTP_PASS")
     SMTP_TO: Optional[str] = Field(None, env="SMTP_TO")
 
-    # 👇 NEW — destination for all admin/daily reports
+    # 👇 Destination for daily admin report emails
     ADMIN_REPORT_EMAIL: Optional[str] = Field(None, env="ADMIN_REPORT_EMAIL")
+
+    # -------------------------------------------------
+    # Webhooks / Sync notifications
+    # -------------------------------------------------
+    SYNC_WEBHOOK_URL: Optional[str] = Field(None, env="SYNC_WEBHOOK_URL")
 
     # -------------------------------------------------
     # Model Config
@@ -67,11 +65,6 @@ class Settings(BaseSettings):
         case_sensitive = True
         env_file = ".env"
         env_file_encoding = "utf-8"
-
-    # -------------------------------------------------
-    # Webhooks / Sync notifications
-    # -------------------------------------------------
-    SYNC_WEBHOOK_URL: Optional[str] = Field(None, env="SYNC_WEBHOOK_URL")
 
 
 # Instantiate settings
@@ -82,15 +75,15 @@ settings = Settings()
 # -------------------------------------------------
 cors_origins = []
 
-# 1) add Pages domain if set
+# 1) add Cloudflare Pages custom domain
 if settings.CLOUDFLARE_PAGES_DOMAIN:
     domain = settings.CLOUDFLARE_PAGES_DOMAIN
     if not domain.startswith("http"):
         domain = f"https://{domain}"
     cors_origins.append(domain.rstrip("/"))
 
-# 2) add AinaReports + AinaProtocol domains
+# 2) add AinaReports & AinaProtocol domains
 cors_origins.extend([d.rstrip("/") for d in settings.AINA_REPORTS_DOMAINS])
 
-# 3) dedupe
+# 3) remove duplicates
 settings.BACKEND_CORS_ORIGINS = sorted(list(set(cors_origins)))
