@@ -1,5 +1,8 @@
 # routers/signup.py
 
+from core.config import settings
+
+
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 
