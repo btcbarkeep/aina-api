@@ -2,13 +2,14 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
+from datetime import datetime
 
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
 )
 
-# NEW permission system
+# New permission system
 from core.permission_helpers import requires_permission
 from core.permissions import ROLE_PERMISSIONS
 
@@ -16,7 +17,7 @@ from core.permissions import ROLE_PERMISSIONS
 from core.supabase_helpers import safe_select, safe_insert, safe_update
 from core.supabase_client import get_supabase_client
 
-# Email / auth helpers
+# Email helpers
 from core.auth_helpers import (
     create_user_no_password,
     generate_password_setup_token,
@@ -27,13 +28,12 @@ from core.email_utils import send_password_setup_email
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    # Admin panel requires admin or super_admin permissions
     dependencies=[Depends(requires_permission("users:write"))],
 )
 
 
 # -----------------------------------------------------
-# Allowed System Roles (derived from your RBAC model)
+# Allowed System Roles
 # -----------------------------------------------------
 ALLOWED_ROLES = list(ROLE_PERMISSIONS.keys())
 
@@ -57,37 +57,73 @@ class AdminUpdateUser(BaseModel):
 
 
 # -----------------------------------------------------
-# Helper — Validate role changes
+# Helper: Prevent dangerous role changes
 # -----------------------------------------------------
 def validate_role_change(requestor: CurrentUser, desired_role: str):
-    """
-    Enforces:
-    - Only super_admin may assign super_admin
-    - Only roles in ALLOWED_ROLES may be assigned
-    """
 
     if desired_role not in ALLOWED_ROLES:
         raise HTTPException(400, f"Invalid role: {desired_role}")
 
-    # Only super_admin can create or assign other super_admins
-    if desired_role == "super_admin" and requestor.role != "super_admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Only super_admin can assign or modify 'super_admin' accounts."
-        )
+    client = get_supabase_client()
 
-    # Admin CANNOT assign an admin role (only super_admin should)
-    if desired_role == "admin" and requestor.role != "super_admin":
+    # List all super_admin users
+    sups = (
+        client.table("users")
+        .select("id")
+        .eq("role", "super_admin")
+        .execute()
+        .data or []
+    )
+    super_admin_ids = [u["id"] for u in sups]
+
+    # ---------------------------------------------------------
+    # Prevent assigning admin/super_admin unless you ARE super_admin
+    # ---------------------------------------------------------
+    if desired_role in ("admin", "super_admin") and requestor.role != "super_admin":
         raise HTTPException(
             403,
-            "Only super_admin may assign admin-level roles."
+            "Only a super_admin may assign admin/super_admin roles."
         )
+
+    # ---------------------------------------------------------
+    # Prevent demoting the last remaining super_admin
+    # ---------------------------------------------------------
+    if desired_role != "super_admin":
+        if requestor.id in super_admin_ids and len(super_admin_ids) == 1:
+            raise HTTPException(
+                400,
+                "Cannot demote the last remaining super_admin."
+            )
+
+
+# -----------------------------------------------------
+# Helper: Prevent deleting last super_admin
+# -----------------------------------------------------
+def prevent_deleting_last_super_admin(user_id: str):
+    client = get_supabase_client()
+
+    sups = (
+        client.table("users")
+        .select("id")
+        .eq("role", "super_admin")
+        .execute()
+        .data or []
+    )
+
+    super_admin_ids = [u["id"] for u in sups]
+
+    if user_id in super_admin_ids and len(super_admin_ids) == 1:
+        raise HTTPException(400, "Cannot delete the last remaining super_admin.")
 
 
 # -----------------------------------------------------
 # 1️⃣ CREATE USER
 # -----------------------------------------------------
-@router.post("/create-account", summary="Admin: Create a user account")
+@router.post(
+    "/create-account",
+    summary="Admin: Create a user account",
+    dependencies=[Depends(requires_permission("users:create"))]
+)
 def admin_create_account(
     payload: AdminCreateUser,
     current_user: CurrentUser = Depends(get_current_user),
@@ -118,14 +154,17 @@ def admin_create_account(
             "user_id": created.get("id"),
             "email": payload.email,
         },
-        "debug_token": token,
     }
 
 
 # -----------------------------------------------------
 # 2️⃣ LIST USERS
 # -----------------------------------------------------
-@router.get("/users", summary="Admin: List all users")
+@router.get(
+    "/users",
+    summary="Admin: List users",
+    dependencies=[Depends(requires_permission("users:read"))]
+)
 def list_users(role: str | None = None):
     client = get_supabase_client()
 
@@ -133,7 +172,9 @@ def list_users(role: str | None = None):
         query = client.table("users").select("*")
         if role:
             query = query.eq("role", role)
+
         result = query.order("created_at", desc=True).execute()
+
     except Exception as e:
         raise HTTPException(500, f"Failed fetching users: {e}")
 
@@ -143,7 +184,11 @@ def list_users(role: str | None = None):
 # -----------------------------------------------------
 # 3️⃣ GET ONE USER
 # -----------------------------------------------------
-@router.get("/users/{user_id}", summary="Admin: Get one user")
+@router.get(
+    "/users/{user_id}",
+    summary="Admin: Get one user",
+    dependencies=[Depends(requires_permission("users:read"))]
+)
 def get_user(user_id: str):
     result = safe_select("users", {"id": user_id}, single=True)
 
@@ -156,7 +201,11 @@ def get_user(user_id: str):
 # -----------------------------------------------------
 # 4️⃣ UPDATE USER
 # -----------------------------------------------------
-@router.patch("/users/{user_id}", summary="Admin: Update user")
+@router.patch(
+    "/users/{user_id}",
+    summary="Admin: Update user",
+    dependencies=[Depends(requires_permission("users:update"))]
+)
 def update_user(
     user_id: str,
     payload: AdminUpdateUser,
@@ -167,11 +216,10 @@ def update_user(
     if not update_data:
         raise HTTPException(400, "No valid fields to update")
 
-    # If updating role → validate
     if "role" in update_data:
         validate_role_change(current_user, update_data["role"])
 
-    update_data["updated_at"] = "now()"
+    update_data["updated_at"] = datetime.utcnow().isoformat()
 
     updated = safe_update("users", {"id": user_id}, update_data)
 
@@ -184,12 +232,16 @@ def update_user(
 # -----------------------------------------------------
 # 5️⃣ DELETE USER
 # -----------------------------------------------------
-@router.delete("/users/{user_id}", summary="Admin: Delete user")
+@router.delete(
+    "/users/{user_id}",
+    summary="Admin: Delete user",
+    dependencies=[Depends(requires_permission("users:delete"))]
+)
 def delete_user(
     user_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    # Prevent self-delete
+
     if user_id == current_user.id:
         raise HTTPException(400, "You cannot delete your own account.")
 
@@ -197,7 +249,7 @@ def delete_user(
     if not existing:
         raise HTTPException(404, "User not found")
 
-    email = existing["email"]
+    prevent_deleting_last_super_admin(user_id)
 
     client = get_supabase_client()
 
@@ -214,7 +266,7 @@ def delete_user(
     if not result.data:
         raise HTTPException(404, "User not found after deletion")
 
-    return {"success": True, "data": {"email": email, "user_id": user_id}}
+    return {"success": True, "data": {"email": existing["email"], "user_id": user_id}}
 
 
 # -----------------------------------------------------
@@ -222,7 +274,8 @@ def delete_user(
 # -----------------------------------------------------
 @router.post(
     "/users/{user_id}/resend-password",
-    summary="Admin: Resend password setup email"
+    summary="Admin: Resend password setup email",
+    dependencies=[Depends(requires_permission("users:update"))],
 )
 def resend_password_setup(user_id: str):
 
@@ -238,8 +291,4 @@ def resend_password_setup(user_id: str):
     except Exception as e:
         raise HTTPException(500, f"Failed sending email: {e}")
 
-    return {
-        "success": True,
-        "data": {"email": email},
-        "debug_token": token
-    }
+    return {"success": True, "data": {"email": email}}
