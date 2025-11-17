@@ -1,39 +1,35 @@
-# dependencies/auth.py
-
 from typing import Optional, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from supabase import Client
 
-from core.config import settings
 from core.supabase_client import get_supabase_client
+from core.permissions import ROLE_PERMISSIONS  # role → permission map
 
-# Role map (role → default permissions)
-from core.permissions import ROLE_PERMISSIONS
 
 bearer_scheme = HTTPBearer()
 
 
 # ============================================================
-# Current User Model
-# — everything your backend needs after authentication
+# Current User Model (full backend identity)
 # ============================================================
 class CurrentUser(BaseModel):
     id: str
     email: str
     role: str
+
     full_name: Optional[str] = None
     organization_name: Optional[str] = None
     phone: Optional[str] = None
     contractor_id: Optional[str] = None
 
-    # ⭐ NEW — per-user overrides (Option A)
+    # ⭐ Option A — per-user metadata overrides
     permissions: Optional[List[str]] = []
 
 
 # ============================================================
-# AUTH DECODING (Supabase JWT)
+# AUTH DECODING (Supabase: validates JWT + fetches metadata)
 # ============================================================
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
@@ -52,7 +48,7 @@ def get_current_user(
         raise HTTPException(500, "Supabase client not configured")
 
     # ---------------------------------------------------------
-    # Validate token via Supabase GoTrue
+    # Validate JWT via Supabase GoTrue
     # ---------------------------------------------------------
     try:
         auth_resp = client.auth.get_user(token)
@@ -63,7 +59,7 @@ def get_current_user(
         raise unauthorized
 
     # ---------------------------------------------------------
-    # Extract identity + metadata
+    # Extract identity
     # ---------------------------------------------------------
     user_id = auth_user.id
     email = auth_user.email
@@ -73,7 +69,7 @@ def get_current_user(
         raise unauthorized
 
     # ---------------------------------------------------------
-    # SPECIAL OVERRIDES
+    # SPECIAL OVERRIDES (system accounts)
     # ---------------------------------------------------------
     if metadata.get("cron") is True:
         return CurrentUser(
@@ -81,7 +77,7 @@ def get_current_user(
             email=email,
             role="admin",
             full_name="Cron Job",
-            permissions=["*"],
+            permissions=["*"],   # full access
         )
 
     if metadata.get("bootstrap_admin") is True:
@@ -90,42 +86,34 @@ def get_current_user(
             email=email,
             role="admin",
             full_name="Bootstrap Admin",
-            permissions=["*"],
+            permissions=["*"],   # full access
         )
 
     # ---------------------------------------------------------
     # NORMAL USER PATH
     # ---------------------------------------------------------
     role = metadata.get("role", "hoa")
-    full_name = metadata.get("full_name")
-    organization_name = metadata.get("organization_name")
-    phone = metadata.get("phone")
-    contractor_id = metadata.get("contractor_id")
+    if role not in ROLE_PERMISSIONS:
+        role = "hoa"
 
-    # ⭐ NEW — per-user permission overrides
     extended_permissions = metadata.get("permissions", [])
     if not isinstance(extended_permissions, list):
         extended_permissions = []
 
-    # Validate role
-    if role not in ROLE_PERMISSIONS:
-        role = "hoa"
-
-    # Return unified CurrentUser object
     return CurrentUser(
         id=user_id,
         email=email,
         role=role,
-        full_name=full_name,
-        organization_name=organization_name,
-        phone=phone,
-        contractor_id=contractor_id,
-        permissions=extended_permissions,     # ⭐ Option A included
+        full_name=metadata.get("full_name"),
+        organization_name=metadata.get("organization_name"),
+        phone=metadata.get("phone"),
+        contractor_id=metadata.get("contractor_id"),
+        permissions=extended_permissions,
     )
 
 
 # ============================================================
-# ROLE CHECKER (rarely used now but we keep it)
+# ROLE CHECKER (basic role list guard)
 # ============================================================
 def requires_role(allowed_roles: list[str]):
     def checker(current_user: CurrentUser = Depends(get_current_user)):
@@ -139,22 +127,12 @@ def requires_role(allowed_roles: list[str]):
 
 
 # ============================================================
-# BASE PERMISSION CHECK (legacy)
-# — real permission logic now in core/permission_helpers.py
+# PERMISSION CHECK (DELEGATES TO permission_helpers)
 # ============================================================
-def has_permission(role: str, permission: str) -> bool:
-    allowed = ROLE_PERMISSIONS.get(role, [])
-
-    if "*" in allowed:
-        return True
-
-    return permission in allowed
-
-
 def requires_permission(permission: str):
     """
-    Legacy wrapper. Real logic is now in core.permission_helpers.
-    Provided only to maintain API compatibility.
+    Thin wrapper so routes can still import from dependencies.auth.
+    Real RBAC logic lives in core.permission_helpers.
     """
     from core.permission_helpers import requires_permission as new_checker
     return new_checker(permission)
