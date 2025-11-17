@@ -160,17 +160,16 @@ def approve_request(
     # -------------------------------------------------
     payload = {
         "email": email,
-        "password": "",  # Required for older versions even if empty
         "email_confirm": False,
         "user_metadata": metadata,
-        "app_metadata": {"provider": "email"},
-        "invited": True  # Allow invite flow
+        "invited": True,
     }
 
     try:
         user_resp = client.auth.admin.create_user(payload)
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation error: {e}")
+
 
     # -------------------------------------------------
     # Send invite (acceptable if user already exists)
