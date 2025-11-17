@@ -1,8 +1,9 @@
 # routers/admin.py
 
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
-from datetime import datetime
 
 from dependencies.auth import (
     get_current_user,
@@ -11,14 +12,12 @@ from dependencies.auth import (
 
 from core.permission_helpers import requires_permission
 from core.permissions import ROLE_PERMISSIONS
-
 from core.supabase_client import get_supabase_client
 
 
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    dependencies=[Depends(requires_permission("users:write"))],
 )
 
 
@@ -32,23 +31,27 @@ ALLOWED_ROLES = list(ROLE_PERMISSIONS.keys())
 # Payloads
 # -----------------------------------------------------
 class AdminCreateUser(BaseModel):
-    full_name: str | None = None
+    full_name: Optional[str] = None
     email: EmailStr
-    organization_name: str | None = None
-    phone: str | None = None
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
     role: str = "hoa"
+    # ⭐ NEW — optional per-user overrides at create time
+    permissions: Optional[List[str]] = None
 
 
 class AdminUpdateUser(BaseModel):
-    full_name: str | None = None
-    organization_name: str | None = None
-    phone: str | None = None
-    role: str | None = None
+    full_name: Optional[str] = None
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
+    # ⭐ NEW — optional per-user overrides at update time
+    permissions: Optional[List[str]] = None
 
 
 # -----------------------------------------------------
 # Helper: Prevent dangerous role changes
-# (now uses Supabase Auth user list)
+# (uses Supabase Auth users)
 # -----------------------------------------------------
 def validate_role_change(requestor: CurrentUser, desired_role: str):
     if desired_role not in ALLOWED_ROLES:
@@ -56,7 +59,7 @@ def validate_role_change(requestor: CurrentUser, desired_role: str):
 
     client = get_supabase_client()
 
-    # List super admins from Supabase auth
+    # List super_admins from Supabase Auth
     try:
         users = client.auth.admin.list_users()
     except Exception as e:
@@ -74,7 +77,7 @@ def validate_role_change(requestor: CurrentUser, desired_role: str):
             "Only a super_admin may assign admin or super_admin roles."
         )
 
-    # Prevent demoting last super_admin
+    # Prevent demoting the last super_admin
     if desired_role != "super_admin" and requestor.id in super_admin_ids and len(super_admin_ids) == 1:
         raise HTTPException(400, "Cannot demote the last remaining super_admin.")
 
@@ -121,6 +124,8 @@ def admin_create_account(
         "phone": payload.phone,
         "role": payload.role,
         "contractor_id": None,
+        # ⭐ include per-user overrides if provided
+        "permissions": payload.permissions or [],
     }
 
     # Create user in Supabase Auth
@@ -161,28 +166,35 @@ def admin_create_account(
 def list_users(role: str | None = None):
     client = get_supabase_client()
 
+    if role is not None and role not in ALLOWED_ROLES:
+        raise HTTPException(400, f"Invalid role filter: {role}")
+
     try:
         users = client.auth.admin.list_users()
     except Exception as e:
         raise HTTPException(500, f"Supabase list users failed: {e}")
 
-    # Filter by role in metadata
     filtered = []
-    for u in users.users:
+    for u in users.users or []:
         meta = u.user_metadata or {}
-        if role is None or meta.get("role") == role:
+        u_role = meta.get("role", "hoa")
+        u_perms = meta.get("permissions", [])
+
+        if role is None or u_role == role:
             filtered.append({
                 "id": u.id,
                 "email": u.email,
                 "full_name": meta.get("full_name"),
                 "organization_name": meta.get("organization_name"),
                 "phone": meta.get("phone"),
-                "role": meta.get("role"),
+                "role": u_role,
                 "contractor_id": meta.get("contractor_id"),
+                "permissions": u_perms,
+                "created_at": getattr(u, "created_at", None),
             })
 
-    # Sort by creation date descending
-    filtered.sort(key=lambda u: u.get("created_at", ""), reverse=True)
+    # Sort by Supabase creation date desc (if available)
+    filtered.sort(key=lambda u: u.get("created_at") or "", reverse=True)
 
     return {"success": True, "data": filtered}
 
@@ -219,6 +231,8 @@ def get_user(user_id: str):
             "phone": meta.get("phone"),
             "role": meta.get("role"),
             "contractor_id": meta.get("contractor_id"),
+            "permissions": meta.get("permissions", []),
+            "created_at": getattr(u, "created_at", None),
         },
     }
 
@@ -238,25 +252,41 @@ def update_user(
 ):
     client = get_supabase_client()
 
+    # Only keep fields that were actually provided
     update_meta = {k: v for k, v in payload.model_dump().items() if v is not None}
-
     if not update_meta:
         raise HTTPException(400, "No valid fields to update")
 
-    if "role" in update_meta:
-        validate_role_change(current_user, update_meta["role"])
+    # Fetch existing metadata to MERGE instead of overwrite
+    try:
+        user_resp = client.auth.admin.get_user_by_id(user_id)
+    except Exception as e:
+        raise HTTPException(500, f"Supabase read error: {e}")
+
+    if not user_resp.user:
+        raise HTTPException(404, "User not found")
+
+    existing_meta = user_resp.user.user_metadata or {}
+
+    # If role is changing, validate it
+    new_role = update_meta.get("role", existing_meta.get("role", "hoa"))
+    validate_role_change(current_user, new_role)
+
+    # Merge metadata (existing + updates)
+    merged_meta = {**existing_meta, **update_meta}
+    merged_meta["role"] = new_role  # ensure final role is set
 
     try:
-        user_resp = client.auth.admin.update_user_by_id(
+        client.auth.admin.update_user_by_id(
             user_id,
             {
-                "user_metadata": update_meta,
+                "user_metadata": merged_meta,
             },
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    return {"success": True, "data": update_meta}
+    return {"success": True, "data": merged_meta}
 
 
 # -----------------------------------------------------
