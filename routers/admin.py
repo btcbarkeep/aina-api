@@ -160,9 +160,7 @@ def admin_create_account(
     payload: AdminCreateUser,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-
-    # NEW: Creating a user → target_user_id=None
-    validate_role_change(current_user, payload.role, target_user_id=None)
+    validate_role_change(current_user, payload.role)
 
     client = get_supabase_client()
 
@@ -175,6 +173,7 @@ def admin_create_account(
         "permissions": payload.permissions or [],
     }
 
+    # 1️⃣ Create the user
     try:
         user_resp = client.auth.admin.create_user(
             {
@@ -186,11 +185,17 @@ def admin_create_account(
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation failed: {e}")
 
-    # Send password setup invite
+    # 2️⃣ Send invite (unless user exists)
     try:
         client.auth.admin.invite_user_by_email(payload.email)
+
     except Exception as e:
-        raise HTTPException(500, f"Failed to send invite email: {e}")
+        msg = str(e).lower()
+        if "already been registered" in msg or "already registered" in msg:
+            # Safe to ignore
+            pass
+        else:
+            raise HTTPException(500, f"Failed to send invite email: {e}")
 
     return {
         "success": True,
