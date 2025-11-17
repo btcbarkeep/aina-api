@@ -11,23 +11,38 @@ ROLE_PERMISSIONS = {
         # Explicit system-level permissions
         "admin:daily_send",
         "admin:set_password",
+
+        # Explicit user-management permissions
+        "users:create",
+        "users:update",
+        "users:delete",
     ],
 
     # =====================================================
     # SYSTEM ADMIN
     # =====================================================
     "admin": [
+        # Core user management
         "users:read", "users:write",
+        "users:create", "users:update", "users:delete",
+
+        # Building management
         "buildings:read", "buildings:write",
+
+        # Events
         "events:read", "events:write",
+
+        # Documents
         "documents:read", "documents:write",
+
+        # Access control (building access assignment)
         "access:read", "access:write",
+
+        # Contractor management
         "contractors:read", "contractors:write",
 
-        # Required for daily summary emails
+        # System-level actions
         "admin:daily_send",
-
-        # Required for POST /admin/admin-set-password
         "admin:set_password",
     ],
 
@@ -41,7 +56,6 @@ ROLE_PERMISSIONS = {
         "documents:read", "documents:write",
         "contractors:read",
 
-        # You previously allowed this — keeping it as-is
         "access:read", "access:write",
     ],
 
@@ -78,8 +92,7 @@ ROLE_PERMISSIONS = {
     # CONTRACTOR STAFF
     # =====================================================
     "contractor_staff": [
-        "events:read",
-        "events:write",
+        "events:read", "events:write",
         "documents:read",
         "contractors:read",
     ],
