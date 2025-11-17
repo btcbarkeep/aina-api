@@ -8,7 +8,6 @@ from dependencies.auth import get_current_user, CurrentUser
 from core.permission_helpers import requires_permission
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import safe_select, safe_insert, safe_update
 from core.utils import sanitize
 
 from models.building import BuildingCreate, BuildingUpdate, BuildingRead
@@ -66,16 +65,22 @@ def list_buildings(
     dependencies=[Depends(requires_permission("buildings:write"))],
 )
 def create_building(payload: BuildingCreate):
+    client = get_supabase_client()
     data = sanitize(payload.model_dump())
 
     try:
-        created = safe_insert("buildings", data)
-        return created
+        result = (
+            client.table("buildings")
+            .insert(data, returning="representation")
+            .single()
+            .execute()
+        )
+        return result.data
     except Exception as e:
         msg = str(e)
         if "duplicate" in msg.lower():
             raise HTTPException(400, f"Building '{payload.name}' already exists.")
-        raise
+        raise HTTPException(500, f"Supabase insert error: {msg}")
 
 
 # ============================================================
@@ -88,18 +93,25 @@ def create_building(payload: BuildingCreate):
     summary="Update Building",
     dependencies=[Depends(requires_permission("buildings:write"))],
 )
-def update_building(
-    building_id: str,
-    payload: BuildingUpdate,
-):
+def update_building(building_id: str, payload: BuildingUpdate):
+    client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    updated = safe_update("buildings", {"id": building_id}, update_data)
+    try:
+        result = (
+            client.table("buildings")
+            .update(update_data)
+            .eq("id", building_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase update error: {e}")
 
-    if not updated:
+    if not result.data:
         raise HTTPException(404, f"Building '{building_id}' not found")
 
-    return updated
+    return result.data
 
 
 # ============================================================
@@ -119,6 +131,7 @@ def delete_building(building_id: str):
             client.table("buildings")
             .delete(returning="representation")
             .eq("id", building_id)
+            .single()
             .execute()
         )
     except Exception as e:
@@ -150,25 +163,30 @@ def get_building_events(
 ):
     client = get_supabase_client()
 
-    query = (
-        client.table("events")
-        .select("*")
-        .eq("building_id", building_id)
-        .order("occurred_at", desc=True)
-    )
+    try:
+        query = (
+            client.table("events")
+            .select("*")
+            .eq("building_id", building_id)
+            .order("occurred_at", desc=True)
+        )
 
-    if unit:
-        query = query.eq("unit_number", unit)
-    if event_type:
-        query = query.eq("event_type", event_type)
-    if contractor_id:
-        query = query.eq("contractor_id", contractor_id)
-    if severity:
-        query = query.eq("severity", severity)
-    if status:
-        query = query.eq("status", status)
+        if unit:
+            query = query.eq("unit_number", unit)
+        if event_type:
+            query = query.eq("event_type", event_type)
+        if contractor_id:
+            query = query.eq("contractor_id", contractor_id)
+        if severity:
+            query = query.eq("severity", severity)
+        if status:
+            query = query.eq("status", status)
 
-    return {"success": True, "data": query.execute().data or []}
+        res = query.execute()
+        return {"success": True, "data": res.data or []}
+
+    except Exception as e:
+        raise HTTPException(500, f"Supabase fetch error: {e}")
 
 
 # ============================================================
@@ -186,22 +204,25 @@ def get_building_units(
 ):
     client = get_supabase_client()
 
-    res = (
-        client.table("events")
-        .select("unit_number")
-        .eq("building_id", building_id)
-        .not_.is_("unit_number", None)
-        .execute()
-    ).data or []
+    try:
+        res = (
+            client.table("events")
+            .select("unit_number")
+            .eq("building_id", building_id)
+            .not_.is_("unit_number", None)
+            .execute()
+        ).data or []
 
-    units = sorted({e["unit_number"] for e in res if e["unit_number"]})
+        units = sorted({e["unit_number"] for e in res if e["unit_number"]})
 
-    return {
-        "success": True,
-        "building_id": building_id,
-        "units": units,
-        "unit_count": len(units),
-    }
+        return {
+            "success": True,
+            "building_id": building_id,
+            "units": units,
+            "unit_count": len(units),
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
@@ -219,61 +240,65 @@ def get_building_contractors(
 ):
     client = get_supabase_client()
 
-    events = (
-        client.table("events")
-        .select("contractor_id, event_type, created_at")
-        .eq("building_id", building_id)
-        .not_.is_("contractor_id", None)
-        .execute()
-    ).data or []
+    try:
+        events = (
+            client.table("events")
+            .select("contractor_id, event_type, created_at")
+            .eq("building_id", building_id)
+            .not_.is_("contractor_id", None)
+            .execute()
+        ).data or []
 
-    if not events:
-        return {"success": True, "data": []}
+        if not events:
+            return {"success": True, "data": []}
 
-    contractor_ids = list({e["contractor_id"] for e in events})
+        contractor_ids = list({e["contractor_id"] for e in events})
 
-    contractors = (
-        client.table("contractors")
-        .select("*")
-        .in_("id", contractor_ids)
-        .execute()
-    ).data or []
+        contractors = (
+            client.table("contractors")
+            .select("*")
+            .in_("id", contractor_ids)
+            .execute()
+        ).data or []
 
-    contractor_map = {c["id"]: c for c in contractors}
-    summary = {}
+        contractor_map = {c["id"]: c for c in contractors}
+        summary = {}
 
-    for e in events:
-        cid = e["contractor_id"]
+        for e in events:
+            cid = e["contractor_id"]
 
-        if cid not in summary:
-            summary[cid] = {
-                "contractor": contractor_map.get(cid),
-                "event_count": 0,
-                "event_types": set(),
-                "first_seen": e["created_at"],
-                "last_seen": e["created_at"],
-            }
+            if cid not in summary:
+                summary[cid] = {
+                    "contractor": contractor_map.get(cid),
+                    "event_count": 0,
+                    "event_types": set(),
+                    "first_seen": e["created_at"],
+                    "last_seen": e["created_at"],
+                }
 
-        summary[cid]["event_count"] += 1
-        summary[cid]["event_types"].add(e["event_type"])
+            summary[cid]["event_count"] += 1
+            summary[cid]["event_types"].add(e["event_type"])
 
-        if e["created_at"] < summary[cid]["first_seen"]:
-            summary[cid]["first_seen"] = e["created_at"]
-        if e["created_at"] > summary[cid]["last_seen"]:
-            summary[cid]["last_seen"] = e["created_at"]
+            if e["created_at"] < summary[cid]["first_seen"]:
+                summary[cid]["first_seen"] = e["created_at"]
+            if e["created_at"] > summary[cid]["last_seen"]:
+                summary[cid]["last_seen"] = e["created_at"]
 
-    output = []
-    for cid, data in summary.items():
-        out = data["contractor"].copy() if data["contractor"] else {"id": cid}
-        out.update({
-            "event_count": data["event_count"],
-            "event_types": list(data["event_types"]),
-            "first_seen": data["first_seen"],
-            "last_seen": data["last_seen"],
-        })
-        output.append(out)
+        output = []
+        for cid, data in summary.items():
+            out = data["contractor"].copy() if data["contractor"] else {"id": cid}
+            out.update({
+                "event_count": data["event_count"],
+                "event_types": list(data["event_types"]),
+                "first_seen": data["first_seen"],
+                "last_seen": data["last_seen"],
+            })
+            output.append(out)
 
-    return {"success": True, "data": output}
+        return {"success": True, "data": output}
+
+    except Exception as e:
+        raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
@@ -291,10 +316,22 @@ def get_building_report(
 ):
     client = get_supabase_client()
 
-    building = safe_select("buildings", {"id": building_id}, single=True)
+    # Building lookup
+    try:
+        building = (
+            client.table("buildings")
+            .select("*")
+            .eq("id", building_id)
+            .single()
+            .execute()
+        ).data
+    except Exception as e:
+        raise HTTPException(500, f"Supabase fetch error: {e}")
+
     if not building:
         raise HTTPException(404, "Building not found")
 
+    # Events
     events = (
         client.table("events")
         .select("*")
@@ -306,6 +343,7 @@ def get_building_report(
     units = sorted({e["unit_number"] for e in events if e["unit_number"]})
     contractors = get_building_contractors(building_id, current_user)["data"]
 
+    # Stats
     stats = {
         "total_events": len(events),
         "unique_units": len(units),
