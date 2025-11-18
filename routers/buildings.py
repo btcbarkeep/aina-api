@@ -1,7 +1,7 @@
 # routers/buildings.py
 
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 from dependencies.auth import get_current_user, CurrentUser
@@ -20,8 +20,7 @@ router = APIRouter(
 
 
 # ============================================================
-# GET — LIST BUILDINGS
-# Requires: buildings:read
+# LIST BUILDINGS
 # ============================================================
 @router.get(
     "",
@@ -55,8 +54,7 @@ def list_buildings(
 
 
 # ============================================================
-# POST — CREATE BUILDING
-# Requires: buildings:write
+# CREATE BUILDING
 # ============================================================
 @router.post(
     "",
@@ -96,8 +94,7 @@ def create_building(payload: BuildingCreate):
 
 
 # ============================================================
-# PUT — UPDATE BUILDING
-# Requires: buildings:write
+# UPDATE BUILDING
 # ============================================================
 @router.put(
     "/{building_id}",
@@ -137,8 +134,7 @@ def update_building(building_id: str, payload: BuildingUpdate):
 
 
 # ============================================================
-# DELETE — DELETE BUILDING
-# Requires: buildings:write
+# DELETE BUILDING
 # ============================================================
 @router.delete(
     "/{building_id}",
@@ -166,8 +162,7 @@ def delete_building(building_id: str):
 
 
 # ============================================================
-# GET — EVENTS FOR BUILDING
-# Requires: buildings:read
+# LIST EVENTS FOR BUILDING (unit-aware)
 # ============================================================
 @router.get(
     "/{building_id}/events",
@@ -176,7 +171,7 @@ def delete_building(building_id: str):
 )
 def get_building_events(
     building_id: str,
-    unit: Optional[str] = None,
+    unit_id: Optional[str] = None,
     event_type: Optional[str] = None,
     contractor_id: Optional[str] = None,
     severity: Optional[str] = None,
@@ -193,8 +188,8 @@ def get_building_events(
             .order("occurred_at", desc=True)
         )
 
-        if unit:
-            query = query.eq("unit_number", unit)
+        if unit_id:
+            query = query.eq("unit_id", unit_id)
         if event_type:
             query = query.eq("event_type", event_type)
         if contractor_id:
@@ -212,11 +207,11 @@ def get_building_events(
 
 
 # ============================================================
-# GET — UNIT LIST (safe filtering)
+# LIST UNITS FOR BUILDING (from units table)
 # ============================================================
 @router.get(
     "/{building_id}/units",
-    summary="List units inferred from events",
+    summary="List units for a building",
     dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def get_building_units(
@@ -227,20 +222,18 @@ def get_building_units(
 
     try:
         rows = (
-            client.table("events")
-            .select("unit_number")
+            client.table("units")
+            .select("*")
             .eq("building_id", building_id)
+            .order("unit_number")
             .execute()
         ).data or []
-
-        # Avoid Supabase .not_.is_ bug → Python filter
-        units = sorted({e["unit_number"] for e in rows if e.get("unit_number")})
 
         return {
             "success": True,
             "building_id": building_id,
-            "units": units,
-            "unit_count": len(units),
+            "units": rows,
+            "unit_count": len(rows),
         }
 
     except Exception as e:
@@ -248,7 +241,7 @@ def get_building_units(
 
 
 # ============================================================
-# GET — CONTRACTORS WHO WORKED ON A BUILDING (safe version)
+# CONTRACTORS WHO WORKED ON A BUILDING
 # ============================================================
 @router.get(
     "/{building_id}/contractors",
@@ -262,26 +255,26 @@ def get_building_contractors(
     client = get_supabase_client()
 
     try:
-        # Fetch all events (filter in Python to avoid .not_.is_)
-        rows = (
+        # Fetch all events first
+        event_rows = (
             client.table("events")
             .select("contractor_id, event_type, created_at")
             .eq("building_id", building_id)
             .execute()
         ).data or []
 
-        # Python-side filter avoids PGRST100 error
-        events = [e for e in rows if e.get("contractor_id")]
+        # Only events with contractor_id
+        contractor_events = [e for e in event_rows if e.get("contractor_id")]
 
-        if not events:
+        if not contractor_events:
             return {"success": True, "data": []}
 
-        contractor_ids = list({e["contractor_id"] for e in events})
+        ids = list({e["contractor_id"] for e in contractor_events})
 
         contractors = (
             client.table("contractors")
             .select("*")
-            .in_("id", contractor_ids)
+            .in_("id", ids)
             .execute()
         ).data or []
 
@@ -289,7 +282,7 @@ def get_building_contractors(
 
         summary = {}
 
-        for e in events:
+        for e in contractor_events:
             cid = e["contractor_id"]
 
             if cid not in summary:
@@ -327,7 +320,7 @@ def get_building_contractors(
 
 
 # ============================================================
-# GET — FULL BUILDING REPORT
+# FULL BUILDING REPORT (unit-aware)
 # ============================================================
 @router.get(
     "/{building_id}/report",
@@ -340,22 +333,21 @@ def get_building_report(
 ):
     client = get_supabase_client()
 
-    try:
-        building_rows = (
-            client.table("buildings")
-            .select("*")
-            .eq("id", building_id)
-            .limit(1)
-            .execute()
-        ).data
-    except Exception as e:
-        raise HTTPException(500, f"Supabase fetch error: {e}")
+    # Fetch building
+    rows = (
+        client.table("buildings")
+        .select("*")
+        .eq("id", building_id)
+        .limit(1)
+        .execute()
+    ).data
 
-    if not building_rows:
+    if not rows:
         raise HTTPException(404, "Building not found")
 
-    building = building_rows[0]
+    building = rows[0]
 
+    # Fetch events
     events = (
         client.table("events")
         .select("*")
@@ -364,13 +356,20 @@ def get_building_report(
         .execute()
     ).data or []
 
-    units = sorted({e["unit_number"] for e in events if e.get("unit_number")})
+    # Fetch units
+    unit_rows = (
+        client.table("units")
+        .select("*")
+        .eq("building_id", building_id)
+        .order("unit_number")
+        .execute()
+    ).data or []
 
     contractors = get_building_contractors(building_id, current_user)["data"]
 
     stats = {
         "total_events": len(events),
-        "unique_units": len(units),
+        "unit_count": len(unit_rows),
         "unique_contractors": len(contractors),
         "severity_counts": {},
     }
@@ -384,7 +383,7 @@ def get_building_report(
         "data": {
             "building": building,
             "stats": stats,
-            "units": units,
+            "units": unit_rows,
             "events": events,
             "contractors": contractors,
             "generated_at": datetime.utcnow().isoformat(),
