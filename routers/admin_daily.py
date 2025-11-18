@@ -1,5 +1,4 @@
 # routers/admin_daily.py
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta, timezone
@@ -30,22 +29,16 @@ def fetch_auth_users():
     try:
         result = client.auth.admin.list_users()
 
-        # Normalized source list
-        raw_users = []
-
         if hasattr(result, "users"):
             raw_users = result.users
         elif isinstance(result, list):
             raw_users = result
-        elif isinstance(result, dict):
-            raw_users = result.get("users", [])
         else:
-            raw_users = []
+            raw_users = result.get("users", [])
 
         normalized = []
 
         for u in raw_users:
-            # If dict
             if isinstance(u, dict):
                 normalized.append({
                     "id": u.get("id"),
@@ -55,7 +48,6 @@ def fetch_auth_users():
                     "user_metadata": u.get("user_metadata") or {},
                 })
             else:
-                # Probably a Supabase AuthUser instance
                 normalized.append({
                     "id": getattr(u, "id", None),
                     "email": getattr(u, "email", None),
@@ -71,22 +63,18 @@ def fetch_auth_users():
 
 
 # ============================================================
-# DB fetch helper — NORMALIZES FOR SAFETY
+# Basic DB fetch helper
 # ============================================================
 def fetch_rows(table: str):
-    raw = safe_select(table) or []
-
-    normalized = []
-    for r in raw:
-        if isinstance(r, dict):
-            normalized.append(r)
-        elif hasattr(r, "__dict__"):
-            normalized.append(r.__dict__)
-        else:
-            # skip malformed rows
-            continue
-
-    return normalized
+    try:
+        rows = safe_select(table) or []
+        # Normalize: ensure everything is a dict
+        return [
+            r if isinstance(r, dict) else dict(r)
+            for r in rows
+        ]
+    except Exception as e:
+        raise HTTPException(500, f"Fetch failed for table '{table}': {e}")
 
 
 # ============================================================
@@ -96,7 +84,6 @@ def parse_timestamp(value):
     if not value:
         return None
 
-    # Already a datetime
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
@@ -111,14 +98,12 @@ def parse_timestamp(value):
 
 
 def is_within_last_24h(obj: dict, since: datetime):
-    if not isinstance(obj, dict):
-        return False
     ts = parse_timestamp(obj.get("created_at"))
-    return ts and ts >= since
+    return ts is not None and ts >= since
 
 
 # ============================================================
-# Build daily snapshot
+# Build daily snapshot with SAFE try/except protection
 # ============================================================
 def build_snapshot():
     now = datetime.now(timezone.utc)
@@ -129,95 +114,128 @@ def build_snapshot():
         "range": f"{since.isoformat()} → {now.isoformat()}",
     }
 
+    # ---------------------
     # BUILDINGS
-    buildings = fetch_rows("buildings")
-    snapshot["buildings_total"] = len(buildings)
-    snapshot["new_buildings"] = [
-        b for b in buildings if is_within_last_24h(b, since)
-    ]
+    # ---------------------
+    try:
+        buildings = fetch_rows("buildings")
+        snapshot["buildings_total"] = len(buildings)
+        snapshot["new_buildings"] = [
+            b for b in buildings if is_within_last_24h(b, since)
+        ]
+        building_lookup = {b.get("id"): b for b in buildings}
+    except Exception as e:
+        snapshot["buildings_error"] = str(e)
+        buildings = []
+        building_lookup = {}
 
-    building_lookup = {b.get("id"): b for b in buildings if isinstance(b, dict)}
-
+    # ---------------------
     # EVENTS
-    events = fetch_rows("events")
-    snapshot["events_total"] = len(events)
-    snapshot["new_events"] = [
-        e for e in events if is_within_last_24h(e, since)
-    ]
+    # ---------------------
+    try:
+        events = fetch_rows("events")
+        snapshot["events_total"] = len(events)
+        snapshot["new_events"] = [
+            e for e in events if is_within_last_24h(e, since)
+        ]
+        snapshot["buildings_updated"] = [
+            {
+                "building_id": e.get("building_id"),
+                "name": building_lookup.get(e.get("building_id"), {}).get("name", "Unknown"),
+            }
+            for e in snapshot["new_events"]
+            if e.get("building_id")
+        ]
+    except Exception as e:
+        snapshot["events_error"] = str(e)
+        events = []
 
-    snapshot["buildings_updated"] = []
-    for e in snapshot["new_events"]:
-        if not isinstance(e, dict):
-            continue
-        bid = e.get("building_id")
-        if not bid:
-            continue
-        snapshot["buildings_updated"].append({
-            "building_id": bid,
-            "name": building_lookup.get(bid, {}).get("name", "Unknown")
-        })
-
+    # ---------------------
     # DOCUMENTS
-    documents = fetch_rows("documents")
-    snapshot["documents_total"] = len(documents)
-    snapshot["new_documents"] = [
-        d for d in documents if is_within_last_24h(d, since)
-    ]
+    # ---------------------
+    try:
+        documents = fetch_rows("documents")
+        snapshot["documents_total"] = len(documents)
+        snapshot["new_documents"] = [
+            d for d in documents if is_within_last_24h(d, since)
+        ]
+    except Exception as e:
+        snapshot["documents_error"] = str(e)
+        documents = []
 
-    # USERS FROM SUPABASE AUTH
-    users = fetch_auth_users()
-    snapshot["users_total"] = len(users)
-    snapshot["new_users"] = [
-        u for u in users if is_within_last_24h(u, since)
-    ]
+    # ---------------------
+    # USERS (Supabase Auth)
+    # ---------------------
+    try:
+        users = fetch_auth_users()
+        snapshot["users_total"] = len(users)
+        snapshot["new_users"] = [
+            u for u in users if is_within_last_24h(u, since)
+        ]
+    except Exception as e:
+        snapshot["users_error"] = str(e)
+        users = []
 
+    # ---------------------
     # ACTIVE USERS
-    active_user_ids = set()
+    # ---------------------
+    try:
+        active_user_ids = set()
 
-    for e in snapshot["new_events"]:
-        if isinstance(e, dict) and e.get("created_by"):
-            active_user_ids.add(e["created_by"])
+        for e in snapshot.get("new_events", []):
+            if e.get("created_by"):
+                active_user_ids.add(e["created_by"])
 
-    for d in snapshot["new_documents"]:
-        if isinstance(d, dict) and d.get("uploaded_by"):
-            active_user_ids.add(d["uploaded_by"])
+        for d in snapshot.get("new_documents", []):
+            if d.get("uploaded_by"):
+                active_user_ids.add(d["uploaded_by"])
 
-    snapshot["active_users"] = len(active_user_ids)
+        snapshot["active_users"] = len(active_user_ids)
+    except Exception as e:
+        snapshot["active_users_error"] = str(e)
 
+    # ---------------------
     # CONTRACTORS
-    contractors = [
-        u for u in users
-        if (u.get("user_metadata") or {}).get("role") == "contractor"
-    ]
+    # ---------------------
+    try:
+        contractors = [
+            u for u in users
+            if (u.get("user_metadata") or {}).get("role") == "contractor"
+        ]
 
-    # CONTRACTOR ACTIVITY
-    contractor_activity = {}
-    for e in snapshot["new_events"]:
-        if isinstance(e, dict):
+        contractor_activity = {}
+        for e in snapshot.get("new_events", []):
             uid = e.get("created_by")
             if uid:
                 contractor_activity[uid] = contractor_activity.get(uid, 0) + 1
 
-    snapshot["contractor_activity"] = contractor_activity
+        snapshot["contractor_activity"] = contractor_activity
 
-    if contractor_activity:
-        top_id = max(contractor_activity, key=contractor_activity.get)
-        snapshot["top_contractor"] = next(
-            (u for u in contractors if u.get("id") == top_id),
-            None,
-        )
-    else:
-        snapshot["top_contractor"] = None
+        if contractor_activity:
+            top_id = max(contractor_activity, key=contractor_activity.get)
+            snapshot["top_contractor"] = next(
+                (u for u in contractors if u.get("id") == top_id),
+                None,
+            )
+        else:
+            snapshot["top_contractor"] = None
+
+    except Exception as e:
+        snapshot["contractor_error"] = str(e)
 
     return snapshot
 
 
 # ============================================================
-# Routes
+# Endpoints
 # ============================================================
 @router.post("/run")
 def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
-    return JSONResponse({"success": True, "snapshot": build_snapshot()})
+    try:
+        snap = build_snapshot()
+        return JSONResponse({"success": True, "snapshot": snap})
+    except Exception as e:
+        raise HTTPException(500, f"Daily snapshot failed: {e}")
 
 
 @router.get("/preview")
