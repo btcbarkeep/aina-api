@@ -20,6 +20,7 @@ from routers.signup import router as signup_router
 from routers.user_access import router as user_access_router
 
 from routers.buildings import router as buildings_router
+from routers.units import router as units_router         # ⭐ NEW ⭐
 from routers.events import router as events_router
 from routers.documents import router as documents_router
 from routers.contractors import router as contractors_router
@@ -28,12 +29,9 @@ from routers.contractor_events import router as contractor_events_router
 from routers.uploads import router as uploads_router
 from routers.health import router as health_router
 
-# Admin Routers — restored
+# Admin Routers
 from routers.admin import router as admin_router
 from routers.admin_daily import router as admin_daily_router
-
-# ❌ REMOVED — legacy Admin Set Password Router
-# from routers.admin_set_password import router as admin_set_password_router
 
 
 # -------------------------------------------------
@@ -89,7 +87,7 @@ def create_app() -> FastAPI:
         )
 
     # -------------------------------------------------
-    # Register Routers (NO /api/v1 prefix anymore)
+    # Register Routers
     # -------------------------------------------------
 
     # Auth
@@ -101,22 +99,20 @@ def create_app() -> FastAPI:
 
     # Core Data Routers
     app.include_router(buildings_router)
+    app.include_router(units_router)             # ⭐ ADDED ⭐
     app.include_router(events_router)
     app.include_router(documents_router)
     app.include_router(contractors_router)
     app.include_router(contractor_events_router)
 
-    # Admin
+    # Admin Tools
     app.include_router(admin_router)
     app.include_router(admin_daily_router)
-
-    # ❌ REMOVED — Admin Set Password (Supabase now handles password setup/reset)
-    # app.include_router(admin_set_password_router)
 
     # Uploads
     app.include_router(uploads_router)
 
-    # Health
+    # Health Check
     app.include_router(health_router)
 
     # -------------------------------------------------
