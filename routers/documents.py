@@ -1,5 +1,3 @@
-# routers/documents.py
-
 from fastapi import APIRouter, HTTPException, Depends
 
 from dependencies.auth import (
@@ -15,12 +13,10 @@ from models.document import (
     DocumentRead,
 )
 
-
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
-
 
 # -----------------------------------------------------
 # Helper — sanitize payloads ("" → None)
@@ -36,13 +32,13 @@ def sanitize(data: dict) -> dict:
 
 
 # -----------------------------------------------------
-# Helper — Check building access
+# Helper — Check building access (FIXED: no id column)
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
     result = (
         client.table("user_building_access")
-        .select("id")
+        .select("*")     # <-- FIXED: this table has no id column
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
@@ -53,7 +49,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper — event_id → building_id (SAFE VERSION)
+# Helper — event_id → building_id (SAFE)
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
@@ -107,8 +103,8 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     else:
         raise HTTPException(400, "event_id OR building_id is required.")
 
-    # Non-admins must have access
-    if current_user.role not in ["admin", "manager"]:
+    # FIXED: Only admin + super_admin bypass building access
+    if current_user.role not in ["admin", "super_admin"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
     doc_data = sanitize(payload.model_dump())
@@ -189,7 +185,7 @@ def update_document(document_id: str, payload: DocumentUpdate):
 def delete_document(document_id: str):
     client = get_supabase_client()
 
-    # Step 1 — Delete event
+    # Step 1 — Delete
     try:
         delete_res = (
             client.table("documents")
