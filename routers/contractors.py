@@ -33,16 +33,18 @@ def sanitize(data: dict) -> dict:
 
 
 # ============================================================
-# Helper — role-based access rules
+# Helper — role-based access rules (FIXED)
 # ============================================================
 def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
     """
-    Admin, super_admin, manager → full access
+    Admin, super_admin → full access
     Contractor → only access their own contractor_id
     """
-    if current_user.role in ["admin", "super_admin", "manager"]:
+    # Only admins bypass
+    if current_user.role in ["admin", "super_admin"]:
         return
 
+    # Contractors can only access their own record
     if (
         current_user.role == "contractor"
         and getattr(current_user, "contractor_id", None) == contractor_id
@@ -87,12 +89,12 @@ class ContractorUpdate(BaseModel):
 
 
 # ============================================================
-# LIST CONTRACTORS
+# LIST CONTRACTORS (FIXED: managers should NOT have global view)
 # ============================================================
 @router.get("", response_model=List[ContractorRead])
 def list_contractors(current_user: CurrentUser = Depends(get_current_user)):
-    if current_user.role not in ["admin", "super_admin", "manager"]:
-        raise HTTPException(403, "Only admin/manager roles can list all contractors.")
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admin roles can list all contractors.")
 
     client = get_supabase_client()
     result = (
@@ -176,7 +178,7 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
     client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    # Step 1 — Perform update
+    # Step 1 — update
     try:
         update_res = (
             client.table("contractors")
@@ -190,7 +192,7 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
     if not update_res.data:
         raise HTTPException(404, "Contractor not found")
 
-    # Step 2 — Fetch updated row
+    # Step 2 — fetch updated contractor
     fetch_res = (
         client.table("contractors")
         .select("*")
@@ -205,7 +207,7 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
 
 
 # ============================================================
-# DELETE CONTRACTOR — 2-STEP DELETE
+# DELETE CONTRACTOR — SAFE 2-STEP DELETE
 # ============================================================
 @router.delete(
     "/{contractor_id}",
@@ -214,7 +216,7 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
 def delete_contractor(contractor_id: str):
     client = get_supabase_client()
 
-    # Prevent deletion if referenced in events
+    # Prevent deletion if referenced by events
     events = (
         client.table("events")
         .select("id")
@@ -225,7 +227,7 @@ def delete_contractor(contractor_id: str):
     if events.data:
         raise HTTPException(400, "Cannot delete contractor — events reference this contractor.")
 
-    # Step 1 — Delete
+    # Step 1 — delete
     try:
         delete_res = (
             client.table("contractors")
