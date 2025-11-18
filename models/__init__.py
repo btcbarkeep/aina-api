@@ -1,3 +1,6 @@
+# -------------------------
+# Building Models
+# -------------------------
 from .building import (
     BuildingBase,
     BuildingCreate,
@@ -5,6 +8,10 @@ from .building import (
     BuildingUpdate,
 )
 
+
+# -------------------------
+# Event Models
+# -------------------------
 from .event import (
     EventType,
     EventBase,
@@ -13,6 +20,10 @@ from .event import (
     EventUpdate,
 )
 
+
+# -------------------------
+# Document Models
+# -------------------------
 from .document import (
     DocumentBase,
     DocumentCreate,
@@ -20,6 +31,10 @@ from .document import (
     DocumentUpdate,
 )
 
+
+# -------------------------
+# Event Comments
+# -------------------------
 from .event_comment import (
     EventCommentBase,
     EventCommentCreate,
@@ -27,7 +42,10 @@ from .event_comment import (
     EventCommentUpdate,
 )
 
-# NEW: Supabase User Models (Pydantic only)
+
+# -------------------------
+# User Models (Supabase Auth)
+# -------------------------
 from .user import (
     UserBase,
     UserCreate,
@@ -35,9 +53,22 @@ from .user import (
     UserUpdate,
 )
 
+from .admin import AdminCreateUser   # <-- IMPORTANT: missing before
+
+
+# -------------------------
+# Auth Models
+# -------------------------
 from .auth import LoginRequest, TokenResponse
 
-from .signup import SignupRequest
+
+# -------------------------
+# Signup Models
+# -------------------------
+from .signup import (
+    SignupRequest,
+    SignupRequestCreate,      # <-- FIX: missing in your current __all__
+)
 
 
 __all__ = [
@@ -66,11 +97,12 @@ __all__ = [
     "EventCommentRead",
     "EventCommentUpdate",
 
-    # Supabase user models
+    # users
     "UserBase",
     "UserCreate",
     "UserRead",
     "UserUpdate",
+    "AdminCreateUser",
 
     # auth
     "LoginRequest",
@@ -78,4 +110,5 @@ __all__ = [
 
     # signup
     "SignupRequest",
+    "SignupRequestCreate",
 ]
