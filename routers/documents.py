@@ -13,32 +13,37 @@ from models.document import (
     DocumentRead,
 )
 
+
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
 
 # -----------------------------------------------------
-# Helper — sanitize payloads ("" → None)
+# Helper — sanitize payloads ("" → None), UUID → string
 # -----------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
     for k, v in data.items():
-        if isinstance(v, str) and v.strip() == "":
+        if v is None:
             clean[k] = None
+        elif isinstance(v, str):
+            clean[k] = v.strip() or None
         else:
-            clean[k] = v
+            # Convert UUID → string for Supabase
+            clean[k] = str(v) if not isinstance(v, (int, float, bool)) else v
     return clean
 
 
 # -----------------------------------------------------
-# Helper — Check building access (FIXED: no id column)
+# Helper — Check building access (NO id column)
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
+
     result = (
         client.table("user_building_access")
-        .select("*")     # <-- FIXED: this table has no id column
+        .select("*")
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
@@ -49,7 +54,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper — event_id → building_id (SAFE)
+# Helper — get building_id from event_id
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
@@ -84,7 +89,7 @@ def list_documents(limit: int = 100, current_user: CurrentUser = Depends(get_cur
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT — SAFE 2-STEP INSERT
+# CREATE DOCUMENT — 100% SAFE
 # -----------------------------------------------------
 @router.post(
     "",
@@ -98,18 +103,22 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     # Determine building
     if payload.event_id:
         building_id = get_event_building_id(payload.event_id)
-    elif payload.building_id:
-        building_id = payload.building_id
     else:
-        raise HTTPException(400, "event_id OR building_id is required.")
+        building_id = payload.building_id  # Required by model
 
-    # FIXED: Only admin + super_admin bypass building access
+    # Only admin/super_admin bypass access check
     if current_user.role not in ["admin", "super_admin"]:
-        verify_user_building_access_supabase(current_user.id, building_id)
+        verify_user_building_access_supabase(current_user.id, str(building_id))
 
+    # Normalize + convert UUIDs → strings
     doc_data = sanitize(payload.model_dump())
 
-    # Step 1 — Insert (NO .single(), NO .select())
+    # Force building_id string format
+    doc_data["building_id"] = str(building_id)
+    if payload.event_id:
+        doc_data["event_id"] = str(payload.event_id)
+
+    # Step 1 — Insert
     try:
         insert_res = client.table("documents").insert(doc_data).execute()
     except Exception as e:
@@ -135,7 +144,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT — SAFE 2-STEP UPDATE
+# UPDATE DOCUMENT — SAFE UPDATE
 # -----------------------------------------------------
 @router.put(
     "/{document_id}",
@@ -144,7 +153,15 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
 )
 def update_document(document_id: str, payload: DocumentUpdate):
     client = get_supabase_client()
+
     update_data = sanitize(payload.model_dump(exclude_unset=True))
+
+    # UUID normalization
+    if "event_id" in update_data and update_data["event_id"]:
+        update_data["event_id"] = str(update_data["event_id"])
+
+    if "building_id" in update_data and update_data["building_id"]:
+        update_data["building_id"] = str(update_data["building_id"])
 
     # Step 1 — Update
     try:
@@ -175,7 +192,7 @@ def update_document(document_id: str, payload: DocumentUpdate):
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT — SAFE 2-STEP DELETE
+# DELETE DOCUMENT
 # -----------------------------------------------------
 @router.delete(
     "/{document_id}",
@@ -185,7 +202,6 @@ def update_document(document_id: str, payload: DocumentUpdate):
 def delete_document(document_id: str):
     client = get_supabase_client()
 
-    # Step 1 — Delete
     try:
         delete_res = (
             client.table("documents")
