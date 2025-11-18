@@ -11,7 +11,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from core.supabase_helpers import safe_update
+
 
 router = APIRouter(
     prefix="/contractors",
@@ -33,20 +33,19 @@ def sanitize(data: dict) -> dict:
 
 
 # ============================================================
-# Helper — Check contractor access
+# Helper — role-based access rules
 # ============================================================
 def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
     """
     Admin, super_admin, manager → full access
-    Contractor → can only access their own contractor_id
+    Contractor → only access their own contractor_id
     """
     if current_user.role in ["admin", "super_admin", "manager"]:
         return
 
-    # Contractors now store contractor_id in Supabase Auth metadata
     if (
         current_user.role == "contractor"
-        and current_user.contractor_id == contractor_id
+        and getattr(current_user, "contractor_id", None) == contractor_id
     ):
         return
 
@@ -96,88 +95,148 @@ def list_contractors(current_user: CurrentUser = Depends(get_current_user)):
         raise HTTPException(403, "Only admin/manager roles can list all contractors.")
 
     client = get_supabase_client()
-    result = client.table("contractors").select("*").order("company_name").execute()
+    result = (
+        client.table("contractors")
+        .select("*")
+        .order("company_name")
+        .execute()
+    )
+
     return result.data or []
 
 
 # ============================================================
-# GET CONTRACTOR
+# GET CONTRACTOR — SAFE (NO .single())
 # ============================================================
 @router.get("/{contractor_id}", response_model=ContractorRead)
 def get_contractor(contractor_id: str, current_user: CurrentUser = Depends(get_current_user)):
     ensure_contractor_access(current_user, contractor_id)
 
     client = get_supabase_client()
-    result = (
+    rows = (
         client.table("contractors")
         .select("*")
         .eq("id", contractor_id)
-        .single()
+        .limit(1)
         .execute()
-    )
-    if not result.data:
+    ).data
+
+    if not rows:
         raise HTTPException(404, "Contractor not found")
-    return result.data
+
+    return rows[0]
 
 
 # ============================================================
-# CREATE CONTRACTOR
+# CREATE CONTRACTOR — 2-STEP INSERT
 # ============================================================
-@router.post("", response_model=ContractorRead, dependencies=[Depends(requires_permission("contractors:write"))])
+@router.post(
+    "",
+    response_model=ContractorRead,
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
 def create_contractor(payload: ContractorCreate):
     client = get_supabase_client()
     data = sanitize(payload.model_dump())
 
-    result = (
+    # Step 1 — Insert
+    try:
+        insert_res = client.table("contractors").insert(data).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Supabase insert error: {e}")
+
+    if not insert_res.data:
+        raise HTTPException(500, "Insert returned no data")
+
+    contractor_id = insert_res.data[0]["id"]
+
+    # Step 2 — Fetch created contractor
+    fetch_res = (
         client.table("contractors")
-        .insert(data, returning="representation")
+        .select("*")
+        .eq("id", contractor_id)
         .execute()
     )
-    if not result.data:
-        raise HTTPException(500, "Failed to create contractor")
-    return result.data[0]
+
+    if not fetch_res.data:
+        raise HTTPException(500, "Created contractor not found")
+
+    return fetch_res.data[0]
 
 
 # ============================================================
-# UPDATE CONTRACTOR
+# UPDATE CONTRACTOR — 2-STEP UPDATE
 # ============================================================
-@router.put("/{contractor_id}", response_model=ContractorRead, dependencies=[Depends(requires_permission("contractors:write"))])
+@router.put(
+    "/{contractor_id}",
+    response_model=ContractorRead,
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
 def update_contractor(contractor_id: str, payload: ContractorUpdate):
+    client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
-    updated = safe_update("contractors", {"id": contractor_id}, update_data)
 
-    if not updated:
+    # Step 1 — Perform update
+    try:
+        update_res = (
+            client.table("contractors")
+            .update(update_data)
+            .eq("id", contractor_id)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase update error: {e}")
+
+    if not update_res.data:
         raise HTTPException(404, "Contractor not found")
 
-    return updated
+    # Step 2 — Fetch updated row
+    fetch_res = (
+        client.table("contractors")
+        .select("*")
+        .eq("id", contractor_id)
+        .execute()
+    )
+
+    if not fetch_res.data:
+        raise HTTPException(500, "Updated contractor not found")
+
+    return fetch_res.data[0]
 
 
 # ============================================================
-# DELETE CONTRACTOR
+# DELETE CONTRACTOR — 2-STEP DELETE
 # ============================================================
-@router.delete("/{contractor_id}", dependencies=[Depends(requires_permission("contractors:write"))])
+@router.delete(
+    "/{contractor_id}",
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
 def delete_contractor(contractor_id: str):
     client = get_supabase_client()
 
-    # Cannot delete contractor if events reference it
+    # Prevent deletion if referenced in events
     events = (
         client.table("events")
         .select("id")
-        .eq("created_by", contractor_id)
+        .eq("contractor_id", contractor_id)
         .execute()
     )
 
     if events.data:
         raise HTTPException(400, "Cannot delete contractor — events reference this contractor.")
 
-    result = (
-        client.table("contractors")
-        .delete(returning="representation")
-        .eq("id", contractor_id)
-        .execute()
-    )
+    # Step 1 — Delete
+    try:
+        delete_res = (
+            client.table("contractors")
+            .delete()
+            .eq("id", contractor_id)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Supabase delete error: {e}")
 
-    if not result.data:
+    if not delete_res.data:
         raise HTTPException(404, "Contractor not found")
 
     return {"status": "deleted", "id": contractor_id}
