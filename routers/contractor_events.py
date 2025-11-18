@@ -26,7 +26,7 @@ router = APIRouter(
 #   • contractor_staff → can ONLY view their own events
 #   • owner / tenant / buyer → deny
 #
-# Uses "contractors:read"
+# Uses: contractors:read
 # ============================================================
 @router.get(
     "/{contractor_id}/events",
@@ -48,16 +48,15 @@ def list_contractor_events(
     contractor_roles = ["contractor", "contractor_staff"]
 
     if current_user.role in contractor_roles:
-        # Important: after migration, contractor linkage comes from metadata
-        if current_user.contractor_id != contractor_id:
+        # Enforce: contractors can ONLY view their own events
+        if getattr(current_user, "contractor_id", None) != contractor_id:
             raise HTTPException(
                 403,
-                "You may only view events associated with your own contractor account."
+                "You may only view events associated with your own contractor account.",
             )
 
     # --------------------------------------------------------
-    # FETCH EVENTS
-    # events table uses "created_by" for contractor submissions
+    # FETCH EVENTS — NO .single(), no returning
     # --------------------------------------------------------
     try:
         query = (
@@ -76,8 +75,9 @@ def list_contractor_events(
             query = query.eq("status", status)
 
         result = query.execute()
+        events = result.data or []
 
-        return {"success": True, "data": result.data or []}
+        return {"success": True, "data": events}
 
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
