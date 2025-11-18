@@ -49,20 +49,23 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# event_id → building
+# event_id → building_id
+# (fixed: removed .single())
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
-    result = (
+    rows = (
         client.table("events")
         .select("building_id")
         .eq("id", event_id)
-        .single()
+        .limit(1)
         .execute()
-    )
-    if not result.data:
+    ).data
+
+    if not rows:
         raise HTTPException(404, "Event not found")
-    return result.data["building_id"]
+
+    return rows[0]["building_id"]
 
 
 # -----------------------------------------------------
@@ -71,6 +74,7 @@ def get_event_building_id(event_id: str) -> str:
 @router.get("", summary="List Events", response_model=List[EventRead])
 def list_events(limit: int = 200, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
+
     result = (
         client.table("events")
         .select("*")
@@ -78,11 +82,12 @@ def list_events(limit: int = 200, current_user: CurrentUser = Depends(get_curren
         .limit(limit)
         .execute()
     )
+
     return result.data or []
 
 
 # -----------------------------------------------------
-# CREATE EVENT
+# CREATE EVENT (2-step safe pattern)
 # -----------------------------------------------------
 @router.post(
     "",
@@ -104,25 +109,37 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
             raise HTTPException(400, "Contractor account missing contractor_id.")
         event_data["contractor_id"] = current_user.contractor_id
 
-    # Building access check for non-admin roles
+    # Building access (everyone except admin/manager must be authorized)
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
-    result = (
+    # Step 1 — Insert (NO .single(), NO .select())
+    try:
+        insert_res = client.table("events").insert(event_data).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Supabase insert failed: {e}")
+
+    if not insert_res.data:
+        raise HTTPException(500, "Insert returned no data")
+
+    event_id = insert_res.data[0]["id"]
+
+    # Step 2 — Fetch newly created record
+    fetch_res = (
         client.table("events")
-        .insert(event_data, returning="representation")
-        .single()
+        .select("*")
+        .eq("id", event_id)
         .execute()
     )
 
-    if not result.data:
-        raise HTTPException(500, "Insert failed")
+    if not fetch_res.data:
+        raise HTTPException(500, "Created event not found")
 
-    return result.data
+    return fetch_res.data[0]
 
 
 # -----------------------------------------------------
-# UPDATE EVENT
+# UPDATE EVENT (2-step safe pattern)
 # -----------------------------------------------------
 @router.put(
     "/{event_id}",
@@ -133,25 +150,36 @@ def update_event(event_id: str, payload: EventUpdate):
     client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
+    # Step 1 — Update
     try:
-        result = (
+        update_res = (
             client.table("events")
             .update(update_data)
             .eq("id", event_id)
-            .single()
             .execute()
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    if not result.data:
+    if not update_res.data:
         raise HTTPException(404, "Event not found")
 
-    return result.data
+    # Step 2 — Fetch updated row
+    fetch_res = (
+        client.table("events")
+        .select("*")
+        .eq("id", event_id)
+        .execute()
+    )
+
+    if not fetch_res.data:
+        raise HTTPException(500, "Updated event not found")
+
+    return fetch_res.data[0]
 
 
 # -----------------------------------------------------
-# DELETE EVENT
+# DELETE EVENT (2-step)
 # -----------------------------------------------------
 @router.delete(
     "/{event_id}",
@@ -161,7 +189,7 @@ def update_event(event_id: str, payload: EventUpdate):
 def delete_event(event_id: str):
     client = get_supabase_client()
 
-    # Cannot delete if documents reference this event
+    # Prevent deletion if documents reference this event
     docs = (
         client.table("documents")
         .select("id")
@@ -172,18 +200,18 @@ def delete_event(event_id: str):
     if docs.data:
         raise HTTPException(400, "Cannot delete event: documents exist.")
 
+    # Step 1 — Delete
     try:
-        result = (
+        delete_res = (
             client.table("events")
-            .delete(returning="representation")
+            .delete()
             .eq("id", event_id)
-            .single()
             .execute()
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase delete error: {e}")
 
-    if not result.data:
+    if not delete_res.data:
         raise HTTPException(404, "Event not found")
 
     return {"status": "deleted", "id": event_id}
