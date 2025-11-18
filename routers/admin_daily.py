@@ -10,7 +10,7 @@ from dependencies.auth import (
 )
 
 from core.permission_helpers import requires_permission
-    from core.supabase_client import get_supabase_client
+from core.supabase_client import get_supabase_client
 from core.supabase_helpers import safe_select
 
 
