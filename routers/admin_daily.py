@@ -19,6 +19,22 @@ router = APIRouter(
     dependencies=[Depends(requires_permission("admin:daily_send"))],
 )
 
+# ============================================================
+# Helper — Deep JSON sanitizer (fixes datetime errors)
+# ============================================================
+def sanitize_json(obj):
+    """Recursively walks any structure and makes it JSON safe."""
+    if isinstance(obj, dict):
+        return {k: sanitize_json(v) for k, v in obj.items()}
+
+    if isinstance(obj, list):
+        return [sanitize_json(v) for v in obj]
+
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+
+    return obj
+
 
 # ============================================================
 # SAFE: Fetch & normalize Supabase Auth users
@@ -68,7 +84,6 @@ def fetch_auth_users():
 def fetch_rows(table: str):
     try:
         rows = safe_select(table) or []
-        # Normalize: ensure everything is a dict
         return [
             r if isinstance(r, dict) else dict(r)
             for r in rows
@@ -78,7 +93,7 @@ def fetch_rows(table: str):
 
 
 # ============================================================
-# Timestamp parsing
+# Timestamp helpers
 # ============================================================
 def parse_timestamp(value):
     if not value:
@@ -103,7 +118,7 @@ def is_within_last_24h(obj: dict, since: datetime):
 
 
 # ============================================================
-# Build daily snapshot with SAFE try/except protection
+# Build daily snapshot with full safety
 # ============================================================
 def build_snapshot():
     now = datetime.now(timezone.utc)
@@ -114,9 +129,7 @@ def build_snapshot():
         "range": f"{since.isoformat()} → {now.isoformat()}",
     }
 
-    # ---------------------
     # BUILDINGS
-    # ---------------------
     try:
         buildings = fetch_rows("buildings")
         snapshot["buildings_total"] = len(buildings)
@@ -129,9 +142,7 @@ def build_snapshot():
         buildings = []
         building_lookup = {}
 
-    # ---------------------
     # EVENTS
-    # ---------------------
     try:
         events = fetch_rows("events")
         snapshot["events_total"] = len(events)
@@ -148,11 +159,8 @@ def build_snapshot():
         ]
     except Exception as e:
         snapshot["events_error"] = str(e)
-        events = []
 
-    # ---------------------
     # DOCUMENTS
-    # ---------------------
     try:
         documents = fetch_rows("documents")
         snapshot["documents_total"] = len(documents)
@@ -161,11 +169,8 @@ def build_snapshot():
         ]
     except Exception as e:
         snapshot["documents_error"] = str(e)
-        documents = []
 
-    # ---------------------
-    # USERS (Supabase Auth)
-    # ---------------------
+    # USERS
     try:
         users = fetch_auth_users()
         snapshot["users_total"] = len(users)
@@ -176,27 +181,23 @@ def build_snapshot():
         snapshot["users_error"] = str(e)
         users = []
 
-    # ---------------------
     # ACTIVE USERS
-    # ---------------------
     try:
-        active_user_ids = set()
+        active = set()
 
         for e in snapshot.get("new_events", []):
             if e.get("created_by"):
-                active_user_ids.add(e["created_by"])
+                active.add(e["created_by"])
 
         for d in snapshot.get("new_documents", []):
             if d.get("uploaded_by"):
-                active_user_ids.add(d["uploaded_by"])
+                active.add(d["uploaded_by"])
 
-        snapshot["active_users"] = len(active_user_ids)
+        snapshot["active_users"] = len(active)
     except Exception as e:
         snapshot["active_users_error"] = str(e)
 
-    # ---------------------
     # CONTRACTORS
-    # ---------------------
     try:
         contractors = [
             u for u in users
@@ -219,7 +220,6 @@ def build_snapshot():
             )
         else:
             snapshot["top_contractor"] = None
-
     except Exception as e:
         snapshot["contractor_error"] = str(e)
 
@@ -233,6 +233,7 @@ def build_snapshot():
 def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
     try:
         snap = build_snapshot()
+        snap = sanitize_json(snap)   # <— FIX: makes JSONResponse safe
         return JSONResponse({"success": True, "snapshot": snap})
     except Exception as e:
         raise HTTPException(500, f"Daily snapshot failed: {e}")
@@ -240,4 +241,4 @@ def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
 
 @router.get("/preview")
 def preview_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
-    return {"success": True, "data": build_snapshot()}
+    return {"success": True, "data": sanitize_json(build_snapshot())}
