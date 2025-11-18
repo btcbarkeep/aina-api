@@ -20,6 +20,7 @@ router = APIRouter(
     tags=["Admin"],
 )
 
+
 # -----------------------------------------------------
 # Allowed System Roles
 # -----------------------------------------------------
@@ -44,6 +45,7 @@ class AdminUpdateUser(BaseModel):
     phone: Optional[str] = None
     role: Optional[str] = None
     permissions: Optional[List[str]] = None
+    contractor_id: Optional[str] = None   # NEW — safe contractor_id update
 
 
 # -----------------------------------------------------
@@ -83,11 +85,13 @@ def validate_role_change(
         u.id for u in all_users if (u.user_metadata or {}).get("role") == "super_admin"
     ]
 
+    # Only super_admin can assign admin or super_admin
     if desired_role in ("admin", "super_admin") and requestor.role != "super_admin":
         raise HTTPException(
             403, "Only a super_admin may assign admin or super_admin roles."
         )
 
+    # Check demotion of super_admin
     if target_user_id is not None:
         target_user = next((u for u in all_users if u.id == target_user_id), None)
 
@@ -127,7 +131,7 @@ def prevent_deleting_last_super_admin(user_id: str):
 
 
 # -----------------------------------------------------
-# 1️⃣ CREATE USER — GoTrue-safe version
+# 1️⃣ CREATE USER
 # -----------------------------------------------------
 @router.post(
     "/create-account",
@@ -151,36 +155,30 @@ def admin_create_account(
         "permissions": payload.permissions or [],
     }
 
-    # -------- FIX: GoTrue-safe payload (dict only) --------
     create_payload = {
         "email": payload.email,
-        "email_confirm": False,    # important!
+        "email_confirm": False,
         "user_metadata": metadata,
     }
 
-    # 1️⃣ CREATE USER
     try:
         user_resp = client.auth.admin.create_user(create_payload)
     except Exception as e:
         raise HTTPException(500, f"Supabase user creation failed: {e}")
 
-    # 2️⃣ INVITE — safe wrapper
+    # RESP FIX: user_resp.user is an object, not dict
+    new_user_id = getattr(user_resp.user, "id", None)
+
+    # Invite
     try:
         client.auth.admin.invite_user_by_email(payload.email)
     except Exception as e:
         msg = str(e).lower()
-        if "already registered" in msg or "already been registered" in msg:
-            pass
-        else:
+        if "already registered" not in msg:
             raise HTTPException(500, f"Failed to send invite email: {e}")
 
-    return {
-        "success": True,
-        "data": {
-            "user_id": getattr(user_resp, "user", {}).get("id"),
-            "email": payload.email,
-        },
-    }
+    return {"success": True, "data": {"user_id": new_user_id, "email": payload.email}}
+
 
 
 # -----------------------------------------------------
@@ -265,7 +263,7 @@ def get_user(user_id: str):
 
 
 # -----------------------------------------------------
-# 4️⃣ UPDATE USER
+# 4️⃣ UPDATE USER (SAFE)
 # -----------------------------------------------------
 @router.patch(
     "/users/{user_id}",
@@ -297,7 +295,12 @@ def update_user(
 
     validate_role_change(current_user, new_role, target_user_id=user_id)
 
-    merged = {**current_meta, **updates, "role": new_role}
+    # Preserve contractor_id unless explicitly updated
+    merged = {**current_meta, **updates}
+    if "contractor_id" not in updates:
+        merged["contractor_id"] = current_meta.get("contractor_id")
+
+    merged["role"] = new_role
 
     try:
         client.auth.admin.update_user_by_id(
@@ -311,7 +314,7 @@ def update_user(
 
 
 # -----------------------------------------------------
-# 5️⃣ DELETE USER
+# 5️⃣ DELETE USER — SAFE
 # -----------------------------------------------------
 @router.delete(
     "/users/{user_id}",
@@ -328,6 +331,12 @@ def delete_user(
     prevent_deleting_last_super_admin(user_id)
 
     client = get_supabase_client()
+
+    # DELETE building access rows FIRST
+    try:
+        client.table("user_building_access").delete().eq("user_id", user_id).execute()
+    except Exception:
+        pass
 
     try:
         client.auth.admin.delete_user(user_id)
