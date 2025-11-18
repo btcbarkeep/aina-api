@@ -26,7 +26,7 @@ router = APIRouter(
 
 
 # -----------------------------------------------------
-# Helper — Sanitize dict ("" → None)
+# Helper — sanitize dict ("" → None)
 # -----------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
@@ -39,7 +39,7 @@ def sanitize(data: dict) -> dict:
 
 
 # -----------------------------------------------------
-# Helper — Validate & sanitize filename
+# Helper — validate & sanitize filename
 # -----------------------------------------------------
 def safe_filename(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", filename)
@@ -67,18 +67,19 @@ def get_s3_client():
 
 
 # -----------------------------------------------------
-# Helper: Check building access
+# Helper — SAFE building access check
 # -----------------------------------------------------
 def verify_user_building_access(current_user: CurrentUser, building_id: str):
-    # Admin/manager bypass
-    if current_user.role in ["admin", "manager"]:
+
+    # Admin, super_admin and manager bypass
+    if current_user.role in ["admin", "super_admin", "manager"]:
         return
 
     client = get_supabase_client()
 
     result = (
         client.table("user_building_access")
-        .select("id")
+        .select("*")  # The table does NOT have an id column
         .eq("user_id", current_user.id)
         .eq("building_id", building_id)
         .execute()
@@ -89,7 +90,7 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper: Event → building
+# Helper — event_id → building_id (NO .single())
 # -----------------------------------------------------
 def get_event_building_id(event_id: str | None):
     if not event_id:
@@ -97,18 +98,18 @@ def get_event_building_id(event_id: str | None):
 
     client = get_supabase_client()
 
-    result = (
+    rows = (
         client.table("events")
         .select("building_id")
         .eq("id", event_id)
-        .single()
+        .limit(1)
         .execute()
-    )
+    ).data
 
-    if not result.data:
+    if not rows:
         raise HTTPException(404, "Event not found.")
 
-    return result.data["building_id"]
+    return rows[0]["building_id"]
 
 
 # -----------------------------------------------------
@@ -128,27 +129,23 @@ async def upload_document(
 ):
     """
     Uploads a document to S3 and creates a Supabase record.
-
-    Applies:
-      • Global permission system (upload:write)
-      • Building access rules
-      • Event → building validation
     """
 
     # -------------------------------------------------
     # Validate event belongs to building (if provided)
     # -------------------------------------------------
     event_building = get_event_building_id(event_id)
+
     if event_building and event_building != building_id:
         raise HTTPException(400, "Event does not belong to this building.")
 
     # -------------------------------------------------
-    # Building access checks
+    # Building access rules
     # -------------------------------------------------
     verify_user_building_access(current_user, building_id)
 
     # -------------------------------------------------
-    # Start upload
+    # Prepare S3 upload
     # -------------------------------------------------
     try:
         s3, bucket, region = get_s3_client()
@@ -160,7 +157,7 @@ async def upload_document(
             if category else "general"
         )
 
-        # Determine S3 key
+        # Determine S3 key structure
         if event_id:
             s3_key = f"events/{event_id}/documents/{safe_category}/{clean_filename}"
         else:
@@ -174,7 +171,7 @@ async def upload_document(
             ExtraArgs={"ContentType": file.content_type},
         )
 
-        # Presigned URL (1 day)
+        # Generate presigned URL (1 day)
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": s3_key},
@@ -182,7 +179,7 @@ async def upload_document(
         )
 
         # -------------------------------------------------
-        # Create Supabase document record
+        # Create Supabase document record (SAFE 2-STEP)
         # -------------------------------------------------
         payload = sanitize({
             "event_id": event_id,
@@ -191,21 +188,33 @@ async def upload_document(
             "filename": clean_filename,
             "content_type": file.content_type,
             "size_bytes": getattr(file, "size", None),
-            "created_at": datetime.utcnow().isoformat(),
             "uploaded_by": current_user.id,
         })
 
         client = get_supabase_client()
 
-        result = (
+        # Step 1 — Insert
+        insert_res = (
             client.table("documents")
-            .insert(payload, returning="representation")
-            .single()
+            .insert(payload)
             .execute()
         )
 
-        if not result.data:
+        if not insert_res.data:
             raise HTTPException(500, "Supabase insert returned no data.")
+
+        doc_id = insert_res.data[0]["id"]
+
+        # Step 2 — Fetch document
+        fetch_res = (
+            client.table("documents")
+            .select("*")
+            .eq("id", doc_id)
+            .execute()
+        )
+
+        if not fetch_res.data:
+            raise HTTPException(500, "Created document not found.")
 
         # -------------------------------------------------
         # Response
@@ -217,7 +226,7 @@ async def upload_document(
                 "presigned_url": presigned_url,
                 "uploaded_at": datetime.utcnow().isoformat(),
             },
-            "document": result.data,
+            "document": fetch_res.data[0],
         }
 
     except (NoCredentialsError, ClientError) as e:
