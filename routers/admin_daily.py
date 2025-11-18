@@ -22,19 +22,19 @@ router = APIRouter(
 
 
 # ============================================================
-# Supabase Auth Users (replaces old users table)
+# Fetch Supabase Auth Users — FIXED for Supabase 2.x
 # ============================================================
 def fetch_auth_users():
     client = get_supabase_client()
     try:
-        raw = client.auth.admin.list_users()
-        return raw.get("users", raw) if isinstance(raw, dict) else raw
+        resp = client.auth.admin.list_users()
+        return resp.users  # This is a list[User] Pydantic model
     except Exception as e:
         raise HTTPException(500, f"Supabase user fetch failed: {e}")
 
 
 # ============================================================
-# Basic DB fetch helper
+# Fetch any DB table rows (dicts)
 # ============================================================
 def fetch_rows(table: str):
     rows = safe_select(table)
@@ -42,31 +42,45 @@ def fetch_rows(table: str):
 
 
 # ============================================================
-# Timestamp parsing
+# Timestamp parsing (supports DB strings + Supabase Auth strings)
 # ============================================================
 def parse_timestamp(value):
     if not value:
         return None
+
+    # Already a datetime
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
+    # string → datetime
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-        except:
+        except Exception:
             return None
 
     return None
 
 
-def is_within_last_24h(obj, since: datetime):
-    ts = parse_timestamp(obj.get("created_at"))
+# ============================================================
+# Check if DB row (dict) created_at is within last 24h
+# ============================================================
+def is_row_within_last_24h(row: dict, since: datetime):
+    ts = parse_timestamp(row.get("created_at"))
     return ts and ts >= since
 
 
 # ============================================================
-# Build the daily snapshot (NO EMAIL)
+# Check if AUTH USER (Pydantic) created_at is within last 24h
+# ============================================================
+def is_auth_user_within_last_24h(user_obj, since: datetime):
+    ts = parse_timestamp(user_obj.created_at)
+    return ts and ts >= since
+
+
+# ============================================================
+# Build Daily Snapshot
 # ============================================================
 def build_snapshot():
     now = datetime.now(timezone.utc)
@@ -77,41 +91,66 @@ def build_snapshot():
         "range": f"{since.isoformat()} → {now.isoformat()}",
     }
 
-    # BUILDINGS
+    # --------------------------------------------------------
+    # BUILDINGS (dicts)
+    # --------------------------------------------------------
     buildings = fetch_rows("buildings")
     snapshot["buildings_total"] = len(buildings)
-    snapshot["new_buildings"] = [b for b in buildings if is_within_last_24h(b, since)]
+    snapshot["new_buildings"] = [
+        b for b in buildings if is_row_within_last_24h(b, since)
+    ]
 
     building_lookup = {b["id"]: b for b in buildings}
 
-    # EVENTS
+    # --------------------------------------------------------
+    # EVENTS (dicts)
+    # --------------------------------------------------------
     events = fetch_rows("events")
     snapshot["events_total"] = len(events)
-    snapshot["new_events"] = [e for e in events if is_within_last_24h(e, since)]
+    snapshot["new_events"] = [
+        e for e in events if is_row_within_last_24h(e, since)
+    ]
 
+    # Which buildings had new events
     snapshot["buildings_updated"] = [
         {
-            "building_id": eid.get("building_id"),
-            "name": building_lookup.get(eid.get("building_id"), {}).get("name", "Unknown")
+            "building_id": e.get("building_id"),
+            "name": building_lookup.get(e.get("building_id"), {}).get("name", "Unknown")
         }
-        for eid in snapshot["new_events"]
-        if eid.get("building_id")
+        for e in snapshot["new_events"]
+        if e.get("building_id")
     ]
 
-    # DOCUMENTS
+    # --------------------------------------------------------
+    # DOCUMENTS (dicts)
+    # --------------------------------------------------------
     documents = fetch_rows("documents")
     snapshot["documents_total"] = len(documents)
-    snapshot["new_documents"] = [d for d in documents if is_within_last_24h(d, since)]
-
-    # USERS
-    users = fetch_auth_users()
-    snapshot["users_total"] = len(users)
-    snapshot["new_users"] = [
-        u for u in users if is_within_last_24h(u, since)
+    snapshot["new_documents"] = [
+        d for d in documents if is_row_within_last_24h(d, since)
     ]
 
-    # Active users
+    # --------------------------------------------------------
+    # SUPABASE AUTH USERS (objects, not dicts)
+    # --------------------------------------------------------
+    users = fetch_auth_users()
+    snapshot["users_total"] = len(users)
+
+    snapshot["new_users"] = [
+        {
+            "id": u.id,
+            "email": u.email,
+            "created_at": u.created_at,
+        }
+        for u in users
+        if is_auth_user_within_last_24h(u, since)
+    ]
+
+    # --------------------------------------------------------
+    # ACTIVE USERS (from events + documents)
+    # --------------------------------------------------------
     active_user_ids = set()
+
     for e in snapshot["new_events"]:
         if e.get("created_by"):
             active_user_ids.add(e["created_by"])
@@ -122,13 +161,16 @@ def build_snapshot():
 
     snapshot["active_users"] = len(active_user_ids)
 
-    # CONTRACTORS
+    # --------------------------------------------------------
+    # CONTRACTORS — look into user_metadata.role
+    # --------------------------------------------------------
     contractors = [
         u for u in users
-        if (u.get("user_metadata") or {}).get("role") == "contractor"
+        if (u.user_metadata or {}).get("role") == "contractor"
     ]
 
     contractor_activity = {}
+
     for e in snapshot["new_events"]:
         uid = e.get("created_by")
         if uid:
@@ -137,9 +179,17 @@ def build_snapshot():
     snapshot["contractor_activity"] = contractor_activity
 
     if contractor_activity:
-        top_id = max(contractor_activity, key=contractor_activity.get)
+        top_contractor_id = max(contractor_activity, key=contractor_activity.get)
         snapshot["top_contractor"] = next(
-            (u for u in contractors if u.get("id") == top_id),
+            (
+                {
+                    "id": u.id,
+                    "email": u.email,
+                    "events_created": contractor_activity.get(u.id, 0),
+                }
+                for u in contractors
+                if u.id == top_contractor_id
+            ),
             None,
         )
     else:
@@ -149,7 +199,7 @@ def build_snapshot():
 
 
 # ============================================================
-# 1️⃣ Manual — run snapshot (dashboard button)
+# POST /admin-daily/run — Manual Snapshot
 # ============================================================
 @router.post("/run")
 def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
@@ -158,7 +208,7 @@ def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
 
 
 # ============================================================
-# 2️⃣ Manual — preview endpoint (also protected)
+# GET /admin-daily/preview — Manual Preview
 # ============================================================
 @router.get("/preview")
 def preview_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
