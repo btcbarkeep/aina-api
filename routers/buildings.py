@@ -71,11 +71,16 @@ def create_building(payload: BuildingCreate):
     try:
         result = (
             client.table("buildings")
-            .insert(data, returning="representation")
-            .single()
+            .insert(data)
+            .select("*")   # <-- FIX: replaces .single()
             .execute()
         )
-        return result.data
+
+        if not result.data:
+            raise HTTPException(500, "Insert returned no data")
+
+        return result.data[0]
+
     except Exception as e:
         msg = str(e)
         if "duplicate" in msg.lower():
@@ -102,7 +107,7 @@ def update_building(building_id: str, payload: BuildingUpdate):
             client.table("buildings")
             .update(update_data)
             .eq("id", building_id)
-            .single()
+            .select("*")   # <-- FIX: replaces .single()
             .execute()
         )
     except Exception as e:
@@ -111,7 +116,7 @@ def update_building(building_id: str, payload: BuildingUpdate):
     if not result.data:
         raise HTTPException(404, f"Building '{building_id}' not found")
 
-    return result.data
+    return result.data[0]
 
 
 # ============================================================
@@ -129,9 +134,9 @@ def delete_building(building_id: str):
     try:
         res = (
             client.table("buildings")
-            .delete(returning="representation")
+            .delete()
             .eq("id", building_id)
-            .single()
+            .select("*")   # <-- FIX: replaces .single()
             .execute()
         )
     except Exception as e:
@@ -205,7 +210,7 @@ def get_building_units(
     client = get_supabase_client()
 
     try:
-        res = (
+        rows = (
             client.table("events")
             .select("unit_number")
             .eq("building_id", building_id)
@@ -213,7 +218,7 @@ def get_building_units(
             .execute()
         ).data or []
 
-        units = sorted({e["unit_number"] for e in res if e["unit_number"]})
+        units = sorted({e["unit_number"] for e in rows if e["unit_number"]})
 
         return {
             "success": True,
@@ -316,20 +321,22 @@ def get_building_report(
 ):
     client = get_supabase_client()
 
-    # Building lookup
+    # Building lookup (replace .single())
     try:
-        building = (
+        building_rows = (
             client.table("buildings")
             .select("*")
             .eq("id", building_id)
-            .single()
+            .limit(1)
             .execute()
         ).data
     except Exception as e:
         raise HTTPException(500, f"Supabase fetch error: {e}")
 
-    if not building:
+    if not building_rows:
         raise HTTPException(404, "Building not found")
+
+    building = building_rows[0]
 
     # Events
     events = (
