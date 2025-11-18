@@ -1,12 +1,10 @@
-# models/enums.py
-
 from enum import Enum
 
 
 class BaseStrEnum(str, Enum):
     """
-    Ensures enum serializes cleanly as a plain string
-    and supports helper .list() method for dropdowns.
+    Base enum that serializes cleanly to a string
+    and provides a .list() method for UI dropdowns.
     """
 
     def __str__(self):
@@ -21,6 +19,8 @@ class BaseStrEnum(str, Enum):
 # EVENT TYPE
 # -----------------------------------------------------
 class EventType(BaseStrEnum):
+    """Used for categorizing events (HOA notices, repairs, etc.)."""
+
     maintenance = "maintenance"
     notice = "notice"
     assessment = "assessment"
@@ -28,33 +28,25 @@ class EventType(BaseStrEnum):
     electrical = "electrical"
     general = "general"
 
-    """
-    Used for categorizing events (HOA notices, repairs, etc.)
-    """
-
 
 # -----------------------------------------------------
 # EVENT SEVERITY
 # -----------------------------------------------------
 class EventSeverity(BaseStrEnum):
+    """Indicates importance/priority of the event."""
+
     low = "low"
     medium = "medium"
     high = "high"
     urgent = "urgent"
-
-    """
-    Indicates importance/priority of event.
-    """
 
 
 # -----------------------------------------------------
 # EVENT STATUS
 # -----------------------------------------------------
 class EventStatus(BaseStrEnum):
+    """Workflow state for an event."""
+
     open = "open"
     in_progress = "in_progress"
     resolved = "resolved"
-
-    """
-    Workflow state for an event.
-    """
