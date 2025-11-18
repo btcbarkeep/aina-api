@@ -8,7 +8,6 @@ from datetime import datetime
 import boto3
 import os
 import re
-from uuid import UUID
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import (
@@ -32,29 +31,11 @@ router = APIRouter(
 def sanitize(data: dict) -> dict:
     clean = {}
     for k, v in data.items():
-        if isinstance(v, str):
-            v = v.strip()
-            clean[k] = v if v != "" else None
+        if isinstance(v, str) and v.strip() == "":
+            clean[k] = None
         else:
             clean[k] = v
     return clean
-
-
-# -----------------------------------------------------
-# Helper — safe UUID validation
-# -----------------------------------------------------
-def validate_uuid(value: str | None):
-    """
-    Returns:
-      - UUID object if valid
-      - None if invalid or empty
-    """
-    if not value:
-        return None
-    try:
-        return UUID(str(value))
-    except Exception:
-        return None
 
 
 # -----------------------------------------------------
@@ -62,6 +43,20 @@ def validate_uuid(value: str | None):
 # -----------------------------------------------------
 def safe_filename(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+
+
+# -----------------------------------------------------
+# Helper — normalize "uuid-ish" strings
+# Treat swagger defaults like "string" / "" as None
+# -----------------------------------------------------
+def normalize_uuid_like(value: str | None) -> str | None:
+    if not value:
+        return None
+    v = value.strip()
+    if not v or v.lower() in {"string", "null", "undefined"}:
+        return None
+    # we do NOT validate format here; Supabase will reject truly bad UUIDs
+    return v
 
 
 # -----------------------------------------------------
@@ -98,7 +93,7 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
 
     result = (
         client.table("user_building_access")
-        .select("*")
+        .select("*")  # The table does NOT have an id column
         .eq("user_id", current_user.id)
         .eq("building_id", building_id)
         .execute()
@@ -109,15 +104,13 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper — event_id → building_id (UUID-safe)
+# Helper — event_id → building_id (NO .single())
+# Handles None / placeholder values safely
 # -----------------------------------------------------
 def get_event_building_id(event_id: str | None):
-    """
-    Only treat event_id as valid IF it's a real UUID.
-    If not valid, treat as None.
-    """
-    valid = validate_uuid(event_id)
-    if not valid:
+    normalized = normalize_uuid_like(event_id)
+    if not normalized:
+        # No event provided (or placeholder like "string") → skip
         return None
 
     client = get_supabase_client()
@@ -125,7 +118,7 @@ def get_event_building_id(event_id: str | None):
     rows = (
         client.table("events")
         .select("building_id")
-        .eq("id", str(valid))
+        .eq("id", normalized)
         .limit(1)
         .execute()
     ).data
@@ -155,19 +148,22 @@ async def upload_document(
     Uploads a document to S3 and creates a Supabase record.
     """
 
-    # -------------------------------------------------
-    # Validate event_id only if it's a real UUID
-    # -------------------------------------------------
-    valid_event_id = validate_uuid(event_id)
-    event_building = get_event_building_id(event_id)
+    # Normalize IDs coming from the form / Swagger
+    building_id_norm = building_id.strip()
+    event_id_norm = normalize_uuid_like(event_id)
 
-    if event_building and event_building != building_id:
+    # -------------------------------------------------
+    # Validate event belongs to building (if provided)
+    # -------------------------------------------------
+    event_building = get_event_building_id(event_id_norm)
+
+    if event_building and event_building != building_id_norm:
         raise HTTPException(400, "Event does not belong to this building.")
 
     # -------------------------------------------------
     # Building access rules
     # -------------------------------------------------
-    verify_user_building_access(current_user, building_id)
+    verify_user_building_access(current_user, building_id_norm)
 
     # -------------------------------------------------
     # Prepare S3 upload
@@ -183,10 +179,10 @@ async def upload_document(
         )
 
         # Determine S3 key structure
-        if valid_event_id:
-            s3_key = f"events/{valid_event_id}/documents/{safe_category}/{clean_filename}"
+        if event_id_norm:
+            s3_key = f"events/{event_id_norm}/documents/{safe_category}/{clean_filename}"
         else:
-            s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
+            s3_key = f"buildings/{building_id_norm}/documents/{safe_category}/{clean_filename}"
 
         # Upload to S3
         s3.upload_fileobj(
@@ -207,12 +203,12 @@ async def upload_document(
         # Create Supabase document record (SAFE 2-STEP)
         # -------------------------------------------------
         payload = sanitize({
-            "event_id": str(valid_event_id) if valid_event_id else None,
-            "building_id": building_id,
+            "event_id": event_id_norm,
+            "building_id": building_id_norm,
             "s3_key": s3_key,
             "filename": clean_filename,
             "content_type": file.content_type,
-            "size_bytes": None,   # UploadFile does not expose size reliably
+            "size_bytes": getattr(file, "size", None),
             "uploaded_by": current_user.id,
         })
 
