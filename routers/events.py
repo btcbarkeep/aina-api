@@ -10,7 +10,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from models.event import EventCreate, EventUpdate, EventRead
+    from models.event import EventCreate, EventUpdate, EventRead
 
 router = APIRouter(
     prefix="/events",
@@ -39,7 +39,7 @@ def ensure_datetime_strings(data: dict) -> dict:
     return data
 
 # -----------------------------------------------------
-# Convert ALL UUID objects → strings
+# Convert UUID objects → strings
 # -----------------------------------------------------
 def ensure_uuid_strings(data: dict) -> dict:
     for k, v in data.items():
@@ -48,33 +48,31 @@ def ensure_uuid_strings(data: dict) -> dict:
     return data
 
 # -----------------------------------------------------
-# Normalize optional contractor_id → UUID or None
+# Normalize contractor_id → UUID or None
 # -----------------------------------------------------
-def normalize_contractor_id(value) -> Optional[UUID]:
+def normalize_contractor_id(value) -> Optional[str]:
     if not value:
         return None
-    if isinstance(value, UUID):
-        return value
     try:
-        return UUID(str(value))
+        return str(UUID(str(value)))
     except Exception:
         return None
 
 # -----------------------------------------------------
-# Check building access (fixed)
+# Check building access (non-admin paths)
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
 
-    result = (
+    rows = (
         client.table("user_building_access")
-        .select("*")       # table has no id column => must select *
+        .select("*")   # No ID column — must select *
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
-    )
+    ).data
 
-    if not result.data:
+    if not rows:
         raise HTTPException(403, "You do not have permission for this building.")
 
 # -----------------------------------------------------
@@ -126,7 +124,7 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     building_id = payload.building_id
 
-    # Base JSON-safe data
+    # JSON-safe payload
     event_data = sanitize(payload.model_dump())
     event_data = ensure_datetime_strings(event_data)
     event_data = ensure_uuid_strings(event_data)
@@ -134,20 +132,32 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     # Always set created_by
     event_data["created_by"] = str(current_user.id)
 
-    # Contractor rules
+    # -----------------------------------------------------
+    # Contractor_id assignment logic (FINAL FIX)
+    # -----------------------------------------------------
     if current_user.role == "contractor":
+        # Contractors can ONLY assign themselves
         if not getattr(current_user, "contractor_id", None):
-            raise HTTPException(400, "Contractor account missing contractor_id.")
+            raise HTTPException(400, "Contractor account missing contractor_id")
         event_data["contractor_id"] = str(current_user.contractor_id)
-    else:
-        cid = normalize_contractor_id(event_data.get("contractor_id"))
-        event_data["contractor_id"] = str(cid) if cid else None
 
+    elif current_user.role in ["admin", "super_admin"]:
+        # Admin / super-admin can assign OR leave null
+        cid = normalize_contractor_id(event_data.get("contractor_id"))
+        event_data["contractor_id"] = cid
+
+    else:
+        # Property managers / HOA / others — may assign via UI
+        cid = normalize_contractor_id(event_data.get("contractor_id"))
+        event_data["contractor_id"] = cid
+
+    # -----------------------------------------------------
     # Access control
+    # -----------------------------------------------------
     if current_user.role not in ["admin", "super_admin"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
-    # Insert → Supabase requires pure JSON types
+    # Insert event
     try:
         insert_res = client.table("events").insert(event_data).execute()
     except Exception as e:
@@ -158,7 +168,7 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     event_id = insert_res.data[0]["id"]
 
-    # Fetch newly created event
+    # Fetch & return
     fetch_res = (
         client.table("events")
         .select("*")
@@ -186,12 +196,11 @@ def update_event(event_id: str, payload: EventUpdate):
     update_data = ensure_datetime_strings(update_data)
     update_data = ensure_uuid_strings(update_data)
 
-    # contractor_id must be normalized
+    # Normalize contractor_id
     if "contractor_id" in update_data:
-        cid = normalize_contractor_id(update_data["contractor_id"])
-        update_data["contractor_id"] = str(cid) if cid else None
+        update_data["contractor_id"] = normalize_contractor_id(update_data["contractor_id"])
 
-    # Update event
+    # Update
     try:
         update_res = (
             client.table("events")
@@ -205,7 +214,7 @@ def update_event(event_id: str, payload: EventUpdate):
     if not update_res.data:
         raise HTTPException(404, "Event not found")
 
-    # Fetch updated event
+    # Fetch updated record
     fetch_res = (
         client.table("events")
         .select("*")
