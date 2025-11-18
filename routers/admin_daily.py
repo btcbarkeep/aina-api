@@ -1,5 +1,4 @@
 # routers/admin_daily.py
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta, timezone
@@ -22,25 +21,47 @@ router = APIRouter(
 
 
 # ============================================================
-# Supabase Auth Users (normalize into dictionaries)
+# SAFE: Fetch & normalize Supabase Auth users
 # ============================================================
 def fetch_auth_users():
     client = get_supabase_client()
+
     try:
         result = client.auth.admin.list_users()
 
-        # Supabase Python client returns an object, not dict
-        users = result.users if hasattr(result, "users") else result
+        # The Supabase client returns an object with "users", OR a raw list
+        raw_users = []
+
+        if hasattr(result, "users"):
+            raw_users = result.users
+        elif isinstance(result, list):
+            raw_users = result
+        else:
+            # Last fallback — convert dict-like or unknown format
+            raw_users = result.get("users", [])
 
         normalized = []
-        for u in users:
-            normalized.append({
-                "id": u.id,
-                "email": u.email,
-                "created_at": u.created_at,
-                "last_sign_in_at": getattr(u, "last_sign_in_at", None),
-                "user_metadata": u.user_metadata or {},
-            })
+
+        for u in raw_users:
+            # Some clients return dict form; some return class form
+            if isinstance(u, dict):
+                normalized.append({
+                    "id": u.get("id"),
+                    "email": u.get("email"),
+                    "created_at": u.get("created_at"),
+                    "last_sign_in_at": u.get("last_sign_in_at"),
+                    "user_metadata": u.get("user_metadata") or {},
+                })
+            else:
+                # AuthUser class instance
+                normalized.append({
+                    "id": getattr(u, "id", None),
+                    "email": getattr(u, "email", None),
+                    "created_at": getattr(u, "created_at", None),
+                    "last_sign_in_at": getattr(u, "last_sign_in_at", None),
+                    "user_metadata": getattr(u, "user_metadata", {}) or {},
+                })
+
         return normalized
 
     except Exception as e:
@@ -75,14 +96,15 @@ def parse_timestamp(value):
     return None
 
 
-def is_within_last_24h(obj, since: datetime):
-    # obj is ALWAYS dict now
+def is_within_last_24h(obj: dict, since: datetime):
+    if not isinstance(obj, dict):
+        return False
     ts = parse_timestamp(obj.get("created_at"))
     return ts and ts >= since
 
 
 # ============================================================
-# Build the daily snapshot
+# Build daily snapshot
 # ============================================================
 def build_snapshot():
     now = datetime.now(timezone.utc)
@@ -98,7 +120,7 @@ def build_snapshot():
     snapshot["buildings_total"] = len(buildings)
     snapshot["new_buildings"] = [b for b in buildings if is_within_last_24h(b, since)]
 
-    building_lookup = {b["id"]: b for b in buildings}
+    building_lookup = {b.get("id"): b for b in buildings}
 
     # EVENTS
     events = fetch_rows("events")
@@ -111,7 +133,7 @@ def build_snapshot():
             "name": building_lookup.get(e.get("building_id"), {}).get("name", "Unknown")
         }
         for e in snapshot["new_events"]
-        if e.get("building_id")
+        if isinstance(e, dict) and e.get("building_id")
     ]
 
     # DOCUMENTS
@@ -119,7 +141,7 @@ def build_snapshot():
     snapshot["documents_total"] = len(documents)
     snapshot["new_documents"] = [d for d in documents if is_within_last_24h(d, since)]
 
-    # USERS FROM SUPABASE AUTH
+    # USERS (Supabase Auth)
     users = fetch_auth_users()
     snapshot["users_total"] = len(users)
     snapshot["new_users"] = [u for u in users if is_within_last_24h(u, since)]
@@ -128,16 +150,16 @@ def build_snapshot():
     active_user_ids = set()
 
     for e in snapshot["new_events"]:
-        if e.get("created_by"):
+        if isinstance(e, dict) and e.get("created_by"):
             active_user_ids.add(e["created_by"])
 
     for d in snapshot["new_documents"]:
-        if d.get("uploaded_by"):
+        if isinstance(d, dict) and d.get("uploaded_by"):
             active_user_ids.add(d["uploaded_by"])
 
     snapshot["active_users"] = len(active_user_ids)
 
-    # CONTRACTOR ACTIVITY
+    # CONTRACTORS
     contractors = [
         u for u in users
         if (u.get("user_metadata") or {}).get("role") == "contractor"
@@ -145,9 +167,10 @@ def build_snapshot():
 
     contractor_activity = {}
     for e in snapshot["new_events"]:
-        uid = e.get("created_by")
-        if uid:
-            contractor_activity[uid] = contractor_activity.get(uid, 0) + 1
+        if isinstance(e, dict):
+            uid = e.get("created_by")
+            if uid:
+                contractor_activity[uid] = contractor_activity.get(uid, 0) + 1
 
     snapshot["contractor_activity"] = contractor_activity
 
@@ -168,8 +191,7 @@ def build_snapshot():
 # ============================================================
 @router.post("/run")
 def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
-    snapshot = build_snapshot()
-    return JSONResponse({"success": True, "snapshot": snapshot})
+    return JSONResponse({"success": True, "snapshot": build_snapshot()})
 
 
 @router.get("/preview")
