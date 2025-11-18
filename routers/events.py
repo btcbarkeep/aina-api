@@ -263,3 +263,190 @@ def delete_event(event_id: str):
         raise HTTPException(404, "Event not found")
 
     return {"status": "deleted", "id": event_id}
+
+
+
+# ============================================================
+# COMMENTS — Helpers
+# ============================================================
+
+ALLOWED_COMMENT_ROLES = {
+    "admin",
+    "super_admin",
+    "hoa",
+    "property_manager",
+}
+
+def get_event_creator(event_id: str) -> Optional[str]:
+    client = get_supabase_client()
+    rows = (
+        client.table("events")
+        .select("created_by")
+        .eq("id", event_id)
+        .limit(1)
+        .execute()
+    ).data
+    if not rows:
+        raise HTTPException(404, "Event not found")
+    return rows[0]["created_by"]
+
+
+def can_modify_comments(current_user: CurrentUser, event_creator_id: str) -> bool:
+    """
+    True if:
+      - user is admin/super_admin/hoa/property_manager
+      - OR user is the event creator
+    """
+    if current_user.role in ALLOWED_COMMENT_ROLES:
+        return True
+    if str(current_user.id) == str(event_creator_id):
+        return True
+    return False
+
+
+# ============================================================
+# GET — LIST COMMENTS FOR EVENT
+# ============================================================
+@router.get("/{event_id}/comments", summary="List comments for an event")
+def list_event_comments(
+    event_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    client = get_supabase_client()
+
+    result = (
+        client.table("event_comments")
+        .select("*")
+        .eq("event_id", event_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    return result.data or []
+
+
+# ============================================================
+# POST — ADD COMMENT TO EVENT
+# ============================================================
+@router.post("/{event_id}/comments", summary="Add a comment to an event")
+def add_event_comment(
+    event_id: str,
+    payload: dict,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    client = get_supabase_client()
+
+    event_creator = get_event_creator(event_id)
+
+    # Enforce permission
+    if not can_modify_comments(current_user, event_creator):
+        raise HTTPException(403, "You cannot comment on this event.")
+
+    comment_text = payload.get("comment_text", "").strip()
+    if not comment_text:
+        raise HTTPException(400, "comment_text is required")
+
+    insert_data = {
+        "event_id": event_id,
+        "user_id": str(current_user.id),
+        "comment_text": comment_text,
+    }
+
+    res = client.table("event_comments").insert(insert_data).execute()
+    if not res.data:
+        raise HTTPException(500, "Failed to insert comment")
+
+    return res.data[0]
+
+
+# ============================================================
+# PUT — UPDATE COMMENT
+# ============================================================
+@router.put("/{event_id}/comments/{comment_id}", summary="Update a comment")
+def update_event_comment(
+    event_id: str,
+    comment_id: str,
+    payload: dict,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    client = get_supabase_client()
+
+    # Fetch comment + event_creator
+    comment_rows = (
+        client.table("event_comments")
+        .select("user_id")
+        .eq("id", comment_id)
+        .limit(1)
+        .execute()
+    ).data
+
+    if not comment_rows:
+        raise HTTPException(404, "Comment not found")
+
+    comment_owner = comment_rows[0]["user_id"]
+    event_creator = get_event_creator(event_id)
+
+    # Permission check:
+    #   Admin/HOA/PM/Super OR the event creator OR the comment owner
+    if not (
+        current_user.role in ALLOWED_COMMENT_ROLES
+        or str(current_user.id) == str(event_creator)
+        or str(current_user.id) == str(comment_owner)
+    ):
+        raise HTTPException(403, "You cannot modify this comment.")
+
+    update_text = payload.get("comment_text", "").strip()
+    if not update_text:
+        raise HTTPException(400, "comment_text is required")
+
+    update_res = (
+        client.table("event_comments")
+        .update({"comment_text": update_text})
+        .eq("id", comment_id)
+        .execute()
+    )
+
+    return update_res.data[0] if update_res.data else {}
+
+
+# ============================================================
+# DELETE — DELETE COMMENT
+# ============================================================
+@router.delete("/{event_id}/comments/{comment_id}", summary="Delete a comment")
+def delete_event_comment(
+    event_id: str,
+    comment_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    client = get_supabase_client()
+
+    comment_rows = (
+        client.table("event_comments")
+        .select("user_id")
+        .eq("id", comment_id)
+        .limit(1)
+        .execute()
+    ).data
+
+    if not comment_rows:
+        raise HTTPException(404, "Comment not found")
+
+    comment_owner = comment_rows[0]["user_id"]
+    event_creator = get_event_creator(event_id)
+
+    # Same rule as update
+    if not (
+        current_user.role in ALLOWED_COMMENT_ROLES
+        or str(current_user.id) == str(event_creator)
+        or str(current_user.id) == str(comment_owner)
+    ):
+        raise HTTPException(403, "You cannot delete this comment.")
+
+    delete_res = (
+        client.table("event_comments")
+        .delete()
+        .eq("id", comment_id)
+        .execute()
+    )
+
+    return {"status": "deleted", "comment_id": comment_id}
