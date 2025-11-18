@@ -1,40 +1,69 @@
 # models/user.py
+
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr
+from uuid import UUID
 
 
-# ===================================================================
-# 👤 USER MODELS (Supabase table: users)
-# ===================================================================
+# ===============================================================
+# SUPABASE AUTH USER MODELS
+# ===============================================================
+
+class UserMetadata(BaseModel):
+    """
+    Mirrors auth.users.user_metadata (or raw_user_meta_data)
+    """
+    role: Optional[str] = "hoa"
+    full_name: Optional[str] = None
+    contractor_id: Optional[UUID] = None
+    organization_name: Optional[str] = None
+    email_verified: Optional[bool] = False
+
 
 class UserBase(BaseModel):
-    full_name: Optional[str] = None
-    organization_name: Optional[str] = None
-    phone: Optional[str] = None
-    role: str = "hoa"                 # default HOA role
+    """
+    Base structure used by reads and API responses.
+    """
+    id: str
     email: EmailStr
-
-
-# Returned when reading a user from Supabase
-class UserRead(UserBase):
-    id: str                            # UUID from Supabase
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-
-
-# Used when creating a user WITHOUT password (admin invite flow)
-class UserCreate(BaseModel):
-    full_name: Optional[str] = None
-    organization_name: Optional[str] = None
     phone: Optional[str] = None
-    role: str = "hoa"
-    email: EmailStr
 
-
-# Partial updates allowed (admin)
-class UserUpdate(BaseModel):
-    full_name: Optional[str] = None
-    organization_name: Optional[str] = None
-    phone: Optional[str] = None
+    # Supabase user metadata
     role: Optional[str] = None
+    full_name: Optional[str] = None
+    contractor_id: Optional[UUID] = None
+    organization_name: Optional[str] = None
+    email_verified: Optional[bool] = False
+
+
+class UserRead(UserBase):
+    """
+    Returned to API consumers after normalization.
+    """
+    pass
+
+
+class UserCreate(BaseModel):
+    """
+    Used when admin creates a user via createUser() or inviteUserByEmail()
+    """
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: Optional[str] = "hoa"
+    contractor_id: Optional[UUID] = None
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class UserUpdate(BaseModel):
+    """
+    Partial update to user metadata (admin only)
+    """
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    contractor_id: Optional[UUID] = None
+    organization_name: Optional[str] = None
+    phone: Optional[str] = None
