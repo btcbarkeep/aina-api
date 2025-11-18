@@ -24,30 +24,30 @@ router = APIRouter(
     tags=["Uploads"],
 )
 
-
 # -----------------------------------------------------
-# Helper — sanitize dict ("" → None)
+# Sanitize helper
 # -----------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
     for k, v in data.items():
-        if isinstance(v, str) and v.strip() == "":
+        if v is None:
             clean[k] = None
+        elif isinstance(v, str):
+            clean[k] = v.strip() or None
         else:
-            clean[k] = v
+            clean[k] = str(v)
     return clean
 
 
 # -----------------------------------------------------
-# Helper — validate & sanitize filename
+# Filename sanitizer
 # -----------------------------------------------------
 def safe_filename(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", filename)
 
 
 # -----------------------------------------------------
-# Helper — normalize "uuid-ish" strings
-# Treat swagger defaults like "string" / "" as None
+# Normalize swagger-like values
 # -----------------------------------------------------
 def normalize_uuid_like(value: str | None) -> str | None:
     if not value:
@@ -55,68 +55,85 @@ def normalize_uuid_like(value: str | None) -> str | None:
     v = value.strip()
     if not v or v.lower() in {"string", "null", "undefined"}:
         return None
-    # we do NOT validate format here; Supabase will reject truly bad UUIDs
     return v
 
 
 # -----------------------------------------------------
-# AWS CONFIGURATION
+# AWS S3
 # -----------------------------------------------------
-def get_s3_client():
-    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-    AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
-    AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
+def get_s3():
+    key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret = os.getenv("AWS_SECRET_ACCESS_KEY")
+    bucket = os.getenv("AWS_BUCKET_NAME")
+    region = os.getenv("AWS_REGION", "us-east-2")
 
-    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME]):
-        raise RuntimeError("Missing AWS credentials or bucket name.")
+    if not all([key, secret, bucket]):
+        raise RuntimeError("Missing AWS credentials")
 
-    s3 = boto3.client(
+    client = boto3.client(
         "s3",
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION,
+        aws_access_key_id=key,
+        aws_secret_access_key=secret,
+        region_name=region,
     )
-    return s3, AWS_BUCKET_NAME, AWS_REGION
+
+    return client, bucket, region
 
 
 # -----------------------------------------------------
-# Helper — SAFE building access check
+# Building access check
 # -----------------------------------------------------
 def verify_user_building_access(current_user: CurrentUser, building_id: str):
-
-    # Admin, super_admin and manager bypass
-    if current_user.role in ["admin", "super_admin", "manager"]:
+    if current_user.role in ["admin", "super_admin", "hoa"]:
         return
 
     client = get_supabase_client()
-
-    result = (
+    rows = (
         client.table("user_building_access")
-        .select("*")  # The table does NOT have an id column
+        .select("*")
         .eq("user_id", current_user.id)
         .eq("building_id", building_id)
         .execute()
-    )
+    ).data
 
-    if not result.data:
+    if not rows:
         raise HTTPException(403, "User does not have access to this building.")
 
 
 # -----------------------------------------------------
-# Helper — event_id → building_id (NO .single())
-# Handles None / placeholder values safely
+# event_id → (building_id, unit_id)
 # -----------------------------------------------------
-def get_event_building_id(event_id: str | None):
+def get_event_info(event_id: str | None):
     normalized = normalize_uuid_like(event_id)
     if not normalized:
-        # No event provided (or placeholder like "string") → skip
+        return None, None
+
+    client = get_supabase_client()
+    rows = (
+        client.table("events")
+        .select("building_id, unit_id")
+        .eq("id", normalized)
+        .limit(1)
+        .execute()
+    ).data
+
+    if not rows:
+        raise HTTPException(404, "Event not found")
+
+    return rows[0]["building_id"], rows[0].get("unit_id")
+
+
+# -----------------------------------------------------
+# unit_id → building_id
+# -----------------------------------------------------
+def get_unit_building(unit_id: str | None):
+    normalized = normalize_uuid_like(unit_id)
+    if not normalized:
         return None
 
     client = get_supabase_client()
-
     rows = (
-        client.table("events")
+        client.table("units")
         .select("building_id")
         .eq("id", normalized)
         .limit(1)
@@ -124,131 +141,163 @@ def get_event_building_id(event_id: str | None):
     ).data
 
     if not rows:
-        raise HTTPException(404, "Event not found.")
+        raise HTTPException(400, "Unit not found")
 
     return rows[0]["building_id"]
 
 
 # -----------------------------------------------------
-# UPLOAD DOCUMENT (permission: upload:write)
+# UPLOAD DOCUMENT — NOW UNIT-AWARE
 # -----------------------------------------------------
 @router.post(
     "/",
-    summary="Upload a document file",
+    summary="Upload a document and create a document record",
     dependencies=[Depends(requires_permission("upload:write"))],
 )
 async def upload_document(
     file: UploadFile = File(...),
-    building_id: str = Form(...),
+
+    # New full compatibility
+    building_id: str | None = Form(None),
     event_id: str | None = Form(None),
+    unit_id: str | None = Form(None),
+
     category: str | None = Form(None),
+
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
-    Uploads a document to S3 and creates a Supabase record.
+    Uploads a file to S3 AND creates a Supabase document record.
+    Supports: building_id, event_id, unit_id.
     """
 
-    # Normalize IDs coming from the form / Swagger
-    building_id_norm = building_id.strip()
-    event_id_norm = normalize_uuid_like(event_id)
+    # Normalize values
+    building_id = normalize_uuid_like(building_id)
+    event_id = normalize_uuid_like(event_id)
+    unit_id = normalize_uuid_like(unit_id)
 
-    # -------------------------------------------------
-    # Validate event belongs to building (if provided)
-    # -------------------------------------------------
-    event_building = get_event_building_id(event_id_norm)
+    # -----------------------------------------------------
+    # Resolve building + unit from ANY provided input
+    # -----------------------------------------------------
 
-    if event_building and event_building != building_id_norm:
-        raise HTTPException(400, "Event does not belong to this building.")
+    # If event is provided → derive building + unit
+    event_building, event_unit = get_event_info(event_id)
 
-    # -------------------------------------------------
-    # Building access rules
-    # -------------------------------------------------
-    verify_user_building_access(current_user, building_id_norm)
+    # If event provided, but user also supplied inconsistent building/unit
+    if event_id:
+        if building_id and building_id != event_building:
+            raise HTTPException(400, "Event does not belong to building.")
+        building_id = event_building
 
-    # -------------------------------------------------
-    # Prepare S3 upload
-    # -------------------------------------------------
+        if unit_id is None:
+            unit_id = event_unit  # inherit unit from event
+        elif event_unit and unit_id != event_unit:
+            raise HTTPException(400, "Event + unit mismatch.")
+
+    # If unit provided → derive building
+    if unit_id:
+        unit_building = get_unit_building(unit_id)
+        if building_id and building_id != unit_building:
+            raise HTTPException(400, "Unit does not belong to building.")
+        building_id = unit_building
+
+    # If building not provided → error
+    if not building_id:
+        raise HTTPException(400, "Must provide either event_id, unit_id, or building_id.")
+
+    # -----------------------------------------------------
+    # Permission check
+    # -----------------------------------------------------
+    verify_user_building_access(current_user, building_id)
+
+    # -----------------------------------------------------
+    # Prepare S3 key
+    # -----------------------------------------------------
+    s3, bucket, region = get_s3()
+
+    clean_filename = safe_filename(file.filename)
+
+    safe_category = (
+        category.strip().replace(" ", "_").lower()
+        if category else "general"
+    )
+
+    # NEW S3 path rules
+    if event_id:
+        s3_key = f"events/{event_id}/units/{unit_id or 'none'}/documents/{safe_category}/{clean_filename}"
+
+    elif unit_id:
+        s3_key = f"units/{unit_id}/documents/{safe_category}/{clean_filename}"
+
+    else:
+        s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
+
+    # Upload file
     try:
-        s3, bucket, region = get_s3_client()
-
-        clean_filename = safe_filename(file.filename)
-
-        safe_category = (
-            category.strip().replace(" ", "_").lower()
-            if category else "general"
-        )
-
-        # Determine S3 key structure
-        if event_id_norm:
-            s3_key = f"events/{event_id_norm}/documents/{safe_category}/{clean_filename}"
-        else:
-            s3_key = f"buildings/{building_id_norm}/documents/{safe_category}/{clean_filename}"
-
-        # Upload to S3
         s3.upload_fileobj(
             Fileobj=file.file,
             Bucket=bucket,
             Key=s3_key,
             ExtraArgs={"ContentType": file.content_type},
         )
+    except Exception as e:
+        raise HTTPException(500, f"S3 upload error: {e}")
 
-        # Generate presigned URL (1 day)
-        presigned_url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=86400,
-        )
+    # Presigned URL (1 day)
+    presigned_url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": s3_key},
+        ExpiresIn=86400,
+    )
 
-        # -------------------------------------------------
-        # Create Supabase document record (SAFE 2-STEP)
-        # -------------------------------------------------
-        payload = sanitize({
-            "event_id": event_id_norm,
-            "building_id": building_id_norm,
-            "s3_key": s3_key,
+    # -----------------------------------------------------
+    # Create document record
+    # -----------------------------------------------------
+    client = get_supabase_client()
+
+    payload = sanitize({
+        "building_id": building_id,
+        "event_id": event_id,
+        "unit_id": unit_id,
+        "category": category,
+        "filename": clean_filename,
+        "s3_key": s3_key,
+        "content_type": file.content_type,
+        "uploaded_by": current_user.id,
+    })
+
+    # Step 1 — Insert
+    insert_res = (
+        client.table("documents")
+        .insert(payload)
+        .execute()
+    )
+
+    if not insert_res.data:
+        raise HTTPException(500, "Insert returned no data")
+
+    doc_id = insert_res.data[0]["id"]
+
+    # Step 2 — Fetch
+    fetch_res = (
+        client.table("documents")
+        .select("*")
+        .eq("id", doc_id)
+        .execute()
+    )
+
+    if not fetch_res.data:
+        raise HTTPException(500, "Created document not found")
+
+    # -----------------------------------------------------
+    # Response
+    # -----------------------------------------------------
+    return {
+        "upload": {
             "filename": clean_filename,
-            "content_type": file.content_type,
-            "size_bytes": getattr(file, "size", None),
-            "uploaded_by": current_user.id,
-        })
-
-        client = get_supabase_client()
-
-        # Step 1 — Insert
-        insert_res = (
-            client.table("documents")
-            .insert(payload)
-            .execute()
-        )
-
-        if not insert_res.data:
-            raise HTTPException(500, "Supabase insert returned no data.")
-
-        doc_id = insert_res.data[0]["id"]
-
-        # Step 2 — Fetch document
-        fetch_res = (
-            client.table("documents")
-            .select("*")
-            .eq("id", doc_id)
-            .execute()
-        )
-
-        if not fetch_res.data:
-            raise HTTPException(500, "Created document not found.")
-
-        # -------------------------------------------------
-        # Response
-        # -------------------------------------------------
-        return {
-            "upload": {
-                "filename": clean_filename,
-                "s3_key": s3_key,
-                "presigned_url": presigned_url,
-                "uploaded_at": datetime.utcnow().isoformat(),
-            },
-            "document": fetch_res.data[0],
-        }
-
-    except (NoCredentialsError, ClientError) as e:
-        raise HTTPException(500, f"S3 error: {e}")
+            "s3_key": s3_key,
+            "presigned_url": presigned_url,
+            "uploaded_at": datetime.utcnow().isoformat(),
+        },
+        "document": fetch_res.data[0],
+    }
