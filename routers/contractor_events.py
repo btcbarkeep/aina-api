@@ -5,7 +5,6 @@ from typing import Optional
 
 from dependencies.auth import get_current_user, CurrentUser
 from core.permission_helpers import requires_permission
-
 from core.supabase_client import get_supabase_client
 
 
@@ -15,19 +14,17 @@ router = APIRouter(
 )
 
 
-# ============================================================
+# =============================================================================
 # GET — EVENTS BY CONTRACTOR
 #
 # Permissions:
-#   • super_admin → can view any
-#   • admin → can view any
-#   • property_manager / hoa → can view any (per RBAC)
-#   • contractor → can ONLY view their own events
-#   • contractor_staff → can ONLY view their own events
+#   • super_admin / admin → full access
+#   • property_manager / hoa → allowed to read
+#   • contractor / contractor_staff → ONLY their own events
 #   • owner / tenant / buyer → deny
 #
-# Uses: contractors:read
-# ============================================================
+# Uses permission:  contractors:read
+# =============================================================================
 @router.get(
     "/{contractor_id}/events",
     summary="List all events tied to a contractor",
@@ -40,15 +37,21 @@ def list_contractor_events(
     status: Optional[str] = None,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+
     client = get_supabase_client()
 
     # --------------------------------------------------------
     # ROLE-SPECIFIC ACCESS CONTROL
     # --------------------------------------------------------
+    disallowed_roles = ["owner", "tenant", "buyer", "seller", "other"]
+
+    if current_user.role in disallowed_roles:
+        raise HTTPException(403, "You do not have permission to view contractor events.")
+
     contractor_roles = ["contractor", "contractor_staff"]
 
     if current_user.role in contractor_roles:
-        # Enforce: contractors can ONLY view their own events
+        # Enforce: contractors only see their own events
         if getattr(current_user, "contractor_id", None) != contractor_id:
             raise HTTPException(
                 403,
@@ -56,13 +59,13 @@ def list_contractor_events(
             )
 
     # --------------------------------------------------------
-    # FETCH EVENTS — NO .single(), no returning
+    # QUERY EVENTS — Correct field: contractor_id
     # --------------------------------------------------------
     try:
         query = (
             client.table("events")
             .select("*")
-            .eq("created_by", contractor_id)
+            .eq("contractor_id", contractor_id)
             .order("occurred_at", desc=True)
         )
 
