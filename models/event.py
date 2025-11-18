@@ -7,7 +7,7 @@ from .enums import EventType, EventSeverity, EventStatus
 
 
 # -------------------------------------------------
-# Shared Fields
+# Shared Fields (Supabase-safe)
 # -------------------------------------------------
 class EventBase(BaseModel):
     building_id: str
@@ -20,11 +20,11 @@ class EventBase(BaseModel):
     severity: Optional[EventSeverity] = EventSeverity.medium
     status: Optional[EventStatus] = EventStatus.open
 
-    # FIX: UUID type instead of str
-    contractor_id: Optional[UUID] = None
+    # ❗ Supabase-safe string, NOT UUID object
+    contractor_id: Optional[str] = None
 
     # -------------------------------------------------
-    # FIX: parse timestamps with trailing Z
+    # Normalize timestamps with trailing Z
     # -------------------------------------------------
     @validator("occurred_at", pre=True)
     def parse_occurred_at(cls, v):
@@ -33,18 +33,23 @@ class EventBase(BaseModel):
         return v
 
     # -------------------------------------------------
-    # FIX: auto-null invalid contractor_id
+    # Validate contractor_id (accept UUID or string)
+    # Always store internally as a string
     # -------------------------------------------------
     @validator("contractor_id", pre=True)
     def validate_contractor_id(cls, v):
         if not v:
             return None
+
+        # If UUID object → convert to string
         if isinstance(v, UUID):
-            return v
+            return str(v)
+
+        # Try converting string → UUID → back to str
         try:
-            return UUID(v)
+            return str(UUID(str(v)))
         except Exception:
-            # invalid UUID → silently become None
+            # invalid UUID → silently null
             return None
 
 
@@ -53,15 +58,15 @@ class EventBase(BaseModel):
 # -------------------------------------------------
 class EventCreate(EventBase):
     """
-    - Client sends this when creating an event.
-    - Supabase generates id & created_at
-    - created_by is set by backend
+    Client sends this when creating an event.
+    Supabase auto-generates id & created_at.
+    Backend sets created_by.
     """
     pass
 
 
 # -------------------------------------------------
-# Read Event
+# Read Event (ALWAYS STRING SAFE)
 # -------------------------------------------------
 class EventRead(EventBase):
     id: str
@@ -83,8 +88,8 @@ class EventUpdate(BaseModel):
     severity: Optional[EventSeverity] = None
     status: Optional[EventStatus] = None
 
-    # FIX here also — use UUID type
-    contractor_id: Optional[UUID] = None
+    # Must also be string-safe
+    contractor_id: Optional[str] = None
 
     @validator("occurred_at", pre=True)
     def parse_update_occurred_at(cls, v):
@@ -92,13 +97,14 @@ class EventUpdate(BaseModel):
             return v.replace("Z", "+00:00")
         return v
 
+    # Same UUID normalization as EventBase
     @validator("contractor_id", pre=True)
     def validate_update_contractor_id(cls, v):
         if not v:
             return None
         if isinstance(v, UUID):
-            return v
+            return str(v)
         try:
-            return UUID(v)
+            return str(UUID(str(v)))
         except Exception:
             return None
