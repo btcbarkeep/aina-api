@@ -69,19 +69,13 @@ def create_building(payload: BuildingCreate):
     data = sanitize(payload.model_dump())
 
     try:
-        # 1. Insert — NO .select(), NO .single()
-        insert_res = (
-            client.table("buildings")
-            .insert(data)
-            .execute()
-        )
+        insert_res = client.table("buildings").insert(data).execute()
 
         if not insert_res.data:
             raise HTTPException(500, "Insert returned no data")
 
         building_id = insert_res.data[0]["id"]
 
-        # 2. Fetch newly created row
         fetch_res = (
             client.table("buildings")
             .select("*")
@@ -116,7 +110,6 @@ def update_building(building_id: str, payload: BuildingUpdate):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     try:
-        # 1. Perform update
         update_res = (
             client.table("buildings")
             .update(update_data)
@@ -127,7 +120,6 @@ def update_building(building_id: str, payload: BuildingUpdate):
         if not update_res.data:
             raise HTTPException(404, f"Building '{building_id}' not found")
 
-        # 2. Fetch updated row
         fetch_res = (
             client.table("buildings")
             .select("*")
@@ -157,7 +149,6 @@ def delete_building(building_id: str):
     client = get_supabase_client()
 
     try:
-        # 1. Delete row
         delete_res = (
             client.table("buildings")
             .delete()
@@ -221,8 +212,7 @@ def get_building_events(
 
 
 # ============================================================
-# GET — UNIT LIST (from events)
-# Requires: buildings:read
+# GET — UNIT LIST (safe filtering)
 # ============================================================
 @router.get(
     "/{building_id}/units",
@@ -240,11 +230,11 @@ def get_building_units(
             client.table("events")
             .select("unit_number")
             .eq("building_id", building_id)
-            .not_.is_("unit_number", None)
             .execute()
         ).data or []
 
-        units = sorted({e["unit_number"] for e in rows if e["unit_number"]})
+        # Avoid Supabase .not_.is_ bug → Python filter
+        units = sorted({e["unit_number"] for e in rows if e.get("unit_number")})
 
         return {
             "success": True,
@@ -252,13 +242,13 @@ def get_building_units(
             "units": units,
             "unit_count": len(units),
         }
+
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
 
 
 # ============================================================
-# GET — CONTRACTORS WHO WORKED ON A BUILDING
-# Requires: buildings:read
+# GET — CONTRACTORS WHO WORKED ON A BUILDING (safe version)
 # ============================================================
 @router.get(
     "/{building_id}/contractors",
@@ -272,13 +262,16 @@ def get_building_contractors(
     client = get_supabase_client()
 
     try:
-        events = (
+        # Fetch all events (filter in Python to avoid .not_.is_)
+        rows = (
             client.table("events")
             .select("contractor_id, event_type, created_at")
             .eq("building_id", building_id)
-            .not_.is_("contractor_id", None)
             .execute()
         ).data or []
+
+        # Python-side filter avoids PGRST100 error
+        events = [e for e in rows if e.get("contractor_id")]
 
         if not events:
             return {"success": True, "data": []}
@@ -293,6 +286,7 @@ def get_building_contractors(
         ).data or []
 
         contractor_map = {c["id"]: c for c in contractors}
+
         summary = {}
 
         for e in events:
@@ -334,7 +328,6 @@ def get_building_contractors(
 
 # ============================================================
 # GET — FULL BUILDING REPORT
-# Requires: buildings:read
 # ============================================================
 @router.get(
     "/{building_id}/report",
@@ -347,7 +340,6 @@ def get_building_report(
 ):
     client = get_supabase_client()
 
-    # Building lookup
     try:
         building_rows = (
             client.table("buildings")
@@ -364,7 +356,6 @@ def get_building_report(
 
     building = building_rows[0]
 
-    # Events
     events = (
         client.table("events")
         .select("*")
@@ -373,10 +364,10 @@ def get_building_report(
         .execute()
     ).data or []
 
-    units = sorted({e["unit_number"] for e in events if e["unit_number"]})
+    units = sorted({e["unit_number"] for e in events if e.get("unit_number")})
+
     contractors = get_building_contractors(building_id, current_user)["data"]
 
-    # Stats
     stats = {
         "total_events": len(events),
         "unique_units": len(units),
