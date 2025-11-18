@@ -11,7 +11,10 @@ from .enums import EventType, EventSeverity, EventStatus
 # -------------------------------------------------
 class EventBase(BaseModel):
     building_id: str
-    unit_number: Optional[str] = None
+
+    # NEW — Unit FK (UUID string)
+    unit_id: Optional[str] = None
+
     event_type: EventType
     title: str
     body: Optional[str] = None
@@ -39,16 +42,25 @@ class EventBase(BaseModel):
     def validate_contractor_id(cls, v):
         if not v:
             return None
-
-        # UUID object → convert to string
         if isinstance(v, UUID):
             return str(v)
-
-        # String that might be UUID → validate & return
         try:
             return str(UUID(str(v)))
         except Exception:
-            # Invalid UUID safely becomes None
+            return None
+
+    # -------------------------------------------------
+    # Normalize unit_id (UUID → string, or None)
+    # -------------------------------------------------
+    @field_validator("unit_id", mode="before")
+    def validate_unit_id(cls, v):
+        if not v:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        try:
+            return str(UUID(str(v)))
+        except Exception:
             return None
 
 
@@ -82,7 +94,8 @@ class EventRead(EventBase):
 # -------------------------------------------------
 class EventUpdate(BaseModel):
     building_id: Optional[str] = None
-    unit_number: Optional[str] = None
+    unit_id: Optional[str] = None
+
     event_type: Optional[EventType] = None
     title: Optional[str] = None
     body: Optional[str] = None
@@ -101,6 +114,17 @@ class EventUpdate(BaseModel):
 
     @field_validator("contractor_id", mode="before")
     def validate_update_contractor_id(cls, v):
+        if not v:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        try:
+            return str(UUID(str(v)))
+        except Exception:
+            return None
+
+    @field_validator("unit_id", mode="before")
+    def validate_update_unit_id(cls, v):
         if not v:
             return None
         if isinstance(v, UUID):
