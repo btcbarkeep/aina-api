@@ -1,4 +1,5 @@
 # routers/admin_daily.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta, timezone
@@ -9,7 +10,7 @@ from dependencies.auth import (
 )
 
 from core.permission_helpers import requires_permission
-from core.supabase_client import get_supabase_client
+    from core.supabase_client import get_supabase_client
 from core.supabase_helpers import safe_select
 
 
@@ -29,21 +30,22 @@ def fetch_auth_users():
     try:
         result = client.auth.admin.list_users()
 
-        # The Supabase client returns an object with "users", OR a raw list
+        # Normalized source list
         raw_users = []
 
         if hasattr(result, "users"):
             raw_users = result.users
         elif isinstance(result, list):
             raw_users = result
-        else:
-            # Last fallback — convert dict-like or unknown format
+        elif isinstance(result, dict):
             raw_users = result.get("users", [])
+        else:
+            raw_users = []
 
         normalized = []
 
         for u in raw_users:
-            # Some clients return dict form; some return class form
+            # If dict
             if isinstance(u, dict):
                 normalized.append({
                     "id": u.get("id"),
@@ -53,7 +55,7 @@ def fetch_auth_users():
                     "user_metadata": u.get("user_metadata") or {},
                 })
             else:
-                # AuthUser class instance
+                # Probably a Supabase AuthUser instance
                 normalized.append({
                     "id": getattr(u, "id", None),
                     "email": getattr(u, "email", None),
@@ -69,11 +71,22 @@ def fetch_auth_users():
 
 
 # ============================================================
-# Basic DB fetch helper
+# DB fetch helper — NORMALIZES FOR SAFETY
 # ============================================================
 def fetch_rows(table: str):
-    rows = safe_select(table)
-    return rows or []
+    raw = safe_select(table) or []
+
+    normalized = []
+    for r in raw:
+        if isinstance(r, dict):
+            normalized.append(r)
+        elif hasattr(r, "__dict__"):
+            normalized.append(r.__dict__)
+        else:
+            # skip malformed rows
+            continue
+
+    return normalized
 
 
 # ============================================================
@@ -83,6 +96,7 @@ def parse_timestamp(value):
     if not value:
         return None
 
+    # Already a datetime
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
@@ -118,33 +132,44 @@ def build_snapshot():
     # BUILDINGS
     buildings = fetch_rows("buildings")
     snapshot["buildings_total"] = len(buildings)
-    snapshot["new_buildings"] = [b for b in buildings if is_within_last_24h(b, since)]
+    snapshot["new_buildings"] = [
+        b for b in buildings if is_within_last_24h(b, since)
+    ]
 
-    building_lookup = {b.get("id"): b for b in buildings}
+    building_lookup = {b.get("id"): b for b in buildings if isinstance(b, dict)}
 
     # EVENTS
     events = fetch_rows("events")
     snapshot["events_total"] = len(events)
-    snapshot["new_events"] = [e for e in events if is_within_last_24h(e, since)]
-
-    snapshot["buildings_updated"] = [
-        {
-            "building_id": e.get("building_id"),
-            "name": building_lookup.get(e.get("building_id"), {}).get("name", "Unknown")
-        }
-        for e in snapshot["new_events"]
-        if isinstance(e, dict) and e.get("building_id")
+    snapshot["new_events"] = [
+        e for e in events if is_within_last_24h(e, since)
     ]
+
+    snapshot["buildings_updated"] = []
+    for e in snapshot["new_events"]:
+        if not isinstance(e, dict):
+            continue
+        bid = e.get("building_id")
+        if not bid:
+            continue
+        snapshot["buildings_updated"].append({
+            "building_id": bid,
+            "name": building_lookup.get(bid, {}).get("name", "Unknown")
+        })
 
     # DOCUMENTS
     documents = fetch_rows("documents")
     snapshot["documents_total"] = len(documents)
-    snapshot["new_documents"] = [d for d in documents if is_within_last_24h(d, since)]
+    snapshot["new_documents"] = [
+        d for d in documents if is_within_last_24h(d, since)
+    ]
 
-    # USERS (Supabase Auth)
+    # USERS FROM SUPABASE AUTH
     users = fetch_auth_users()
     snapshot["users_total"] = len(users)
-    snapshot["new_users"] = [u for u in users if is_within_last_24h(u, since)]
+    snapshot["new_users"] = [
+        u for u in users if is_within_last_24h(u, since)
+    ]
 
     # ACTIVE USERS
     active_user_ids = set()
@@ -165,6 +190,7 @@ def build_snapshot():
         if (u.get("user_metadata") or {}).get("role") == "contractor"
     ]
 
+    # CONTRACTOR ACTIVITY
     contractor_activity = {}
     for e in snapshot["new_events"]:
         if isinstance(e, dict):
@@ -187,7 +213,7 @@ def build_snapshot():
 
 
 # ============================================================
-# Endpoints
+# Routes
 # ============================================================
 @router.post("/run")
 def run_daily_snapshot(current_user: CurrentUser = Depends(get_current_user)):
