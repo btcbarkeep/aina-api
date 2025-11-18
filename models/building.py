@@ -2,7 +2,8 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from uuid import UUID
+from pydantic import BaseModel, validator
 
 
 # -------------------------------------------------
@@ -33,6 +34,20 @@ class BuildingCreate(BuildingBase):
 class BuildingRead(BuildingBase):
     id: str                      # UUID STRING from Supabase
     created_at: datetime         # Supabase timestamp
+
+    # Normalize UUID → str always
+    @validator("id", pre=True)
+    def normalize_id(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
+        return str(v)
+
+    # Parse trailing Z timestamps
+    @validator("created_at", pre=True)
+    def normalize_created_at(cls, v):
+        if isinstance(v, str) and v.endswith("Z"):
+            return v.replace("Z", "+00:00")
+        return v
 
 
 # -------------------------------------------------
