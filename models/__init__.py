@@ -8,7 +8,6 @@ from .building import (
     BuildingUpdate,
 )
 
-
 # -------------------------
 # Event Models
 # -------------------------
@@ -20,7 +19,6 @@ from .event import (
     EventUpdate,
 )
 
-
 # -------------------------
 # Document Models
 # -------------------------
@@ -30,7 +28,6 @@ from .document import (
     DocumentRead,
     DocumentUpdate,
 )
-
 
 # -------------------------
 # Event Comments
@@ -42,7 +39,6 @@ from .event_comment import (
     EventCommentUpdate,
 )
 
-
 # -------------------------
 # User Models (Supabase Auth)
 # -------------------------
@@ -53,23 +49,18 @@ from .user import (
     UserUpdate,
 )
 
-from .admin import AdminCreateUser   # <-- IMPORTANT: missing before
-
-
 # -------------------------
 # Auth Models
 # -------------------------
 from .auth import LoginRequest, TokenResponse
-
 
 # -------------------------
 # Signup Models
 # -------------------------
 from .signup import (
     SignupRequest,
-    SignupRequestCreate,      # <-- FIX: missing in your current __all__
+    SignupRequestCreate,
 )
-
 
 __all__ = [
     # buildings
@@ -102,7 +93,6 @@ __all__ = [
     "UserCreate",
     "UserRead",
     "UserUpdate",
-    "AdminCreateUser",
 
     # auth
     "LoginRequest",
