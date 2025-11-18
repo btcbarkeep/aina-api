@@ -8,6 +8,7 @@ from datetime import datetime
 import boto3
 import os
 import re
+from uuid import UUID
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import (
@@ -31,11 +32,29 @@ router = APIRouter(
 def sanitize(data: dict) -> dict:
     clean = {}
     for k, v in data.items():
-        if isinstance(v, str) and v.strip() == "":
-            clean[k] = None
+        if isinstance(v, str):
+            v = v.strip()
+            clean[k] = v if v != "" else None
         else:
             clean[k] = v
     return clean
+
+
+# -----------------------------------------------------
+# Helper — safe UUID validation
+# -----------------------------------------------------
+def validate_uuid(value: str | None):
+    """
+    Returns:
+      - UUID object if valid
+      - None if invalid or empty
+    """
+    if not value:
+        return None
+    try:
+        return UUID(str(value))
+    except Exception:
+        return None
 
 
 # -----------------------------------------------------
@@ -79,7 +98,7 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
 
     result = (
         client.table("user_building_access")
-        .select("*")  # The table does NOT have an id column
+        .select("*")
         .eq("user_id", current_user.id)
         .eq("building_id", building_id)
         .execute()
@@ -90,10 +109,15 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper — event_id → building_id (NO .single())
+# Helper — event_id → building_id (UUID-safe)
 # -----------------------------------------------------
 def get_event_building_id(event_id: str | None):
-    if not event_id:
+    """
+    Only treat event_id as valid IF it's a real UUID.
+    If not valid, treat as None.
+    """
+    valid = validate_uuid(event_id)
+    if not valid:
         return None
 
     client = get_supabase_client()
@@ -101,7 +125,7 @@ def get_event_building_id(event_id: str | None):
     rows = (
         client.table("events")
         .select("building_id")
-        .eq("id", event_id)
+        .eq("id", str(valid))
         .limit(1)
         .execute()
     ).data
@@ -132,8 +156,9 @@ async def upload_document(
     """
 
     # -------------------------------------------------
-    # Validate event belongs to building (if provided)
+    # Validate event_id only if it's a real UUID
     # -------------------------------------------------
+    valid_event_id = validate_uuid(event_id)
     event_building = get_event_building_id(event_id)
 
     if event_building and event_building != building_id:
@@ -158,8 +183,8 @@ async def upload_document(
         )
 
         # Determine S3 key structure
-        if event_id:
-            s3_key = f"events/{event_id}/documents/{safe_category}/{clean_filename}"
+        if valid_event_id:
+            s3_key = f"events/{valid_event_id}/documents/{safe_category}/{clean_filename}"
         else:
             s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
 
@@ -182,12 +207,12 @@ async def upload_document(
         # Create Supabase document record (SAFE 2-STEP)
         # -------------------------------------------------
         payload = sanitize({
-            "event_id": event_id,
+            "event_id": str(valid_event_id) if valid_event_id else None,
             "building_id": building_id,
             "s3_key": s3_key,
             "filename": clean_filename,
             "content_type": file.content_type,
-            "size_bytes": getattr(file, "size", None),
+            "size_bytes": None,   # UploadFile does not expose size reliably
             "uploaded_by": current_user.id,
         })
 
