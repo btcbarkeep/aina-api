@@ -1,11 +1,19 @@
-# models/auth.py
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
+
+# -----------------------------------------------------
+# LOGIN REQUEST (using Supabase email/password)
+# -----------------------------------------------------
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    email: EmailStr           # FIX: Supabase login requires email
+    password: str             # Plain password sent to Supabase
 
 
+# -----------------------------------------------------
+# TOKEN RESPONSE (Supabase session JWT)
+# -----------------------------------------------------
 class TokenResponse(BaseModel):
-    access_token: str
+    access_token: str         # Supabase access token (JWT)
+    refresh_token: str        # Supabase refresh token
+    expires_in: int           # Seconds until expiration
     token_type: str = "bearer"
