@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 from pydantic import BaseModel, validator
 
 from .enums import EventType, EventSeverity, EventStatus
@@ -19,18 +20,32 @@ class EventBase(BaseModel):
     severity: Optional[EventSeverity] = EventSeverity.medium
     status: Optional[EventStatus] = EventStatus.open
 
-    contractor_id: Optional[str] = None
+    # FIX: UUID type instead of str
+    contractor_id: Optional[UUID] = None
 
     # -------------------------------------------------
-    # FIX: Parse RFC3339 timestamps w/ trailing Z
+    # FIX: parse timestamps with trailing Z
     # -------------------------------------------------
     @validator("occurred_at", pre=True)
     def parse_occurred_at(cls, v):
-        if isinstance(v, str):
-            # Convert "2025-11-18T03:37:20.464Z" → "+00:00"
-            if v.endswith("Z"):
-                v = v.replace("Z", "+00:00")
+        if isinstance(v, str) and v.endswith("Z"):
+            return v.replace("Z", "+00:00")
         return v
+
+    # -------------------------------------------------
+    # FIX: auto-null invalid contractor_id
+    # -------------------------------------------------
+    @validator("contractor_id", pre=True)
+    def validate_contractor_id(cls, v):
+        if not v:
+            return None
+        if isinstance(v, UUID):
+            return v
+        try:
+            return UUID(v)
+        except Exception:
+            # invalid UUID → silently become None
+            return None
 
 
 # -------------------------------------------------
@@ -40,7 +55,7 @@ class EventCreate(EventBase):
     """
     - Client sends this when creating an event.
     - Supabase generates id & created_at
-    - created_by is injected by backend
+    - created_by is set by backend
     """
     pass
 
@@ -67,10 +82,23 @@ class EventUpdate(BaseModel):
 
     severity: Optional[EventSeverity] = None
     status: Optional[EventStatus] = None
-    contractor_id: Optional[str] = None
+
+    # FIX here also — use UUID type
+    contractor_id: Optional[UUID] = None
 
     @validator("occurred_at", pre=True)
     def parse_update_occurred_at(cls, v):
         if isinstance(v, str) and v.endswith("Z"):
             return v.replace("Z", "+00:00")
         return v
+
+    @validator("contractor_id", pre=True)
+    def validate_update_contractor_id(cls, v):
+        if not v:
+            return None
+        if isinstance(v, UUID):
+            return v
+        try:
+            return UUID(v)
+        except Exception:
+            return None
