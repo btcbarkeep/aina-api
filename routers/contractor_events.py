@@ -15,15 +15,7 @@ router = APIRouter(
 
 
 # =============================================================================
-# GET — EVENTS BY CONTRACTOR
-#
-# Permissions:
-#   • super_admin / admin → full access
-#   • property_manager / hoa → allowed to read
-#   • contractor / contractor_staff → ONLY their own events
-#   • owner / tenant / buyer → deny
-#
-# Uses permission:  contractors:read
+# GET — EVENTS BY CONTRACTOR (unit-aware)
 # =============================================================================
 @router.get(
     "/{contractor_id}/events",
@@ -33,6 +25,7 @@ router = APIRouter(
 def list_contractor_events(
     contractor_id: str,
     building_id: Optional[str] = None,
+    unit_id: Optional[str] = None,
     event_type: Optional[str] = None,
     status: Optional[str] = None,
     current_user: CurrentUser = Depends(get_current_user),
@@ -40,27 +33,41 @@ def list_contractor_events(
 
     client = get_supabase_client()
 
-    # --------------------------------------------------------
-    # ROLE-SPECIFIC ACCESS CONTROL
-    # --------------------------------------------------------
-    disallowed_roles = ["owner", "tenant", "buyer", "seller", "other"]
+    # -------------------------------------------------------------------------
+    # ROLE-BASED ACCESS CONTROL
+    # -------------------------------------------------------------------------
+    blocked_roles = ["owner", "tenant", "buyer", "seller", "other"]
 
-    if current_user.role in disallowed_roles:
+    if current_user.role in blocked_roles:
         raise HTTPException(403, "You do not have permission to view contractor events.")
 
     contractor_roles = ["contractor", "contractor_staff"]
 
     if current_user.role in contractor_roles:
-        # Enforce: contractors only see their own events
+        # Contractors can only see their own events
         if getattr(current_user, "contractor_id", None) != contractor_id:
             raise HTTPException(
                 403,
                 "You may only view events associated with your own contractor account.",
             )
 
-    # --------------------------------------------------------
-    # QUERY EVENTS — Correct field: contractor_id
-    # --------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Ensure contractor exists
+    # -------------------------------------------------------------------------
+    contractor_rows = (
+        client.table("contractors")
+        .select("id, name")
+        .eq("id", contractor_id)
+        .limit(1)
+        .execute()
+    ).data
+
+    if not contractor_rows:
+        raise HTTPException(404, f"Contractor '{contractor_id}' not found.")
+
+    # -------------------------------------------------------------------------
+    # QUERY EVENTS — proper filtering & ordering
+    # -------------------------------------------------------------------------
     try:
         query = (
             client.table("events")
@@ -69,9 +76,10 @@ def list_contractor_events(
             .order("occurred_at", desc=True)
         )
 
-        # Optional filters
         if building_id:
             query = query.eq("building_id", building_id)
+        if unit_id:
+            query = query.eq("unit_id", unit_id)
         if event_type:
             query = query.eq("event_type", event_type)
         if status:
@@ -80,7 +88,12 @@ def list_contractor_events(
         result = query.execute()
         events = result.data or []
 
-        return {"success": True, "data": events}
+        return {
+            "success": True,
+            "contractor": contractor_rows[0],
+            "count": len(events),
+            "data": events,
+        }
 
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
