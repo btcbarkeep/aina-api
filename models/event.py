@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 from .enums import EventType, EventSeverity, EventStatus
 
@@ -20,36 +20,35 @@ class EventBase(BaseModel):
     severity: Optional[EventSeverity] = EventSeverity.medium
     status: Optional[EventStatus] = EventStatus.open
 
-    # ❗ Supabase-safe string, NOT UUID object
+    # Supabase returns UUID as string → enforce string always
     contractor_id: Optional[str] = None
 
     # -------------------------------------------------
-    # Normalize timestamps with trailing Z
+    # Normalize timestamps like "2025-01-01T00:00:00Z"
     # -------------------------------------------------
-    @validator("occurred_at", pre=True)
+    @field_validator("occurred_at", mode="before")
     def parse_occurred_at(cls, v):
         if isinstance(v, str) and v.endswith("Z"):
             return v.replace("Z", "+00:00")
         return v
 
     # -------------------------------------------------
-    # Validate contractor_id (accept UUID or string)
-    # Always store internally as a string
+    # Normalize contractor_id (UUID → string)
     # -------------------------------------------------
-    @validator("contractor_id", pre=True)
+    @field_validator("contractor_id", mode="before")
     def validate_contractor_id(cls, v):
         if not v:
             return None
 
-        # If UUID object → convert to string
+        # UUID object → convert to string
         if isinstance(v, UUID):
             return str(v)
 
-        # Try converting string → UUID → back to str
+        # String that might be UUID → validate & return
         try:
             return str(UUID(str(v)))
         except Exception:
-            # invalid UUID → silently null
+            # Invalid UUID safely becomes None
             return None
 
 
@@ -73,6 +72,10 @@ class EventRead(EventBase):
     created_at: datetime
     created_by: Optional[str] = None
 
+    @field_validator("id", mode="before")
+    def id_to_str(cls, v):
+        return str(v)
+
 
 # -------------------------------------------------
 # Update Event (partial)
@@ -88,17 +91,15 @@ class EventUpdate(BaseModel):
     severity: Optional[EventSeverity] = None
     status: Optional[EventStatus] = None
 
-    # Must also be string-safe
     contractor_id: Optional[str] = None
 
-    @validator("occurred_at", pre=True)
+    @field_validator("occurred_at", mode="before")
     def parse_update_occurred_at(cls, v):
         if isinstance(v, str) and v.endswith("Z"):
             return v.replace("Z", "+00:00")
         return v
 
-    # Same UUID normalization as EventBase
-    @validator("contractor_id", pre=True)
+    @field_validator("contractor_id", mode="before")
     def validate_update_contractor_id(cls, v):
         if not v:
             return None
