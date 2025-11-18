@@ -1,3 +1,5 @@
+# routers/documents.py
+
 from fastapi import APIRouter, HTTPException, Depends
 
 from dependencies.auth import (
@@ -13,14 +15,13 @@ from models.document import (
     DocumentRead,
 )
 
-
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
 
 # -----------------------------------------------------
-# Helper — sanitize payloads ("" → None), UUID → string
+# Helper — sanitize + UUID → string
 # -----------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
@@ -30,37 +31,36 @@ def sanitize(data: dict) -> dict:
         elif isinstance(v, str):
             clean[k] = v.strip() or None
         else:
-            # Convert UUID → string for Supabase
-            clean[k] = str(v) if not isinstance(v, (int, float, bool)) else v
+            clean[k] = str(v)
     return clean
 
 
 # -----------------------------------------------------
-# Helper — Check building access (NO id column)
+# Building-level access check
 # -----------------------------------------------------
-def verify_user_building_access_supabase(user_id: str, building_id: str):
+def verify_user_building_access(user_id: str, building_id: str):
     client = get_supabase_client()
-
-    result = (
+    rows = (
         client.table("user_building_access")
         .select("*")
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
-    )
+    ).data
 
-    if not result.data:
-        raise HTTPException(403, "User does not have access to this building.")
+    if not rows:
+        raise HTTPException(403, "You do not have permission for this building.")
 
 
 # -----------------------------------------------------
-# Helper — get building_id from event_id
+# event_id → building_id, unit_id
 # -----------------------------------------------------
-def get_event_building_id(event_id: str) -> str:
+def get_event_info(event_id: str):
     client = get_supabase_client()
+
     rows = (
         client.table("events")
-        .select("building_id")
+        .select("building_id, unit_id")
         .eq("id", event_id)
         .limit(1)
         .execute()
@@ -69,6 +69,26 @@ def get_event_building_id(event_id: str) -> str:
     if not rows:
         raise HTTPException(404, "Event not found")
 
+    return rows[0]["building_id"], rows[0].get("unit_id")
+
+
+# -----------------------------------------------------
+# unit_id → building_id
+# -----------------------------------------------------
+def get_unit_building(unit_id: str) -> str:
+    client = get_supabase_client()
+
+    rows = (
+        client.table("units")
+        .select("building_id")
+        .eq("id", unit_id)
+        .limit(1)
+        .execute()
+    ).data
+
+    if not rows:
+        raise HTTPException(400, "Unit does not exist")
+
     return rows[0]["building_id"]
 
 
@@ -76,49 +96,86 @@ def get_event_building_id(event_id: str) -> str:
 # LIST DOCUMENTS
 # -----------------------------------------------------
 @router.get("", summary="List Documents")
-def list_documents(limit: int = 100, current_user: CurrentUser = Depends(get_current_user)):
+def list_documents(
+    limit: int = 100,
+    building_id: str | None = None,
+    event_id: str | None = None,
+    unit_id: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     client = get_supabase_client()
-    result = (
-        client.table("documents")
-        .select("*")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return result.data or []
+
+    query = client.table("documents").select("*")
+
+    if building_id:
+        query = query.eq("building_id", building_id)
+    if event_id:
+        query = query.eq("event_id", event_id)
+    if unit_id:
+        query = query.eq("unit_id", unit_id)
+
+    res = query.order("created_at", desc=True).limit(limit).execute()
+    return res.data or []
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT — 100% SAFE
+# CREATE DOCUMENT — now fully unit-aware
 # -----------------------------------------------------
 @router.post(
     "",
     response_model=DocumentRead,
-    dependencies=[Depends(requires_permission("documents:write"))],
     summary="Create Document",
+    dependencies=[Depends(requires_permission("documents:write"))],
 )
 def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
 
-    # Determine building
-    if payload.event_id:
-        building_id = get_event_building_id(payload.event_id)
+    event_id = payload.event_id
+    building_id = payload.building_id
+    unit_id = payload.unit_id
+
+    # -------------------------------------------------
+    # Determine building + unit based on payload
+    # -------------------------------------------------
+
+    if event_id:
+        # event defines building and possibly unit
+        building_id, event_unit = get_event_info(event_id)
+
+        # Use event's unit if not explicitly provided
+        if not unit_id:
+            unit_id = event_unit
+
+    elif unit_id:
+        # derive building from unit
+        building_id = get_unit_building(unit_id)
+
+    elif building_id:
+        # OK: building only
+        building_id = str(building_id)
+
     else:
-        building_id = payload.building_id  # Required by model
+        raise HTTPException(400, "Must provide event_id OR unit_id OR building_id.")
 
-    # Only admin/super_admin bypass access check
-    if current_user.role not in ["admin", "super_admin"]:
-        verify_user_building_access_supabase(current_user.id, str(building_id))
+    # -------------------------------------------------
+    # Access Control
+    # -------------------------------------------------
+    if current_user.role not in ["admin", "super_admin", "hoa"]:
+        verify_user_building_access(current_user.id, building_id)
 
-    # Normalize + convert UUIDs → strings
+    # -------------------------------------------------
+    # Prepare record
+    # -------------------------------------------------
     doc_data = sanitize(payload.model_dump())
 
-    # Force building_id string format
     doc_data["building_id"] = str(building_id)
-    if payload.event_id:
-        doc_data["event_id"] = str(payload.event_id)
+    doc_data["unit_id"] = str(unit_id) if unit_id else None
+    doc_data["event_id"] = str(event_id) if event_id else None
+    doc_data["uploaded_by"] = str(current_user.id)
 
-    # Step 1 — Insert
+    # -------------------------------------------------
+    # Insert → Fetch
+    # -------------------------------------------------
     try:
         insert_res = client.table("documents").insert(doc_data).execute()
     except Exception as e:
@@ -129,7 +186,6 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
 
     doc_id = insert_res.data[0]["id"]
 
-    # Step 2 — Fetch newly created row
     fetch_res = (
         client.table("documents")
         .select("*")
@@ -144,7 +200,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT — SAFE UPDATE
+# UPDATE DOCUMENT
 # -----------------------------------------------------
 @router.put(
     "/{document_id}",
@@ -156,11 +212,19 @@ def update_document(document_id: str, payload: DocumentUpdate):
 
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    # UUID normalization
+    # event_id changed → derive new building / unit
     if "event_id" in update_data and update_data["event_id"]:
-        update_data["event_id"] = str(update_data["event_id"])
+        building_id, unit_id = get_event_info(update_data["event_id"])
+        update_data["building_id"] = str(building_id)
+        update_data["unit_id"] = str(unit_id) if unit_id else None
 
-    if "building_id" in update_data and update_data["building_id"]:
+    # unit_id changed → derive new building
+    elif "unit_id" in update_data and update_data["unit_id"]:
+        building_id = get_unit_building(update_data["unit_id"])
+        update_data["building_id"] = str(building_id)
+
+    # building only changed → allow (rare)
+    if "building_id" in update_data:
         update_data["building_id"] = str(update_data["building_id"])
 
     # Step 1 — Update
@@ -177,7 +241,7 @@ def update_document(document_id: str, payload: DocumentUpdate):
     if not update_res.data:
         raise HTTPException(404, "Document not found")
 
-    # Step 2 — Fetch updated row
+    # Step 2 — Fetch updated
     fetch_res = (
         client.table("documents")
         .select("*")
