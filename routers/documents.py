@@ -53,20 +53,22 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# Helper — event_id → building_id
+# Helper — event_id → building_id (SAFE VERSION)
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
-    result = (
+    rows = (
         client.table("events")
         .select("building_id")
         .eq("id", event_id)
-        .single()
+        .limit(1)
         .execute()
-    )
-    if not result.data:
+    ).data
+
+    if not rows:
         raise HTTPException(404, "Event not found")
-    return result.data["building_id"]
+
+    return rows[0]["building_id"]
 
 
 # -----------------------------------------------------
@@ -86,7 +88,7 @@ def list_documents(limit: int = 100, current_user: CurrentUser = Depends(get_cur
 
 
 # -----------------------------------------------------
-# CREATE DOCUMENT
+# CREATE DOCUMENT — SAFE 2-STEP INSERT
 # -----------------------------------------------------
 @router.post(
     "",
@@ -111,21 +113,33 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
 
     doc_data = sanitize(payload.model_dump())
 
-    result = (
+    # Step 1 — Insert (NO .single(), NO .select())
+    try:
+        insert_res = client.table("documents").insert(doc_data).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Supabase insert error: {e}")
+
+    if not insert_res.data:
+        raise HTTPException(500, "Insert returned no data")
+
+    doc_id = insert_res.data[0]["id"]
+
+    # Step 2 — Fetch newly created row
+    fetch_res = (
         client.table("documents")
-        .insert(doc_data, returning="representation")
-        .single()
+        .select("*")
+        .eq("id", doc_id)
         .execute()
     )
 
-    if not result.data:
-        raise HTTPException(500, "Insert failed")
+    if not fetch_res.data:
+        raise HTTPException(500, "Created document not found")
 
-    return result.data
+    return fetch_res.data[0]
 
 
 # -----------------------------------------------------
-# UPDATE DOCUMENT
+# UPDATE DOCUMENT — SAFE 2-STEP UPDATE
 # -----------------------------------------------------
 @router.put(
     "/{document_id}",
@@ -136,25 +150,36 @@ def update_document(document_id: str, payload: DocumentUpdate):
     client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
+    # Step 1 — Update
     try:
-        result = (
+        update_res = (
             client.table("documents")
             .update(update_data)
             .eq("id", document_id)
-            .single()
             .execute()
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
 
-    if not result.data:
+    if not update_res.data:
         raise HTTPException(404, "Document not found")
 
-    return result.data
+    # Step 2 — Fetch updated row
+    fetch_res = (
+        client.table("documents")
+        .select("*")
+        .eq("id", document_id)
+        .execute()
+    )
+
+    if not fetch_res.data:
+        raise HTTPException(500, "Updated document not found")
+
+    return fetch_res.data[0]
 
 
 # -----------------------------------------------------
-# DELETE DOCUMENT
+# DELETE DOCUMENT — SAFE 2-STEP DELETE
 # -----------------------------------------------------
 @router.delete(
     "/{document_id}",
@@ -164,18 +189,18 @@ def update_document(document_id: str, payload: DocumentUpdate):
 def delete_document(document_id: str):
     client = get_supabase_client()
 
+    # Step 1 — Delete event
     try:
-        result = (
+        delete_res = (
             client.table("documents")
-            .delete(returning="representation")
+            .delete()
             .eq("id", document_id)
-            .single()
             .execute()
         )
     except Exception as e:
         raise HTTPException(500, f"Supabase delete error: {e}")
 
-    if not result.data:
+    if not delete_res.data:
         raise HTTPException(404, "Document not found")
 
     return {"status": "deleted", "id": document_id}
