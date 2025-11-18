@@ -12,10 +12,12 @@ from dependencies.auth import (
 from core.supabase_client import get_supabase_client
 from models.event import EventCreate, EventUpdate, EventRead
 
+
 router = APIRouter(
     prefix="/events",
     tags=["Events"],
 )
+
 
 # -----------------------------------------------------
 # Helper — sanitize blanks → None
@@ -29,8 +31,9 @@ def sanitize(data: dict) -> dict:
             clean[k] = v
     return clean
 
+
 # -----------------------------------------------------
-# Convert datetime objects → RFC3339 strings
+# datetime → isoformat
 # -----------------------------------------------------
 def ensure_datetime_strings(data: dict) -> dict:
     for k, v in data.items():
@@ -38,8 +41,9 @@ def ensure_datetime_strings(data: dict) -> dict:
             data[k] = v.isoformat()
     return data
 
+
 # -----------------------------------------------------
-# Convert UUID objects → strings
+# UUID → string
 # -----------------------------------------------------
 def ensure_uuid_strings(data: dict) -> dict:
     for k, v in data.items():
@@ -47,8 +51,9 @@ def ensure_uuid_strings(data: dict) -> dict:
             data[k] = str(v)
     return data
 
+
 # -----------------------------------------------------
-# Normalize contractor_id → UUID or None
+# contractor_id normalization
 # -----------------------------------------------------
 def normalize_contractor_id(value) -> Optional[str]:
     if not value:
@@ -58,15 +63,16 @@ def normalize_contractor_id(value) -> Optional[str]:
     except Exception:
         return None
 
+
 # -----------------------------------------------------
-# Check building access (non-admin paths)
+# building access
 # -----------------------------------------------------
-def verify_user_building_access_supabase(user_id: str, building_id: str):
+def verify_user_building_access(user_id: str, building_id: str):
     client = get_supabase_client()
 
     rows = (
         client.table("user_building_access")
-        .select("*")   # No ID column — must select *
+        .select("*")
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
@@ -74,6 +80,7 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
     if not rows:
         raise HTTPException(403, "You do not have permission for this building.")
+
 
 # -----------------------------------------------------
 # event_id → building_id
@@ -93,101 +100,112 @@ def get_event_building_id(event_id: str) -> str:
 
     return rows[0]["building_id"]
 
+
 # -----------------------------------------------------
-# LIST EVENTS
+# NEW — Validate unit belongs to building
+# -----------------------------------------------------
+def validate_unit_in_building(unit_id: str, building_id: str):
+    if not unit_id:
+        return
+
+    client = get_supabase_client()
+    rows = (
+        client.table("units")
+        .select("id")
+        .eq("id", unit_id)
+        .eq("building_id", building_id)
+        .execute()
+    ).data
+
+    if not rows:
+        raise HTTPException(400, "Unit does not belong to this building.")
+
+
+# -----------------------------------------------------
+# LIST EVENTS (with NEW unit filtering)
 # -----------------------------------------------------
 @router.get("", summary="List Events", response_model=List[EventRead])
-def list_events(limit: int = 200, current_user: CurrentUser = Depends(get_current_user)):
+def list_events(
+    limit: int = 200,
+    building_id: Optional[str] = None,
+    unit_id: Optional[str] = None,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     client = get_supabase_client()
 
-    result = (
-        client.table("events")
-        .select("*")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    query = client.table("events").select("*")
 
-    return result.data or []
+    if building_id:
+        query = query.eq("building_id", building_id)
+    if unit_id:
+        query = query.eq("unit_id", unit_id)
+
+    query = query.order("created_at", desc=True).limit(limit)
+
+    res = query.execute()
+    return res.data or []
+
 
 # -----------------------------------------------------
-# CREATE EVENT
+# CREATE EVENT (now supports unit_id)
 # -----------------------------------------------------
 @router.post(
     "",
     response_model=EventRead,
     dependencies=[Depends(requires_permission("events:write"))],
-    summary="Create Event",
 )
 def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
 
     building_id = payload.building_id
+    unit_id = payload.unit_id
+
+    # Validate building/unit match
+    validate_unit_in_building(unit_id, building_id)
 
     # JSON-safe payload
     event_data = sanitize(payload.model_dump())
     event_data = ensure_datetime_strings(event_data)
     event_data = ensure_uuid_strings(event_data)
 
-    # Always set created_by
+    # created_by always set
     event_data["created_by"] = str(current_user.id)
 
-    # -----------------------------------------------------
-    # Contractor_id assignment logic (FINAL FIX)
-    # -----------------------------------------------------
+    # contractor role assignment logic
     if current_user.role == "contractor":
-        # Contractors can ONLY assign themselves
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id")
         event_data["contractor_id"] = str(current_user.contractor_id)
 
-    elif current_user.role in ["admin", "super_admin"]:
-        # Admin / super-admin can assign OR leave null
-        cid = normalize_contractor_id(event_data.get("contractor_id"))
-        event_data["contractor_id"] = cid
-
     else:
-        # Property managers / HOA / others — may assign via UI
         cid = normalize_contractor_id(event_data.get("contractor_id"))
         event_data["contractor_id"] = cid
 
-    # -----------------------------------------------------
-    # Access control
-    # -----------------------------------------------------
+    # Building access rules
     if current_user.role not in ["admin", "super_admin"]:
-        verify_user_building_access_supabase(current_user.id, building_id)
+        verify_user_building_access(current_user.id, building_id)
 
     # Insert event
-    try:
-        insert_res = client.table("events").insert(event_data).execute()
-    except Exception as e:
-        raise HTTPException(500, f"Supabase insert failed: {e}")
-
-    if not insert_res.data:
+    res = client.table("events").insert(event_data).execute()
+    if not res.data:
         raise HTTPException(500, "Insert returned no data")
 
-    event_id = insert_res.data[0]["id"]
+    event_id = res.data[0]["id"]
 
-    # Fetch & return
-    fetch_res = (
-        client.table("events")
-        .select("*")
-        .eq("id", event_id)
-        .execute()
-    )
-
-    if not fetch_res.data:
+    # Fetch created event
+    fetch = client.table("events").select("*").eq("id", event_id).execute()
+    if not fetch.data:
         raise HTTPException(500, "Created event not found")
 
-    return fetch_res.data[0]
+    return fetch.data[0]
+
 
 # -----------------------------------------------------
-# UPDATE EVENT
+# UPDATE EVENT (now supports unit_id validation)
 # -----------------------------------------------------
 @router.put(
     "/{event_id}",
     dependencies=[Depends(requires_permission("events:write"))],
-    summary="Update Event",
 )
 def update_event(event_id: str, payload: EventUpdate):
     client = get_supabase_client()
@@ -196,36 +214,28 @@ def update_event(event_id: str, payload: EventUpdate):
     update_data = ensure_datetime_strings(update_data)
     update_data = ensure_uuid_strings(update_data)
 
+    # If unit is being changed, validate it matches building
+    if "unit_id" in update_data:
+        # Need existing event to know its building
+        building_id = get_event_building_id(event_id)
+        validate_unit_in_building(update_data["unit_id"], building_id)
+
     # Normalize contractor_id
     if "contractor_id" in update_data:
         update_data["contractor_id"] = normalize_contractor_id(update_data["contractor_id"])
 
     # Update
-    try:
-        update_res = (
-            client.table("events")
-            .update(update_data)
-            .eq("id", event_id)
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase update error: {e}")
-
-    if not update_res.data:
+    res = client.table("events").update(update_data).eq("id", event_id).execute()
+    if not res.data:
         raise HTTPException(404, "Event not found")
 
-    # Fetch updated record
-    fetch_res = (
-        client.table("events")
-        .select("*")
-        .eq("id", event_id)
-        .execute()
-    )
-
-    if not fetch_res.data:
+    # Fetch updated
+    fetch = client.table("events").select("*").eq("id", event_id).execute()
+    if not fetch.data:
         raise HTTPException(500, "Updated event not found")
 
-    return fetch_res.data[0]
+    return fetch.data[0]
+
 
 # -----------------------------------------------------
 # DELETE EVENT
@@ -233,12 +243,11 @@ def update_event(event_id: str, payload: EventUpdate):
 @router.delete(
     "/{event_id}",
     dependencies=[Depends(requires_permission("events:write"))],
-    summary="Delete Event",
 )
 def delete_event(event_id: str):
     client = get_supabase_client()
 
-    # Prevent deleting referenced events
+    # Cannot delete event with documents
     docs = (
         client.table("documents")
         .select("id")
@@ -249,18 +258,8 @@ def delete_event(event_id: str):
     if docs.data:
         raise HTTPException(400, "Cannot delete event: documents exist.")
 
-    # Delete
-    try:
-        delete_res = (
-            client.table("events")
-            .delete()
-            .eq("id", event_id)
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase delete error: {e}")
-
-    if not delete_res.data:
+    res = client.table("events").delete().eq("id", event_id).execute()
+    if not res.data:
         raise HTTPException(404, "Event not found")
 
     return {"status": "deleted", "id": event_id}
