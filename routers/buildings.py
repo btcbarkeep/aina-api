@@ -69,17 +69,30 @@ def create_building(payload: BuildingCreate):
     data = sanitize(payload.model_dump())
 
     try:
-        result = (
+        # 1. Insert — NO .select(), NO .single()
+        insert_res = (
             client.table("buildings")
             .insert(data)
-            .select("*")   # <-- FIX: replaces .single()
             .execute()
         )
 
-        if not result.data:
+        if not insert_res.data:
             raise HTTPException(500, "Insert returned no data")
 
-        return result.data[0]
+        building_id = insert_res.data[0]["id"]
+
+        # 2. Fetch newly created row
+        fetch_res = (
+            client.table("buildings")
+            .select("*")
+            .eq("id", building_id)
+            .execute()
+        )
+
+        if not fetch_res.data:
+            raise HTTPException(500, "Inserted building not found")
+
+        return fetch_res.data[0]
 
     except Exception as e:
         msg = str(e)
@@ -103,20 +116,32 @@ def update_building(building_id: str, payload: BuildingUpdate):
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
     try:
-        result = (
+        # 1. Perform update
+        update_res = (
             client.table("buildings")
             .update(update_data)
             .eq("id", building_id)
-            .select("*")   # <-- FIX: replaces .single()
             .execute()
         )
+
+        if not update_res.data:
+            raise HTTPException(404, f"Building '{building_id}' not found")
+
+        # 2. Fetch updated row
+        fetch_res = (
+            client.table("buildings")
+            .select("*")
+            .eq("id", building_id)
+            .execute()
+        )
+
+        if not fetch_res.data:
+            raise HTTPException(500, "Updated building not found")
+
+        return fetch_res.data[0]
+
     except Exception as e:
         raise HTTPException(500, f"Supabase update error: {e}")
-
-    if not result.data:
-        raise HTTPException(404, f"Building '{building_id}' not found")
-
-    return result.data[0]
 
 
 # ============================================================
@@ -132,20 +157,21 @@ def delete_building(building_id: str):
     client = get_supabase_client()
 
     try:
-        res = (
+        # 1. Delete row
+        delete_res = (
             client.table("buildings")
             .delete()
             .eq("id", building_id)
-            .select("*")   # <-- FIX: replaces .single()
             .execute()
         )
+
+        if not delete_res.data:
+            raise HTTPException(404, f"Building '{building_id}' not found")
+
+        return {"success": True, "deleted_id": building_id}
+
     except Exception as e:
         raise HTTPException(500, f"Delete failed: {e}")
-
-    if not res.data:
-        raise HTTPException(404, f"Building '{building_id}' not found")
-
-    return {"success": True, "deleted_id": building_id}
 
 
 # ============================================================
@@ -321,7 +347,7 @@ def get_building_report(
 ):
     client = get_supabase_client()
 
-    # Building lookup (replace .single())
+    # Building lookup
     try:
         building_rows = (
             client.table("buildings")
