@@ -1,7 +1,6 @@
-# routers/events.py
-
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, List
+from uuid import UUID
 
 from dependencies.auth import (
     get_current_user,
@@ -20,7 +19,7 @@ router = APIRouter(
 
 
 # -----------------------------------------------------
-# Helper — sanitize
+# Helper — sanitize blanks → None (keeps UUID objects)
 # -----------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
@@ -30,6 +29,20 @@ def sanitize(data: dict) -> dict:
         else:
             clean[k] = v
     return clean
+
+
+# -----------------------------------------------------
+# Normalize contractor_id into UUID or None
+# -----------------------------------------------------
+def normalize_contractor_id(value) -> Optional[UUID]:
+    if not value:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except Exception:
+        return None
 
 
 # -----------------------------------------------------
@@ -50,7 +63,6 @@ def verify_user_building_access_supabase(user_id: str, building_id: str):
 
 # -----------------------------------------------------
 # event_id → building_id
-# (fixed: removed .single())
 # -----------------------------------------------------
 def get_event_building_id(event_id: str) -> str:
     client = get_supabase_client()
@@ -87,7 +99,7 @@ def list_events(limit: int = 200, current_user: CurrentUser = Depends(get_curren
 
 
 # -----------------------------------------------------
-# CREATE EVENT (2-step safe pattern)
+# CREATE EVENT
 # -----------------------------------------------------
 @router.post(
     "",
@@ -99,21 +111,29 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     client = get_supabase_client()
 
     building_id = payload.building_id
-
     event_data = sanitize(payload.model_dump())
+
+    # Always set created_by
     event_data["created_by"] = current_user.id
 
-    # Contractor linking
+    # -----------------------------
+    # Contractor linking rules
+    # -----------------------------
     if current_user.role == "contractor":
+        # contractors cannot override contractor_id
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id.")
         event_data["contractor_id"] = current_user.contractor_id
 
-    # Building access (everyone except admin/manager must be authorized)
+    else:
+        # Admin/manager may supply contractor_id optionally
+        event_data["contractor_id"] = normalize_contractor_id(event_data.get("contractor_id"))
+
+    # Access control
     if current_user.role not in ["admin", "manager"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
-    # Step 1 — Insert (NO .single(), NO .select())
+    # Insert → then fetch
     try:
         insert_res = client.table("events").insert(event_data).execute()
     except Exception as e:
@@ -124,7 +144,6 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     event_id = insert_res.data[0]["id"]
 
-    # Step 2 — Fetch newly created record
     fetch_res = (
         client.table("events")
         .select("*")
@@ -139,7 +158,7 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
 
 # -----------------------------------------------------
-# UPDATE EVENT (2-step safe pattern)
+# UPDATE EVENT
 # -----------------------------------------------------
 @router.put(
     "/{event_id}",
@@ -148,9 +167,14 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 )
 def update_event(event_id: str, payload: EventUpdate):
     client = get_supabase_client()
+
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    # Step 1 — Update
+    # UUID check
+    if "contractor_id" in update_data:
+        update_data["contractor_id"] = normalize_contractor_id(update_data["contractor_id"])
+
+    # Update → fetch pattern
     try:
         update_res = (
             client.table("events")
@@ -164,7 +188,6 @@ def update_event(event_id: str, payload: EventUpdate):
     if not update_res.data:
         raise HTTPException(404, "Event not found")
 
-    # Step 2 — Fetch updated row
     fetch_res = (
         client.table("events")
         .select("*")
@@ -179,7 +202,7 @@ def update_event(event_id: str, payload: EventUpdate):
 
 
 # -----------------------------------------------------
-# DELETE EVENT (2-step)
+# DELETE EVENT
 # -----------------------------------------------------
 @router.delete(
     "/{event_id}",
@@ -189,7 +212,6 @@ def update_event(event_id: str, payload: EventUpdate):
 def delete_event(event_id: str):
     client = get_supabase_client()
 
-    # Prevent deletion if documents reference this event
     docs = (
         client.table("documents")
         .select("id")
@@ -200,7 +222,6 @@ def delete_event(event_id: str):
     if docs.data:
         raise HTTPException(400, "Cannot delete event: documents exist.")
 
-    # Step 1 — Delete
     try:
         delete_res = (
             client.table("events")
