@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, List
 from uuid import UUID
+from datetime import datetime
 
 from dependencies.auth import (
     get_current_user,
@@ -9,19 +10,15 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-    # etc...
-    # (UNCHANGED IMPORTS)
 from models.event import EventCreate, EventUpdate, EventRead
-
 
 router = APIRouter(
     prefix="/events",
     tags=["Events"],
 )
 
-
 # -----------------------------------------------------
-# Helper — sanitize blanks → None (keeps UUID objects)
+# Helper — sanitize blanks → None
 # -----------------------------------------------------
 def sanitize(data: dict) -> dict:
     clean = {}
@@ -32,6 +29,14 @@ def sanitize(data: dict) -> dict:
             clean[k] = v
     return clean
 
+# -----------------------------------------------------
+# Convert datetime objects → RFC3339 strings
+# -----------------------------------------------------
+def ensure_datetime_strings(data: dict) -> dict:
+    for k, v in data.items():
+        if isinstance(v, datetime):
+            data[k] = v.isoformat()
+    return data
 
 # -----------------------------------------------------
 # Normalize contractor_id into UUID or None
@@ -46,22 +51,22 @@ def normalize_contractor_id(value) -> Optional[UUID]:
     except Exception:
         return None
 
-
 # -----------------------------------------------------
-# Check building access (FIXED select)
+# Check building access (FIXED)
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
+
     result = (
         client.table("user_building_access")
-        .select("*")      # <-- FIX: user_building_access has no id column
+        .select("*")     # user_building_access has NO id column
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
     )
+
     if not result.data:
         raise HTTPException(403, "You do not have permission for this building.")
-
 
 # -----------------------------------------------------
 # event_id → building_id
@@ -81,7 +86,6 @@ def get_event_building_id(event_id: str) -> str:
 
     return rows[0]["building_id"]
 
-
 # -----------------------------------------------------
 # LIST EVENTS
 # -----------------------------------------------------
@@ -99,9 +103,8 @@ def list_events(limit: int = 200, current_user: CurrentUser = Depends(get_curren
 
     return result.data or []
 
-
 # -----------------------------------------------------
-# CREATE EVENT (FIXED access control)
+# CREATE EVENT
 # -----------------------------------------------------
 @router.post(
     "",
@@ -113,12 +116,15 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     client = get_supabase_client()
 
     building_id = payload.building_id
-    event_data = sanitize(payload.model_dump())
 
-    # created_by ALWAYS set
+    # Base data
+    event_data = sanitize(payload.model_dump())
+    event_data = ensure_datetime_strings(event_data)
+
+    # Always set created_by
     event_data["created_by"] = current_user.id
 
-    # Contractor linking rules
+    # Contractor rules
     if current_user.role == "contractor":
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id.")
@@ -126,13 +132,11 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     else:
         event_data["contractor_id"] = normalize_contractor_id(event_data.get("contractor_id"))
 
-    # -------------------------------------------------
-    # FIX: Only admin + super_admin bypass building access
-    # -------------------------------------------------
+    # Access control
     if current_user.role not in ["admin", "super_admin"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
-    # Insert → fetch
+    # Insert
     try:
         insert_res = client.table("events").insert(event_data).execute()
     except Exception as e:
@@ -143,6 +147,7 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     event_id = insert_res.data[0]["id"]
 
+    # Fetch
     fetch_res = (
         client.table("events")
         .select("*")
@@ -154,7 +159,6 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
         raise HTTPException(500, "Created event not found")
 
     return fetch_res.data[0]
-
 
 # -----------------------------------------------------
 # UPDATE EVENT
@@ -168,10 +172,12 @@ def update_event(event_id: str, payload: EventUpdate):
     client = get_supabase_client()
 
     update_data = sanitize(payload.model_dump(exclude_unset=True))
+    update_data = ensure_datetime_strings(update_data)
 
     if "contractor_id" in update_data:
         update_data["contractor_id"] = normalize_contractor_id(update_data["contractor_id"])
 
+    # Update
     try:
         update_res = (
             client.table("events")
@@ -185,6 +191,7 @@ def update_event(event_id: str, payload: EventUpdate):
     if not update_res.data:
         raise HTTPException(404, "Event not found")
 
+    # Fetch
     fetch_res = (
         client.table("events")
         .select("*")
@@ -197,7 +204,6 @@ def update_event(event_id: str, payload: EventUpdate):
 
     return fetch_res.data[0]
 
-
 # -----------------------------------------------------
 # DELETE EVENT
 # -----------------------------------------------------
@@ -209,6 +215,7 @@ def update_event(event_id: str, payload: EventUpdate):
 def delete_event(event_id: str):
     client = get_supabase_client()
 
+    # Prevent deleting referenced events
     docs = (
         client.table("documents")
         .select("id")
@@ -219,6 +226,7 @@ def delete_event(event_id: str):
     if docs.data:
         raise HTTPException(400, "Cannot delete event: documents exist.")
 
+    # Delete
     try:
         delete_res = (
             client.table("events")
