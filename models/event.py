@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 from .enums import EventType, EventSeverity, EventStatus
 
 
 # -------------------------------------------------
-# Shared Fields (used across Create/Read/Update)
+# Shared Fields
 # -------------------------------------------------
 class EventBase(BaseModel):
     building_id: str
@@ -16,12 +16,21 @@ class EventBase(BaseModel):
     body: Optional[str] = None
     occurred_at: datetime
 
-    # NEW FIELDS using Enums
     severity: Optional[EventSeverity] = EventSeverity.medium
     status: Optional[EventStatus] = EventStatus.open
 
-    # contractor_id is optional during create
     contractor_id: Optional[str] = None
+
+    # -------------------------------------------------
+    # FIX: Parse RFC3339 timestamps w/ trailing Z
+    # -------------------------------------------------
+    @validator("occurred_at", pre=True)
+    def parse_occurred_at(cls, v):
+        if isinstance(v, str):
+            # Convert "2025-11-18T03:37:20.464Z" → "+00:00"
+            if v.endswith("Z"):
+                v = v.replace("Z", "+00:00")
+        return v
 
 
 # -------------------------------------------------
@@ -29,21 +38,19 @@ class EventBase(BaseModel):
 # -------------------------------------------------
 class EventCreate(EventBase):
     """
-    Client sends this when creating an event.
-    - Supabase will generate id and created_at
-    - created_by is injected by backend (not provided by client)
+    - Client sends this when creating an event.
+    - Supabase generates id & created_at
+    - created_by is injected by backend
     """
     pass
 
 
 # -------------------------------------------------
-# Read Event (returned from Supabase)
+# Read Event
 # -------------------------------------------------
 class EventRead(EventBase):
     id: str
     created_at: datetime
-
-    # NEW: who created the event
     created_by: Optional[str] = None
 
 
@@ -58,7 +65,12 @@ class EventUpdate(BaseModel):
     body: Optional[str] = None
     occurred_at: Optional[datetime] = None
 
-    # NEW — admin/manager can update these
     severity: Optional[EventSeverity] = None
     status: Optional[EventStatus] = None
     contractor_id: Optional[str] = None
+
+    @validator("occurred_at", pre=True)
+    def parse_update_occurred_at(cls, v):
+        if isinstance(v, str) and v.endswith("Z"):
+            return v.replace("Z", "+00:00")
+        return v
