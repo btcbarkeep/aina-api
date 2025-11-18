@@ -10,7 +10,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-    from models.event import EventCreate, EventUpdate, EventRead
+from models.event import EventCreate, EventUpdate, EventRead
 
 router = APIRouter(
     prefix="/events",
