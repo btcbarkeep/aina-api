@@ -9,6 +9,8 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+    # etc...
+    # (UNCHANGED IMPORTS)
 from models.event import EventCreate, EventUpdate, EventRead
 
 
@@ -46,13 +48,13 @@ def normalize_contractor_id(value) -> Optional[UUID]:
 
 
 # -----------------------------------------------------
-# Check building access
+# Check building access (FIXED select)
 # -----------------------------------------------------
 def verify_user_building_access_supabase(user_id: str, building_id: str):
     client = get_supabase_client()
     result = (
         client.table("user_building_access")
-        .select("id")
+        .select("*")      # <-- FIX: user_building_access has no id column
         .eq("user_id", user_id)
         .eq("building_id", building_id)
         .execute()
@@ -99,7 +101,7 @@ def list_events(limit: int = 200, current_user: CurrentUser = Depends(get_curren
 
 
 # -----------------------------------------------------
-# CREATE EVENT
+# CREATE EVENT (FIXED access control)
 # -----------------------------------------------------
 @router.post(
     "",
@@ -113,27 +115,24 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     building_id = payload.building_id
     event_data = sanitize(payload.model_dump())
 
-    # Always set created_by
+    # created_by ALWAYS set
     event_data["created_by"] = current_user.id
 
-    # -----------------------------
     # Contractor linking rules
-    # -----------------------------
     if current_user.role == "contractor":
-        # contractors cannot override contractor_id
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id.")
         event_data["contractor_id"] = current_user.contractor_id
-
     else:
-        # Admin/manager may supply contractor_id optionally
         event_data["contractor_id"] = normalize_contractor_id(event_data.get("contractor_id"))
 
-    # Access control
-    if current_user.role not in ["admin", "manager"]:
+    # -------------------------------------------------
+    # FIX: Only admin + super_admin bypass building access
+    # -------------------------------------------------
+    if current_user.role not in ["admin", "super_admin"]:
         verify_user_building_access_supabase(current_user.id, building_id)
 
-    # Insert → then fetch
+    # Insert → fetch
     try:
         insert_res = client.table("events").insert(event_data).execute()
     except Exception as e:
@@ -170,11 +169,9 @@ def update_event(event_id: str, payload: EventUpdate):
 
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
-    # UUID check
     if "contractor_id" in update_data:
         update_data["contractor_id"] = normalize_contractor_id(update_data["contractor_id"])
 
-    # Update → fetch pattern
     try:
         update_res = (
             client.table("events")
