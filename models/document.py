@@ -1,9 +1,7 @@
-# models/document.py
-
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 
 # ======================================================
@@ -29,36 +27,38 @@ def _parse_timestamp(value):
 
 
 # ======================================================
-# BASE MODEL (shared fields)
+# BASE MODEL (shared)
 # ======================================================
 
 class DocumentBase(BaseModel):
     """
     Shared fields between create/update/read.
-    event_id is OPTIONAL.
-    building_id is REQUIRED (documents attach to a building).
+    event_id is optional.
+    building_id REQUIRED.
     """
 
-    event_id: Optional[UUID] = None                  # Optional FK → events.id
-    building_id: UUID                                # Required FK → buildings.id
+    event_id: Optional[UUID] = None
+    building_id: UUID
 
-    s3_key: str                                      # S3 path (required)
-    filename: str                                    # File name (required)
+    s3_key: str
+    filename: str
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
 
-    # ---------- validators --------------------------------
+    # -----------------------------
+    # Validators (Pydantic v2)
+    # -----------------------------
 
-    @validator("event_id", pre=True)
+    @field_validator("event_id", mode="before")
     def validate_event_id(cls, v):
         return _parse_uuid(v)
 
-    @validator("building_id", pre=True)
+    @field_validator("building_id", mode="before")
     def validate_building_id(cls, v):
-        parsed = _parse_uuid(v)
-        if parsed is None:
+        uuid_val = _parse_uuid(v)
+        if uuid_val is None:
             raise ValueError("building_id must be a valid UUID")
-        return parsed
+        return uuid_val
 
 
 # ======================================================
@@ -68,7 +68,7 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     """
     Incoming metadata BEFORE being saved.
-    Backend supplies: id, created_at
+    Backend supplies: id, created_at.
     """
     pass
 
@@ -85,11 +85,11 @@ class DocumentUpdate(BaseModel):
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
 
-    @validator("event_id", pre=True)
+    @field_validator("event_id", mode="before")
     def validate_event_id(cls, v):
         return _parse_uuid(v)
 
-    @validator("building_id", pre=True)
+    @field_validator("building_id", mode="before")
     def validate_building_id(cls, v):
         return _parse_uuid(v)
 
@@ -99,14 +99,15 @@ class DocumentUpdate(BaseModel):
 # ======================================================
 
 class DocumentRead(DocumentBase):
-    id: str                                            # Always return string UUID
+    id: str
     created_at: Optional[datetime] = None
 
-    @validator("created_at", pre=True)
+    @field_validator("created_at", mode="before")
     def parse_created_at(cls, v):
         return _parse_timestamp(v)
 
-    @validator("id", pre=True)
+    @field_validator("id", mode="before")
     def convert_id_to_str(cls, v):
-        # Supabase often returns UUID objects
-        return str(v) if isinstance(v, UUID) else v
+        if isinstance(v, UUID):
+            return str(v)
+        return str(v)
