@@ -5,7 +5,7 @@ from pydantic import BaseModel, field_validator
 
 
 # ======================================================
-# Helpers to normalize UUIDs and timestamps
+# Helpers
 # ======================================================
 
 def _parse_uuid(value):
@@ -20,35 +20,38 @@ def _parse_uuid(value):
 
 
 def _parse_timestamp(value):
-    # Normalize timestamps like "2025-01-01T00:00:00Z" → "+00:00"
     if isinstance(value, str) and value.endswith("Z"):
         return value.replace("Z", "+00:00")
     return value
 
 
 # ======================================================
-# BASE MODEL (shared)
+# BASE MODEL
 # ======================================================
 
 class DocumentBase(BaseModel):
     """
-    Shared fields between create/update/read.
-    event_id is optional.
-    building_id REQUIRED.
+    Shared fields for create/update/read.
+    building_id REQUIRED for direct uploads.
+    event_id/unit_id are optional.
     """
 
     event_id: Optional[UUID] = None
     building_id: UUID
+    unit_id: Optional[UUID] = None
 
-    s3_key: str
-    filename: str
+    # File metadata (nullable because bulk docs may not be S3 files)
+    s3_key: Optional[str] = None
+    filename: Optional[str] = None
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
 
-    # -----------------------------
-    # Validators (Pydantic v2)
-    # -----------------------------
+    # Bulk-upload field
+    document_url: Optional[str] = None
 
+    # -----------------------------
+    # Validators
+    # -----------------------------
     @field_validator("event_id", mode="before")
     def validate_event_id(cls, v):
         return _parse_uuid(v)
@@ -60,6 +63,10 @@ class DocumentBase(BaseModel):
             raise ValueError("building_id must be a valid UUID")
         return uuid_val
 
+    @field_validator("unit_id", mode="before")
+    def validate_unit_id(cls, v):
+        return _parse_uuid(v)
+
 
 # ======================================================
 # CREATE MODEL
@@ -67,8 +74,7 @@ class DocumentBase(BaseModel):
 
 class DocumentCreate(DocumentBase):
     """
-    Incoming metadata BEFORE being saved.
-    Backend supplies: id, created_at.
+    Used when creating documents from uploads or bulk imports.
     """
     pass
 
@@ -80,10 +86,13 @@ class DocumentCreate(DocumentBase):
 class DocumentUpdate(BaseModel):
     event_id: Optional[UUID] = None
     building_id: Optional[UUID] = None
+    unit_id: Optional[UUID] = None
+
     s3_key: Optional[str] = None
     filename: Optional[str] = None
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
+    document_url: Optional[str] = None
 
     @field_validator("event_id", mode="before")
     def validate_event_id(cls, v):
@@ -93,9 +102,13 @@ class DocumentUpdate(BaseModel):
     def validate_building_id(cls, v):
         return _parse_uuid(v)
 
+    @field_validator("unit_id", mode="before")
+    def validate_unit_id(cls, v):
+        return _parse_uuid(v)
+
 
 # ======================================================
-# READ MODEL (Supabase → API response)
+# READ MODEL
 # ======================================================
 
 class DocumentRead(DocumentBase):
