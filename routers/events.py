@@ -168,8 +168,13 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     event_data = ensure_datetime_strings(event_data)
     event_data = ensure_uuid_strings(event_data)
 
-    # created_by always set
-    event_data["created_by"] = str(current_user.id)
+    # -----------------------------------------------------
+    # Use the REAL Supabase Auth UID for created_by
+    # (Prevents mismatches with auth.users table)
+    # -----------------------------------------------------
+    auth_user_id = getattr(current_user, "auth_user_id", None) or str(current_user.id)
+    event_data["created_by"] = auth_user_id
+
 
     # contractor role assignment logic
     if current_user.role == "contractor":
