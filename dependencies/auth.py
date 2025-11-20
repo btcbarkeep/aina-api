@@ -15,7 +15,8 @@ bearer_scheme = HTTPBearer()
 # Current User Model (full backend identity)
 # ============================================================
 class CurrentUser(BaseModel):
-    id: str
+    id: str                         # legacy accessor (still works)
+    auth_user_id: str               # ⭐ NEW — guaranteed Supabase Auth UID
     email: str
     role: str
 
@@ -74,19 +75,21 @@ def get_current_user(
     if metadata.get("cron") is True:
         return CurrentUser(
             id="cron",
+            auth_user_id="cron",       # ⭐ NEW
             email=email,
             role="admin",
             full_name="Cron Job",
-            permissions=["*"],   # full access
+            permissions=["*"],
         )
 
     if metadata.get("bootstrap_admin") is True:
         return CurrentUser(
             id="bootstrap",
+            auth_user_id="bootstrap",  # ⭐ NEW
             email=email,
             role="admin",
             full_name="Bootstrap Admin",
-            permissions=["*"],   # full access
+            permissions=["*"],
         )
 
     # ---------------------------------------------------------
@@ -102,6 +105,7 @@ def get_current_user(
 
     return CurrentUser(
         id=user_id,
+        auth_user_id=user_id,               # ⭐ NEW – the important line!
         email=email,
         role=role,
         full_name=metadata.get("full_name"),
