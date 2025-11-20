@@ -24,3 +24,6 @@ certifi>=2024.7.4
 apscheduler==3.10.4
 requests==2.31.0
 
+pandas
+openpyxl
+
