@@ -188,7 +188,7 @@ def bulk_upload_units(
             "bathrooms": to_int(row.get("bathrooms")),
             "square_feet": to_int(row.get("square_feet")),
             "owner_name": clean(row.get("owner_name")),
-            "owner_contact": clean(row.get("owner_contact")),
+            "parcel_number": clean(row.get("parcel_number")),
         })
 
     try:
