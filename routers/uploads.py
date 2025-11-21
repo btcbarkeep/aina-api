@@ -2,13 +2,12 @@
 
 from fastapi import (
     APIRouter, UploadFile, File, Form,
-    Depends, HTTPException
+    Depends, HTTPException, Path
 )
 from datetime import datetime
 import boto3
 import os
 import re
-from urllib.parse import quote
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import (
@@ -236,10 +235,13 @@ async def upload_document(
     except Exception as e:
         raise HTTPException(500, f"S3 upload error: {e}")
 
-    # Construct direct S3 URL (never expires)
-    # Format: https://{bucket}.s3.{region}.amazonaws.com/{key}
-    encoded_key = quote(s3_key, safe='/')
-    s3_url = f"https://{bucket}.s3.{region}.amazonaws.com/{encoded_key}"
+    # Generate presigned URL for immediate use (expires in 1 day)
+    # Note: For long-term access, use the /documents/{id}/download endpoint
+    presigned_url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": s3_key},
+        ExpiresIn=86400,  # 1 day
+    )
 
     # -----------------------------------------------------
     # Create document record
@@ -255,7 +257,7 @@ async def upload_document(
         "s3_key": s3_key,
         "content_type": file.content_type,
         "uploaded_by": current_user.id,
-        "download_url": s3_url,  # ✅ STORE DIRECT S3 URL IN DATABASE (never expires)
+        # Note: Don't store download_url - it expires. Use /documents/{id}/download endpoint instead
     })
 
     # Step 1 — Insert
@@ -288,9 +290,67 @@ async def upload_document(
         "upload": {
             "filename": clean_filename,
             "s3_key": s3_key,
-            "s3_url": s3_url,
+            "presigned_url": presigned_url,  # Valid for 1 day
             "uploaded_at": datetime.utcnow().isoformat(),
         },
         "document": fetch_res.data[0],
+    }
+
+
+# -----------------------------------------------------
+# GET PRESIGNED URL FOR DOCUMENT (on-demand)
+# -----------------------------------------------------
+@router.get(
+    "/documents/{document_id}/download",
+    summary="Get a presigned URL for downloading a document",
+    dependencies=[Depends(requires_permission("upload:read"))],
+)
+async def get_document_download_url(
+    document_id: str = Path(..., description="Document ID"),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Generates a fresh presigned URL for a document.
+    Use this endpoint when download_url has expired or doesn't exist.
+    """
+    client = get_supabase_client()
+
+    # Fetch document
+    rows = (
+        client.table("documents")
+        .select("s3_key, building_id")
+        .eq("id", document_id)
+        .limit(1)
+        .execute()
+    ).data
+
+    if not rows:
+        raise HTTPException(404, "Document not found")
+
+    doc = rows[0]
+
+    if not doc.get("s3_key"):
+        raise HTTPException(400, "Document has no S3 key")
+
+    # Check access
+    if doc.get("building_id"):
+        verify_user_building_access(current_user, doc["building_id"])
+
+    # Generate presigned URL
+    s3, bucket, region = get_s3()
+
+    try:
+        presigned_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": doc["s3_key"]},
+            ExpiresIn=3600,  # 1 hour
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate presigned URL: {e}")
+
+    return {
+        "document_id": document_id,
+        "download_url": presigned_url,
+        "expires_in": 3600,
     }
 
