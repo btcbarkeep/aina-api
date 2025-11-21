@@ -298,19 +298,18 @@ async def upload_document(
 
 
 # -----------------------------------------------------
-# GET PRESIGNED URL FOR DOCUMENT (on-demand)
+# GET PRESIGNED URL FOR DOCUMENT (on-demand) - PUBLIC
 # -----------------------------------------------------
 @router.get(
     "/documents/{document_id}/download",
-    summary="Get a presigned URL for downloading a document",
-    dependencies=[Depends(requires_permission("upload:read"))],
+    summary="Get a presigned URL for downloading a document (public)",
 )
 async def get_document_download_url(
     document_id: str = Path(..., description="Document ID"),
-    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Generates a fresh presigned URL for a document.
+    Public endpoint - no authentication required.
     Use this endpoint when download_url has expired or doesn't exist.
     """
     client = get_supabase_client()
@@ -318,7 +317,7 @@ async def get_document_download_url(
     # Fetch document
     rows = (
         client.table("documents")
-        .select("s3_key, building_id")
+        .select("s3_key")
         .eq("id", document_id)
         .limit(1)
         .execute()
@@ -331,10 +330,6 @@ async def get_document_download_url(
 
     if not doc.get("s3_key"):
         raise HTTPException(400, "Document has no S3 key")
-
-    # Check access
-    if doc.get("building_id"):
-        verify_user_building_access(current_user, doc["building_id"])
 
     # Generate presigned URL
     s3, bucket, region = get_s3()
