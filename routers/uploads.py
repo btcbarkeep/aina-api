@@ -8,6 +8,7 @@ from datetime import datetime
 import boto3
 import os
 import re
+from urllib.parse import quote
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import (
@@ -17,7 +18,6 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-
 
 router = APIRouter(
     prefix="/uploads",
@@ -38,13 +38,11 @@ def sanitize(data: dict) -> dict:
             clean[k] = str(v)
     return clean
 
-
 # -----------------------------------------------------
 # Filename sanitizer
 # -----------------------------------------------------
 def safe_filename(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", filename)
-
 
 # -----------------------------------------------------
 # Normalize swagger-like values
@@ -56,7 +54,6 @@ def normalize_uuid_like(value: str | None) -> str | None:
     if not v or v.lower() in {"string", "null", "undefined"}:
         return None
     return v
-
 
 # -----------------------------------------------------
 # AWS S3
@@ -79,7 +76,6 @@ def get_s3():
 
     return client, bucket, region
 
-
 # -----------------------------------------------------
 # Building access check
 # -----------------------------------------------------
@@ -98,7 +94,6 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
 
     if not rows:
         raise HTTPException(403, "User does not have access to this building.")
-
 
 # -----------------------------------------------------
 # event_id → (building_id, unit_id)
@@ -122,7 +117,6 @@ def get_event_info(event_id: str | None):
 
     return rows[0]["building_id"], rows[0].get("unit_id")
 
-
 # -----------------------------------------------------
 # unit_id → building_id
 # -----------------------------------------------------
@@ -144,7 +138,6 @@ def get_unit_building(unit_id: str | None):
         raise HTTPException(400, "Unit not found")
 
     return rows[0]["building_id"]
-
 
 # -----------------------------------------------------
 # UPLOAD DOCUMENT — NOW UNIT-AWARE
@@ -243,12 +236,10 @@ async def upload_document(
     except Exception as e:
         raise HTTPException(500, f"S3 upload error: {e}")
 
-    # Presigned URL (1 day)
-    presigned_url = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket, "Key": s3_key},
-        ExpiresIn=86400,
-    )
+    # Construct direct S3 URL (never expires)
+    # Format: https://{bucket}.s3.{region}.amazonaws.com/{key}
+    encoded_key = quote(s3_key, safe='/')
+    s3_url = f"https://{bucket}.s3.{region}.amazonaws.com/{encoded_key}"
 
     # -----------------------------------------------------
     # Create document record
@@ -264,6 +255,7 @@ async def upload_document(
         "s3_key": s3_key,
         "content_type": file.content_type,
         "uploaded_by": current_user.id,
+        "download_url": s3_url,  # ✅ STORE DIRECT S3 URL IN DATABASE (never expires)
     })
 
     # Step 1 — Insert
@@ -296,8 +288,9 @@ async def upload_document(
         "upload": {
             "filename": clean_filename,
             "s3_key": s3_key,
-            "presigned_url": presigned_url,
+            "s3_url": s3_url,
             "uploaded_at": datetime.utcnow().isoformat(),
         },
         "document": fetch_res.data[0],
     }
+
