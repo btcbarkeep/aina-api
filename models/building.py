@@ -62,12 +62,12 @@ class BuildingRead(BuildingBase):
 # Update
 # -------------------------------------------------
 class BuildingUpdate(BaseModel):
-    name: str
+    name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     zip: Optional[str] = None
-    tmk: int
+    tmk: Optional[int] = None
     zoning: Optional[str] = None
     year_built: Optional[str] = None
     description: Optional[str] = None
