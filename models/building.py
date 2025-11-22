@@ -13,6 +13,12 @@ class BuildingBase(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     zip: Optional[str] = None
+    tmk: int
+    zoning: Optional[str] = None
+    year_built: Optional[str] = None
+    description: Optional[str] = None
+    floors: Optional[int] = None
+    units: Optional[int] = None
 
 
 # -------------------------------------------------
@@ -56,8 +62,14 @@ class BuildingRead(BuildingBase):
 # Update
 # -------------------------------------------------
 class BuildingUpdate(BaseModel):
-    name: Optional[str] = None
+    name: str
     address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     zip: Optional[str] = None
+    tmk: int
+    zoning: Optional[str] = None
+    year_built: Optional[str] = None
+    description: Optional[str] = None
+    floors: Optional[int] = None
+    units: Optional[int] = None
