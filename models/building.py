@@ -15,7 +15,7 @@ class BuildingBase(BaseModel):
     zip: Optional[str] = None
     tmk: int
     zoning: Optional[str] = None
-    year_built: Optional[str] = None
+    year_built: Optional[int] = None
     description: Optional[str] = None
     floors: Optional[int] = None
     units: Optional[int] = None
@@ -69,7 +69,7 @@ class BuildingUpdate(BaseModel):
     zip: Optional[str] = None
     tmk: Optional[int] = None
     zoning: Optional[str] = None
-    year_built: Optional[str] = None
+    year_built: Optional[int] = None
     description: Optional[str] = None
     floors: Optional[int] = None
     units: Optional[int] = None
