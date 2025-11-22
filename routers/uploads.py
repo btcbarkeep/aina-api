@@ -284,6 +284,18 @@ async def upload_document(
         raise HTTPException(500, "Created document not found")
 
     # -----------------------------------------------------
+    # Update event with s3_key if event_id is provided
+    # -----------------------------------------------------
+    if event_id:
+        try:
+            client.table("events").update({
+                "s3_key": s3_key
+            }).eq("id", event_id).execute()
+        except Exception as e:
+            # Log error but don't fail the upload
+            print(f"Warning: Failed to update event {event_id} with s3_key: {e}")
+
+    # -----------------------------------------------------
     # Response
     # -----------------------------------------------------
     return {
