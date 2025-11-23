@@ -10,6 +10,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.logging_config import logger
 from models.event import EventCreate, EventUpdate, EventRead
 
 
@@ -191,18 +192,36 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
         verify_user_building_access(current_user.id, building_id)
 
     # Insert event
-    res = client.table("events").insert(event_data).execute()
-    if not res.data:
-        raise HTTPException(500, "Insert returned no data")
+    try:
+        res = client.table("events").insert(event_data).execute()
+        if not res.data:
+            raise HTTPException(500, "Insert returned no data")
 
-    event_id = res.data[0]["id"]
+        event_id = res.data[0]["id"]
 
-    # Fetch created event
-    fetch = client.table("events").select("*").eq("id", event_id).execute()
-    if not fetch.data:
-        raise HTTPException(500, "Created event not found")
+        # Fetch created event
+        fetch = client.table("events").select("*").eq("id", event_id).execute()
+        if not fetch.data:
+            raise HTTPException(500, "Created event not found")
 
-    return fetch.data[0]
+        return fetch.data[0]
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log the actual error and provide a helpful message
+        error_msg = str(e)
+        logger.error(f"Error creating event: {error_msg}", exc_info=True)
+        
+        # Check for common Supabase errors
+        if "duplicate" in error_msg.lower():
+            raise HTTPException(400, f"Event creation failed: duplicate entry")
+        elif "foreign key" in error_msg.lower() or "violates foreign key" in error_msg.lower():
+            raise HTTPException(400, f"Event creation failed: invalid reference (building_id, unit_id, or contractor_id)")
+        elif "not null" in error_msg.lower() or "null value" in error_msg.lower():
+            raise HTTPException(400, f"Event creation failed: required field is missing")
+        else:
+            raise HTTPException(500, f"Event creation failed: {error_msg}")
 
 
 # -----------------------------------------------------
