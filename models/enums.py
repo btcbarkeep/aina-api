@@ -27,6 +27,7 @@ class EventType(BaseStrEnum):
     plumbing = "plumbing"
     electrical = "electrical"
     general = "general"
+    warning = "Warning"  # HOA violations, warnings, etc.
 
 
 # -----------------------------------------------------
@@ -50,3 +51,4 @@ class EventStatus(BaseStrEnum):
     open = "open"
     in_progress = "in_progress"
     resolved = "resolved"
+    closed = "closed"  # Alternative to resolved
