@@ -149,6 +149,9 @@ def get_unit_building(unit_id: str | None):
 async def upload_document(
     file: UploadFile = File(...),
 
+    # Required filename
+    filename: str = Form(...),
+
     # New full compatibility
     building_id: str | None = Form(None),
     event_id: str | None = Form(None),
@@ -161,6 +164,7 @@ async def upload_document(
     """
     Uploads a file to S3 AND creates a Supabase document record.
     Supports: building_id, event_id, unit_id.
+    Requires: filename (custom filename for the uploaded file).
     """
 
     # Normalize values
@@ -207,7 +211,10 @@ async def upload_document(
     # -----------------------------------------------------
     s3, bucket, region = get_s3()
 
-    clean_filename = safe_filename(file.filename)
+    # Use the provided filename (required), sanitize it
+    if not filename or not filename.strip():
+        raise HTTPException(400, "filename is required and cannot be empty")
+    clean_filename = safe_filename(filename.strip())
 
     safe_category = (
         category.strip().replace(" ", "_").lower()
