@@ -3,6 +3,7 @@ import sys
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Ensure local imports resolve
@@ -78,6 +79,16 @@ def create_app() -> FastAPI:
                 f"HTTP {exc.status_code} at {request.url} — {exc.detail}"
             )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(request: Request, exc: RequestValidationError):
+        """Handle Pydantic validation errors and JSON decode errors with better error messages."""
+        errors = exc.errors()
+        logger.warning(f"Validation/JSON error at {request.url} — {errors}")
+        return JSONResponse(
+            status_code=422,
+            content={"detail": errors},
+        )
 
     @app.exception_handler(Exception)
     async def handle_unhandled(request: Request, exc: Exception):
