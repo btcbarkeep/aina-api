@@ -84,7 +84,23 @@ def create_app() -> FastAPI:
     async def handle_validation_error(request: Request, exc: RequestValidationError):
         """Handle Pydantic validation errors and JSON decode errors with better error messages."""
         errors = exc.errors()
-        logger.warning(f"Validation/JSON error at {request.url} — {errors}")
+        
+        # Check for JSON decode errors and provide helpful guidance
+        for error in errors:
+            if error.get("type") == "json_invalid":
+                error_pos = error.get("loc", [])
+                if len(error_pos) > 1 and isinstance(error_pos[1], int):
+                    pos = error_pos[1]
+                    ctx_error = error.get("ctx", {}).get("error", "")
+                    logger.warning(
+                        f"Validation/JSON error at {request.url} — JSON decode error at position {pos}: {ctx_error}. "
+                        f"This usually means unescaped quotes or missing commas in the JSON payload."
+                    )
+                else:
+                    logger.warning(f"Validation/JSON error at {request.url} — {errors}")
+            else:
+                logger.warning(f"Validation error at {request.url} — {errors}")
+        
         return JSONResponse(
             status_code=422,
             content={"detail": errors},
