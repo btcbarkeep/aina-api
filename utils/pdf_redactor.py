@@ -479,6 +479,46 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 text_instances = page.search_for(search_text)
                 logger.debug(f"Page {page_num + 1}: Exact search for '{search_text}' found {len(text_instances)} instance(s)")
                 
+                # Filter out any instances that might be matching labels instead of data
+                # Check if the found text is part of a label (e.g., "Owner Name:" contains "Name")
+                if text_instances:
+                    filtered_instances = []
+                    for inst in text_instances:
+                        # Get the text around this instance to check context
+                        try:
+                            # Get a small area around the instance to check for label keywords
+                            rect = fitz.Rect(inst)
+                            # Expand slightly to get context
+                            context_rect = fitz.Rect(rect.x0 - 50, rect.y0, rect.x1 + 50, rect.y1)
+                            context_text = page.get_textbox(context_rect).lower()
+                            
+                            # Check if this instance is preceded by a label keyword
+                            label_keywords = ["owner name:", "name:", "home address:", "address:", "social security", "ssn:", "credit card", "credit:", "phone:", "email:"]
+                            
+                            # If the context contains a label keyword right before our search text, skip it
+                            # (this means we're probably matching the label, not the data)
+                            is_label_match = False
+                            for label in label_keywords:
+                                # Check if label appears right before our search text in the context
+                                label_pos = context_text.find(label)
+                                search_pos = context_text.find(search_text.lower())
+                                if label_pos != -1 and search_pos != -1:
+                                    # If label is very close before search text (within 10 chars), it's likely a label match
+                                    if 0 <= (search_pos - label_pos) <= len(label) + 10:
+                                        is_label_match = True
+                                        logger.debug(f"Page {page_num + 1}: Skipping instance - appears to be part of label '{label}'")
+                                        break
+                            
+                            if not is_label_match:
+                                filtered_instances.append(inst)
+                        except Exception as e:
+                            # If we can't check context, include it (better to redact than miss)
+                            filtered_instances.append(inst)
+                            logger.debug(f"Page {page_num + 1}: Could not check context for instance: {e}")
+                    
+                    text_instances = filtered_instances
+                    logger.debug(f"Page {page_num + 1}: After filtering labels, {len(text_instances)} instance(s) remain")
+                
                 # Strategy 2: Try without special characters (normalize)
                 if not text_instances:
                     # Remove special characters and try again
