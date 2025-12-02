@@ -28,6 +28,8 @@ def sanitize(data: dict) -> dict:
     for k, v in data.items():
         if v is None:
             clean[k] = None
+        elif isinstance(v, bool):
+            clean[k] = v  # Preserve boolean values
         elif isinstance(v, str):
             clean[k] = v.strip() or None
         else:
