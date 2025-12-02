@@ -58,6 +58,14 @@ WHITELIST = [
     "Venting", "Underlayment", "Shingles", "Metal", "Scaffolding"
 ]
 
+# Sensitive keywords - always redact if these appear in context, even without owner context
+SENSITIVE_KEYWORDS = [
+    "social security", "ssn",
+    "credit card", "card number", "cc#", "cc number",
+    "home address",
+    "routing number", "account number"
+]
+
 
 # ======================================================
 # Helper Functions
@@ -287,23 +295,32 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 # Using 60 characters as middle ground (50-80 range)
                 start_pos = max(0, match_pos - 60)
                 end_pos = min(len(text), match_pos + len(search_text) + 60)
-                context = text[start_pos:end_pos].lower()
+                context = text[start_pos:end_pos]
+                context_lower = context.lower()
                 
                 # Check if context includes owner keywords
-                has_owner_context = any(c in context for c in context_keywords)
+                has_owner_context = any(c in context_lower for c in context_keywords)
+                
+                # Check if context contains sensitive keywords (always redact these)
+                if any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
+                    # ALWAYS REDACT highly sensitive data
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Sensitive keyword found in context for '{search_text}', allowing redaction")
+                else:
+                    allow_redaction = has_owner_context  # your existing condition
                 
                 # Check if matched text is purely numeric (allowing commas and periods)
                 # Remove commas, periods, and spaces, then check if remaining is all digits
                 numeric_text = search_text.replace(",", "").replace(".", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
                 is_purely_numeric = numeric_text.isdigit() and len(numeric_text) > 0
                 
-                # If purely numeric and no owner context, skip redaction
-                if is_purely_numeric and not has_owner_context:
-                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - purely numeric without owner context")
+                # If purely numeric and no owner context (and no sensitive keywords), skip redaction
+                if is_purely_numeric and not allow_redaction:
+                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - purely numeric without owner context or sensitive keywords")
                     continue  # skip the redaction
                 
-                # Only allow redaction if ANY of the context keywords appear
-                if not has_owner_context:
+                # Only allow redaction if allow_redaction is True
+                if not allow_redaction:
                     logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - no owner context found in window")
                     continue  # DO NOT REDACT OUTSIDE OWNER CONTEXT
                 
