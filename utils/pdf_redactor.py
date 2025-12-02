@@ -40,11 +40,11 @@ from core.logging_config import logger
 
 # Only redact when owner-related words are present
 OWNER_CONTEXT_PATTERNS = [
-    # Owner names when preceded by context words
-    r"(?i)(Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]?\s+[A-Za-z ,.'\-]+",
+    # Owner names when preceded by context words - make it greedy to capture full name
+    r"(?i)(Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]\s+[A-Za-z ,.'\-]+(?:$|\n|(?=Social Security|Credit|Phone|Email|Home Address))",
     
-    # Owner email (also match standalone Email:)
-    r"(?i)(Owner|Contact|Tenant|Email).{0,10}[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    # Owner email (also match standalone Email:) - more flexible to catch partial emails
+    r"(?i)(Owner|Contact|Tenant|Email).{0,15}[A-Za-z0-9._%+-]+(?:@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
     
     # Owner phone (also match standalone Phone:)
     r"(?i)(Owner|Contact|Tenant|Phone).{0,10}\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
@@ -55,8 +55,8 @@ OWNER_CONTEXT_PATTERNS = [
     # Credit card numbers (with context) - more specific pattern
     r"(?i)(Credit Card|Card Number|CC#|CC Number).{0,10}\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}",
     
-    # Addresses (with context) - more controlled pattern
-    r"(?i)(Home Address|Address)\s*[:\-]?\s+\d+[\s\w,.-]{0,50}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Way|Drive|Dr)[\s\w,.-]{0,30}",
+    # Addresses (with context) - more flexible pattern (street type optional)
+    r"(?i)(Home Address|Address)\s*[:\-]?\s+\d+[\s\w,.-]{5,80}",
 ]
 
 # Compile all patterns (all are case-insensitive)
@@ -173,12 +173,25 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
             # Extract the actual sensitive data from the match
             if pattern_type == "owner_name":
                 # Extract just the name part (after the keyword and colon/dash)
-                name_match = re.search(r"[:\-]?\s+([A-Za-z ,.'\-]+)", matched_text, re.IGNORECASE)
+                # The matched_text is like "Owner Name: Michael Andrew Thompson"
+                # We need to extract everything after the colon
+                # First, try to match the full pattern with capture group
+                name_match = re.search(r"(?:Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]\s+([A-Za-z ,.'\-]+)", matched_text, re.IGNORECASE)
                 if name_match:
                     extracted_name = name_match.group(1).strip()
-                    # Only add if it looks like a name (has at least 2 words)
-                    if len(extracted_name.split()) >= 2:
+                    # Split by common delimiters to get just the name part
+                    extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
+                    # Only add if it looks like a name (has at least 2 words and is not just "Name")
+                    if len(extracted_name.split()) >= 2 and extracted_name.lower() not in ["name", "owner name"]:
                         matches.append((pattern_type, extracted_name))
+                else:
+                    # Fallback: try simple extraction after colon
+                    name_match = re.search(r":[:\-]\s+([A-Za-z ,.'\-]{5,})", matched_text, re.IGNORECASE)
+                    if name_match:
+                        extracted_name = name_match.group(1).strip()
+                        extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
+                        if len(extracted_name.split()) >= 2:
+                            matches.append((pattern_type, extracted_name))
             elif pattern_type == "owner_email":
                 # Extract just the email part (after the keyword)
                 email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", matched_text, re.IGNORECASE)
@@ -207,14 +220,16 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                         matches.append((pattern_type, cc_number))
             elif pattern_type == "address":
                 # Extract the address part (after the keyword and colon)
-                # Match from number to street type, then optionally city/state/zip
-                addr_match = re.search(r"[:\-]?\s+(\d+[\s\w,.-]{0,50}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Way|Drive|Dr)[\s\w,.-]{0,30})", matched_text, re.IGNORECASE)
+                # More flexible - just get everything after "Home Address:" or "Address:"
+                addr_match = re.search(r"[:\-]?\s+(\d+[\s\w,.-]{5,80})", matched_text, re.IGNORECASE)
                 if addr_match:
                     addr = addr_match.group(1).strip()
                     # Stop at newline or next major keyword to avoid over-capturing
-                    addr = re.split(r'\n|Social Security|Credit Card|Phone|Email', addr)[0].strip()
+                    addr = re.split(r'\n|Social Security|Credit|Phone|Email|Owner Name', addr)[0].strip()
                     addr = re.sub(r'\s+', ' ', addr)  # Normalize whitespace
-                    matches.append((pattern_type, addr))
+                    # Only add if it looks like an address (has at least a number and some text)
+                    if len(addr) >= 5 and re.search(r'\d', addr):
+                        matches.append((pattern_type, addr))
     
     return matches
 
