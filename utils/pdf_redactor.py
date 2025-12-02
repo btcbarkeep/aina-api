@@ -351,6 +351,37 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                         partial_pattern = f"{partial_city.group(1)}, {partial_city.group(2).upper()} {partial_city.group(3)}"
                         if (pattern_type, partial_pattern) not in matches:
                             matches.append((pattern_type, partial_pattern))
+                
+                # Also extract and add any state/zip patterns found anywhere in the address
+                state_zip_pattern = re.search(r'([A-Z]{2})\s+(\d{5})', addr_text)
+                if state_zip_pattern:
+                    state_zip = f"{state_zip_pattern.group(1)} {state_zip_pattern.group(2)}"
+                    if (pattern_type, state_zip) not in matches:
+                        matches.append((pattern_type, state_zip))
+                
+                # Extract zip code alone
+                zip_pattern = re.search(r'\b(\d{5})\b', addr_text)
+                if zip_pattern:
+                    zip_code = zip_pattern.group(1)
+                    if (pattern_type, zip_code) not in matches:
+                        matches.append((pattern_type, zip_code))
+        
+        # Also search the entire page for common address patterns that might have been missed
+        # Look for state/zip patterns like "HI 96734" anywhere on the page
+        state_zip_anywhere = re.findall(r'\b([A-Z]{2})\s+(\d{5})\b', page_text)
+        for state, zip_code in state_zip_anywhere:
+            state_zip = f"{state} {zip_code}"
+            # Only add if it's not already in matches and looks like it could be part of an address
+            if (pattern_type, state_zip) not in matches:
+                # Check if this appears near "address" or "home" keywords
+                state_zip_pos = page_text.find(state_zip)
+                if state_zip_pos != -1:
+                    context_start = max(0, state_zip_pos - 100)
+                    context_end = min(len(page_text), state_zip_pos + len(state_zip) + 100)
+                    context = page_text[context_start:context_end].lower()
+                    if any(kw in context for kw in ["address", "home address", "home addres"]):
+                        matches.append(("address", state_zip))
+                        logger.debug(f"Page {page_num + 1}: Found state/zip pattern '{state_zip}' near address keyword, adding to matches")
         
         if not matches:
             logger.debug(f"Page {page_num + 1}: No sensitive patterns found")
@@ -474,30 +505,48 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                                 text_instances.append(rect)
                                                 logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
                                         
-                                        # For addresses, also try to find and redact remaining parts
+                                        # For addresses, ALWAYS check all lines for address patterns
                                         # (in case the address is split across lines)
-                                        if pattern_type == "address" and search_text.lower() not in line_text.lower():
-                                            # Try to find key parts of the address (street number, city, state, zip)
-                                            addr_parts = re.findall(r'\d+', search_text)
-                                            city_state_match = re.search(r'([A-Za-z]+),\s*([A-Z]{2})\s+(\d{5})', search_text)
-                                            
+                                        if pattern_type == "address":
                                             # Check if this line contains any address-like patterns
-                                            # Look for: zip codes, state codes, city names, or address numbers
                                             has_zip = re.search(r'\b\d{5}\b', line_text)
                                             has_state = re.search(r'\b[A-Z]{2}\b', line_text)
-                                            has_city = city_state_match and city_state_match.group(1).lower() in line_text.lower()
-                                            has_street_num = any(part in line_text for part in addr_parts[:2])  # First 2 numbers
                                             
                                             # Check for patterns like ", HI 96734" or "a, HI 96734" (partial city name)
                                             has_partial_city_state_zip = re.search(r'[a-z],\s*[A-Z]{2}\s+\d{5}', line_text.lower())
                                             
-                                            # If line contains address-like content, redact it
-                                            if has_zip or (has_state and has_zip) or has_city or (has_street_num and (has_city or has_state)) or has_partial_city_state_zip:
+                                            # Check for state/zip pattern (e.g., "HI 96734")
+                                            has_state_zip = re.search(r'\b[A-Z]{2}\s+\d{5}\b', line_text)
+                                            
+                                            line_bbox = line.get("bbox", [])
+                                            if len(line_bbox) == 4:
+                                                should_redact = False
+                                                
+                                                # Always redact if it has state/zip pattern (most reliable indicator)
+                                                if has_state_zip or has_partial_city_state_zip:
+                                                    should_redact = True
+                                                    logger.debug(f"Page {page_num + 1}: Found state/zip pattern in line '{line_text[:50]}...', will redact")
+                                                
+                                                # Also redact if it has zip and state together (even if not adjacent)
+                                                elif has_zip and has_state and len(line_text.strip()) < 50:
+                                                    should_redact = True
+                                                    logger.debug(f"Page {page_num + 1}: Found zip and state in short line '{line_text[:50]}...', will redact")
+                                                
+                                                if should_redact:
+                                                    rect = fitz.Rect(line_bbox)
+                                                    # Avoid duplicates
+                                                    if rect not in text_instances:
+                                                        text_instances.append(rect)
+                                                        logger.debug(f"Page {page_num + 1}: Added address part redaction at {line_bbox}")
+                                            
+                                            # Also check if search_text is in this line (original logic)
+                                            if search_text.lower() in line_text.lower():
                                                 bbox = line.get("bbox", [])
                                                 if len(bbox) == 4:
                                                     rect = fitz.Rect(bbox)
-                                                    text_instances.append(rect)
-                                                    logger.debug(f"Page {page_num + 1}: Found address part in text block at {bbox} (zip={bool(has_zip)}, state={bool(has_state)}, city={bool(has_city)}, partial={bool(has_partial_city_state_zip)})")
+                                                    if rect not in text_instances:
+                                                        text_instances.append(rect)
+                                                        logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
                     except Exception as e:
                         logger.debug(f"Page {page_num + 1}: Text block search failed: {e}")
                 
