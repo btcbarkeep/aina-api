@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 
 
 # ======================================================
@@ -49,6 +49,10 @@ class DocumentBase(BaseModel):
     # Bulk-upload field
     document_url: Optional[str] = None
 
+    # Redaction and visibility controls
+    is_redacted: Optional[bool] = Field(False, description="Whether the document has been redacted")
+    is_public: Optional[bool] = Field(False, description="Whether the document is publicly accessible (false = private)")
+
     # -----------------------------
     # Validators
     # -----------------------------
@@ -93,6 +97,10 @@ class DocumentUpdate(BaseModel):
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
     document_url: Optional[str] = None
+
+    # Redaction and visibility controls
+    is_redacted: Optional[bool] = None
+    is_public: Optional[bool] = None
 
     @field_validator("event_id", mode="before")
     def validate_event_id(cls, v):
