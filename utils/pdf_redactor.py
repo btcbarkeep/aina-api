@@ -487,7 +487,8 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                         logger.debug(f"Page {page_num + 1}: Partial search for '{partial_text}' found {len(text_instances)} instance(s)")
                 
                 # Strategy 4: Use text blocks/dicts to find text by content
-                if not text_instances:
+                # For addresses, ALWAYS run this strategy to catch split address parts
+                if not text_instances or pattern_type == "address":
                     # Get text blocks and search for the text in them
                     try:
                         text_dict = page.get_text("dict")
@@ -502,8 +503,9 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                             bbox = line.get("bbox", [])
                                             if len(bbox) == 4:
                                                 rect = fitz.Rect(bbox)
-                                                text_instances.append(rect)
-                                                logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
+                                                if rect not in text_instances:
+                                                    text_instances.append(rect)
+                                                    logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
                                         
                                         # For addresses, ALWAYS check all lines for address patterns
                                         # (in case the address is split across lines)
@@ -525,28 +527,19 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                                 # Always redact if it has state/zip pattern (most reliable indicator)
                                                 if has_state_zip or has_partial_city_state_zip:
                                                     should_redact = True
-                                                    logger.debug(f"Page {page_num + 1}: Found state/zip pattern in line '{line_text[:50]}...', will redact")
+                                                    logger.info(f"Page {page_num + 1}: Found state/zip pattern '{line_text.strip()}' in line, will redact")
                                                 
                                                 # Also redact if it has zip and state together (even if not adjacent)
                                                 elif has_zip and has_state and len(line_text.strip()) < 50:
                                                     should_redact = True
-                                                    logger.debug(f"Page {page_num + 1}: Found zip and state in short line '{line_text[:50]}...', will redact")
+                                                    logger.info(f"Page {page_num + 1}: Found zip and state in short line '{line_text.strip()}', will redact")
                                                 
                                                 if should_redact:
                                                     rect = fitz.Rect(line_bbox)
                                                     # Avoid duplicates
                                                     if rect not in text_instances:
                                                         text_instances.append(rect)
-                                                        logger.debug(f"Page {page_num + 1}: Added address part redaction at {line_bbox}")
-                                            
-                                            # Also check if search_text is in this line (original logic)
-                                            if search_text.lower() in line_text.lower():
-                                                bbox = line.get("bbox", [])
-                                                if len(bbox) == 4:
-                                                    rect = fitz.Rect(bbox)
-                                                    if rect not in text_instances:
-                                                        text_instances.append(rect)
-                                                        logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
+                                                        logger.info(f"Page {page_num + 1}: Added address part redaction for '{line_text.strip()}' at {line_bbox}")
                     except Exception as e:
                         logger.debug(f"Page {page_num + 1}: Text block search failed: {e}")
                 
