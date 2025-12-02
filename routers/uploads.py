@@ -31,6 +31,8 @@ def sanitize(data: dict) -> dict:
     for k, v in data.items():
         if v is None:
             clean[k] = None
+        elif isinstance(v, bool):
+            clean[k] = v  # Preserve boolean values
         elif isinstance(v, str):
             clean[k] = v.strip() or None
         else:
@@ -159,6 +161,10 @@ async def upload_document(
 
     category: str | None = Form(None),
 
+    # Redaction and visibility toggles
+    is_redacted: bool = Form(False, description="Whether the document should be marked as redacted"),
+    is_public: bool = Form(False, description="Whether the document should be public (false = private)"),
+
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
@@ -264,6 +270,8 @@ async def upload_document(
         "s3_key": s3_key,
         "content_type": file.content_type,
         "uploaded_by": current_user.id,
+        "is_redacted": is_redacted,
+        "is_public": is_public,
         # Note: Don't store download_url - it expires. Use /documents/{id}/download endpoint instead
     })
 
