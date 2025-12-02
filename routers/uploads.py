@@ -263,10 +263,8 @@ async def upload_document(
             
             # Only apply redaction to PDF files
             if file_extension == '.pdf' or file.content_type == 'application/pdf':
-                # Generate redacted file path
-                temp_redacted_path = str(Path(temp_original_path).with_name(
-                    Path(temp_original_path).stem + "_redacted.pdf"
-                ))
+                # Generate redacted file path using os.path.splitext
+                temp_redacted_path = f"{os.path.splitext(temp_original_path)[0]}_redacted.pdf"
                 
                 print("🔍 Running PDF redactor…")
                 try:
