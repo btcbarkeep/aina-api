@@ -30,50 +30,34 @@ from core.logging_config import logger
 
 
 # ======================================================
-# Pattern Definitions
+# Pattern Definitions - Conservative Patterns
 # ======================================================
 
-# Email pattern
-EMAIL_PATTERN = re.compile(
-    r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-    re.IGNORECASE
-)
+SENSITIVE_PATTERNS = [
+    # Emails
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    
+    # Phone numbers
+    r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
+    
+    # Hawaii Contractor License: CT-xxxxx or BC-xxxxx etc.
+    r"(CT|BC|BE|C)\-?\d{4,6}",
+    
+    # TMK format (leave off generic numbers!)
+    r"\d{3}\-\d{3}\-\d{3}\-\d{3}",
+    
+    # Addresses (VERY controlled)
+    r"\d+\s+[A-Za-z ]+(Street|St|Avenue|Ave|Way|Road|Rd|Boulevard|Blvd|Lane|Ln)",
+    
+    # Owner names (ONLY redact if preceded by specific keywords)
+    r"(?i)(Owner Name|Owner|Prepared By|Contact|Manager)\s*[:\-]?\s+[A-Za-z ,.'-]+",
+]
 
-# Phone number patterns (US format)
-PHONE_PATTERN = re.compile(
-    r'\b(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})\b'
-)
-
-# TMK pattern (Tax Map Key - Hawaii property identifier)
-# Format: X-X-X-XXX-XXX-XXX or similar variations
-TMK_PATTERN = re.compile(
-    r'\b\d{1,3}[-.\s]?\d{1,3}[-.\s]?\d{1,3}[-.\s]?\d{1,3}[-.\s]?\d{1,3}[-.\s]?\d{1,3}\b'
-)
-
-# Contractor license number patterns (various formats)
-# Common formats: ABC-12345, ABC12345, 12345-ABC, etc.
-CONTRACTOR_LICENSE_PATTERN = re.compile(
-    r'\b[A-Z]{2,4}[-.\s]?\d{4,8}\b|\b\d{4,8}[-.\s]?[A-Z]{2,4}\b'
-)
-
-# Address patterns (loose matching)
-# Matches common address formats
-ADDRESS_PATTERN = re.compile(
-    r'\b\d+\s+[A-Za-z0-9\s,.-]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Court|Ct|Place|Pl|Highway|Hwy)[\s,.-]*(?:[A-Za-z]{2,}\s+)?\d{5}(?:-\d{4})?\b',
-    re.IGNORECASE
-)
-
-# Owner name patterns (loose matching - common name patterns)
-# Matches "Owner:", "Property Owner:", names with titles, etc.
-OWNER_NAME_PATTERN = re.compile(
-    r'\b(?:Owner|Property Owner|Owner Name)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',
-    re.IGNORECASE
-)
-
-# Additional loose name pattern (First Last format)
-OWNER_NAME_LOOSE_PATTERN = re.compile(
-    r'\b(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)\b'
-)
+# Compile all patterns with case-insensitive flag where needed
+COMPILED_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE if i >= 4 else 0)  # Last 2 patterns are case-insensitive
+    for i, pattern in enumerate(SENSITIVE_PATTERNS)
+]
 
 
 # ======================================================
@@ -136,7 +120,7 @@ def ocr_page_to_text(page: fitz.Page) -> str:
 
 def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
     """
-    Find all sensitive patterns in text.
+    Find all sensitive patterns in text using conservative pattern matching.
     
     Args:
         text: Text to search
@@ -145,37 +129,24 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
         List of tuples: (pattern_type, matched_text)
     """
     matches = []
+    pattern_types = ["email", "phone", "contractor_license", "tmk", "address", "owner_name"]
     
-    # Find emails
-    for match in EMAIL_PATTERN.finditer(text):
-        matches.append(("email", match.group()))
-    
-    # Find phone numbers
-    for match in PHONE_PATTERN.finditer(text):
-        matches.append(("phone", match.group()))
-    
-    # Find TMK patterns
-    for match in TMK_PATTERN.finditer(text):
-        matches.append(("tmk", match.group()))
-    
-    # Find contractor license numbers
-    for match in CONTRACTOR_LICENSE_PATTERN.finditer(text):
-        matches.append(("contractor_license", match.group()))
-    
-    # Find addresses
-    for match in ADDRESS_PATTERN.finditer(text):
-        matches.append(("address", match.group()))
-    
-    # Find owner names (structured)
-    for match in OWNER_NAME_PATTERN.finditer(text):
-        matches.append(("owner_name", match.group(1)))
-    
-    # Find owner names (loose)
-    for match in OWNER_NAME_LOOSE_PATTERN.finditer(text):
-        # Filter out common false positives
-        name = match.group(1).strip()
-        if len(name.split()) >= 2 and len(name) > 5:
-            matches.append(("owner_name", name))
+    # Iterate through all compiled patterns
+    for pattern_type, compiled_pattern in zip(pattern_types, COMPILED_PATTERNS):
+        for match in compiled_pattern.finditer(text):
+            matched_text = match.group()
+            # For owner_name pattern, extract just the name part (after the keyword)
+            if pattern_type == "owner_name":
+                # The pattern captures the whole match, but we want just the name part
+                # Extract text after the keyword and colon/dash
+                name_match = re.search(r"[:\-]?\s+([A-Za-z ,.'-]+)", matched_text, re.IGNORECASE)
+                if name_match:
+                    matched_text = name_match.group(1).strip()
+                    # Only add if it looks like a name (has at least 2 words)
+                    if len(matched_text.split()) >= 2:
+                        matches.append((pattern_type, matched_text))
+            else:
+                matches.append((pattern_type, matched_text))
     
     return matches
 
