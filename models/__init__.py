@@ -30,6 +30,16 @@ from .document import (
 )
 
 # -------------------------
+# Redaction Models
+# -------------------------
+from .redaction import (
+    RedactionRegion,
+    RedactionCreate,
+    RedactionRead,
+    RedactionUpdate,
+)
+
+# -------------------------
 # Event Comments
 # -------------------------
 from .event_comment import (
@@ -81,6 +91,12 @@ __all__ = [
     "DocumentCreate",
     "DocumentRead",
     "DocumentUpdate",
+
+    # redaction
+    "RedactionRegion",
+    "RedactionCreate",
+    "RedactionRead",
+    "RedactionUpdate",
 
     # event comments
     "EventCommentBase",
