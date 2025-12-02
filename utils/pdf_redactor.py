@@ -181,8 +181,13 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     extracted_name = name_match.group(1).strip()
                     # Split by common delimiters to get just the name part
                     extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
+                    # Filter out common label words that might have been captured
+                    label_words = ["name", "owner", "owner name", "unit owner", "homeowner", "tenant", "contact"]
+                    if extracted_name.lower() in label_words:
+                        # Skip if we only extracted a label word
+                        pass
                     # Only add if it looks like a name (has at least 2 words and is not just "Name")
-                    if len(extracted_name.split()) >= 2 and extracted_name.lower() not in ["name", "owner name"]:
+                    elif len(extracted_name.split()) >= 2 and extracted_name.lower() not in ["name", "owner name"]:
                         matches.append((pattern_type, extracted_name))
                 else:
                     # Fallback: try simple extraction after colon
@@ -190,7 +195,9 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     if name_match:
                         extracted_name = name_match.group(1).strip()
                         extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
-                        if len(extracted_name.split()) >= 2:
+                        # Filter out label words
+                        label_words = ["name", "owner", "owner name", "unit owner", "homeowner", "tenant", "contact"]
+                        if extracted_name.lower() not in label_words and len(extracted_name.split()) >= 2:
                             matches.append((pattern_type, extracted_name))
             elif pattern_type == "owner_email":
                 # Extract just the email part (after the keyword)
@@ -227,8 +234,10 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     # Stop at newline or next major keyword to avoid over-capturing
                     addr = re.split(r'\n|Social Security|Credit|Phone|Email|Owner Name', addr)[0].strip()
                     addr = re.sub(r'\s+', ' ', addr)  # Normalize whitespace
-                    # Only add if it looks like an address (has at least a number and some text)
-                    if len(addr) >= 5 and re.search(r'\d', addr):
+                    # Filter out label words that might have been captured
+                    label_words = ["address", "home address", "home addres"]
+                    # Only add if it looks like an address (has at least a number and some text) and is not just a label
+                    if len(addr) >= 5 and re.search(r'\d', addr) and addr.lower() not in label_words:
                         matches.append((pattern_type, addr))
                         
                         # Also add city/state/zip as separate match if present
@@ -447,6 +456,21 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                     continue  # DO NOT REDACT OUTSIDE OWNER CONTEXT
                 
                 logger.debug(f"Page {page_num + 1}: Redaction allowed for '{search_text}', proceeding with redaction")
+                
+                # Validate that search_text doesn't contain label words (safety check)
+                # Common label words that should never be redacted
+                label_words = ["name", "owner name", "address", "home address", "home addres", "social security", "ssn", "credit card", "credit", "phone", "email"]
+                search_lower = search_text.lower().strip()
+                
+                # Skip if search_text is just a label word or very short label-like text
+                if search_lower in label_words:
+                    logger.warning(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - appears to be a label word, not data")
+                    continue
+                
+                # Skip if search_text is very short (1-2 words) and contains a label word
+                if len(search_text.split()) <= 2 and any(label in search_lower for label in label_words):
+                    logger.warning(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - too short and contains label word")
+                    continue
                 
                 # Search for text instances on the page using multiple strategies
                 text_instances = []
