@@ -43,11 +43,20 @@ OWNER_CONTEXT_PATTERNS = [
     # Owner names when preceded by context words
     r"(?i)(Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]?\s+[A-Za-z ,.'\-]+",
     
-    # Owner email
-    r"(?i)(Owner|Contact|Tenant).{0,10}[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    # Owner email (also match standalone Email:)
+    r"(?i)(Owner|Contact|Tenant|Email).{0,10}[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
     
-    # Owner phone
-    r"(?i)(Owner|Contact|Tenant).{0,10}\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
+    # Owner phone (also match standalone Phone:)
+    r"(?i)(Owner|Contact|Tenant|Phone).{0,10}\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
+    
+    # SSN (with context)
+    r"(?i)(Social Security|SSN|S\.S\.N\.).{0,10}\d{3}[-.\s]?\d{2}[-.\s]?\d{4}",
+    
+    # Credit card numbers (with context) - more specific pattern
+    r"(?i)(Credit Card|Card Number|CC#|CC Number).{0,10}\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}",
+    
+    # Addresses (with context) - more controlled pattern
+    r"(?i)(Home Address|Address)\s*[:\-]?\s+\d+[\s\w,.-]{0,50}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Way|Drive|Dr)[\s\w,.-]{0,30}",
 ]
 
 # Compile all patterns (all are case-insensitive)
@@ -61,6 +70,19 @@ WHITELIST = [
     "Cost", "Prepared", "Contractor License", "LLC", "Lahaina", "HI", "Project", "Roof", "Replacement",
     "Scope", "Description", "Labor", "Equipment", "Flashing",
     "Venting", "Underlayment", "Shingles", "Metal", "Scaffolding"
+]
+
+# Owner Context Keywords
+OWNER_CONTEXT_KEYWORDS = [
+    "owner", "unit owner", "homeowner", "contact", "tenant"
+]
+
+# Sensitive Keywords - always redact if these appear in context, even without owner context
+SENSITIVE_KEYWORDS = [
+    "social security", "ssn",
+    "credit card", "card number", "cc#",
+    "home address",
+    "routing number", "account number"
 ]
 
 
@@ -135,14 +157,15 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
         List of tuples: (pattern_type, matched_text)
     """
     matches = []
-    pattern_types = ["owner_name", "owner_email", "owner_phone"]
+    pattern_types = ["owner_name", "owner_email", "owner_phone", "ssn", "credit_card", "address"]
     
     # Iterate through all compiled patterns
     for pattern_type, compiled_pattern in zip(pattern_types, COMPILED_PATTERNS):
-        # Ensure we only process owner patterns (safeguard for OCR usage)
+        # Ensure we only process owner patterns for OCR (safeguard for OCR usage)
         # OCR is ONLY used for owner-related patterns
         if pattern_type not in {"owner_name", "owner_email", "owner_phone"}:
-            continue  # skip OCR for non-owner patterns
+            # For non-owner patterns, still check but note they won't use OCR
+            pass
         
         for match in compiled_pattern.finditer(text):
             matched_text = match.group()
@@ -166,6 +189,32 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                 phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", matched_text)
                 if phone_match:
                     matches.append((pattern_type, phone_match.group(1)))
+            elif pattern_type == "ssn":
+                # Extract just the SSN part (XXX-XX-XXXX format)
+                ssn_match = re.search(r"(\d{3}[-.\s]?\d{2}[-.\s]?\d{4})", matched_text)
+                if ssn_match:
+                    matches.append((pattern_type, ssn_match.group(1)))
+            elif pattern_type == "credit_card":
+                # Extract just the credit card number part
+                # Match digits with optional spaces/dashes between them (13-19 digits total)
+                cc_match = re.search(r"([\d][\d\s-]{11,17}[\d])", matched_text)
+                if cc_match:
+                    # Clean up the card number (normalize spaces)
+                    cc_number = re.sub(r"\s+", " ", cc_match.group(1).strip())
+                    # Ensure we have at least 13 digits
+                    digit_count = len(re.sub(r"[^\d]", "", cc_number))
+                    if digit_count >= 13 and digit_count <= 19:
+                        matches.append((pattern_type, cc_number))
+            elif pattern_type == "address":
+                # Extract the address part (after the keyword and colon)
+                # Match from number to street type, then optionally city/state/zip
+                addr_match = re.search(r"[:\-]?\s+(\d+[\s\w,.-]{0,50}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Way|Drive|Dr)[\s\w,.-]{0,30})", matched_text, re.IGNORECASE)
+                if addr_match:
+                    addr = addr_match.group(1).strip()
+                    # Stop at newline or next major keyword to avoid over-capturing
+                    addr = re.split(r'\n|Social Security|Credit Card|Phone|Email', addr)[0].strip()
+                    addr = re.sub(r'\s+', ' ', addr)  # Normalize whitespace
+                    matches.append((pattern_type, addr))
     
     return matches
 
@@ -273,8 +322,6 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         
         # Locate and redact each match
         page_redactions = 0
-        # Context keywords that must be present in the context window
-        context_keywords = ["owner", "unit owner", "homeowner", "contact", "tenant"]
         
         for pattern_type, search_text in matches:
             try:
@@ -298,27 +345,36 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 # Using 60 characters as middle ground (50-80 range)
                 start_pos = max(0, match_pos - 60)
                 end_pos = min(len(page_text), match_pos + len(search_text) + 60)
-                context = page_text[start_pos:end_pos].lower()
+                context_lower = page_text[start_pos:end_pos].lower()
                 
-                # Check if context includes owner keywords
-                has_owner_context = any(c in context for c in context_keywords)
+                # FIRST: Check sensitive keywords (MUST come before owner-context check)
+                if any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Sensitive keyword found in context for '{search_text}', allowing redaction")
+                # ELSE: Check owner-context
+                elif any(w in context_lower for w in OWNER_CONTEXT_KEYWORDS):
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Owner context found for '{search_text}', allowing redaction")
+                # ELSE: No context found
+                else:
+                    allow_redaction = False
                 
                 # Check if matched text is purely numeric (allowing commas and periods)
                 # Remove commas, periods, and spaces, then check if remaining is all digits
                 numeric_text = search_text.replace(",", "").replace(".", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
                 is_purely_numeric = numeric_text.isdigit() and len(numeric_text) > 0
                 
-                # If purely numeric and no owner context, skip redaction
-                if is_purely_numeric and not has_owner_context:
-                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - purely numeric without owner context")
+                # If purely numeric and not allowed, skip redaction
+                if is_purely_numeric and not allow_redaction:
+                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - purely numeric without owner context or sensitive keywords")
                     continue  # skip the redaction
                 
-                # Only allow redaction if ANY of the context keywords appear
-                if not has_owner_context:
-                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - no owner context found in window")
+                # If not allow_redaction, continue (ONLY executes after BOTH checks)
+                if not allow_redaction:
+                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - no owner context or sensitive keywords found in window")
                     continue  # DO NOT REDACT OUTSIDE OWNER CONTEXT
                 
-                logger.debug(f"Page {page_num + 1}: Owner context found for '{search_text}', proceeding with redaction")
+                logger.debug(f"Page {page_num + 1}: Redaction allowed for '{search_text}', proceeding with redaction")
                 
                 # Search for text instances on the page
                 text_instances = page.search_for(search_text)
