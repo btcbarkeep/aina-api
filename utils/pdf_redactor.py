@@ -286,21 +286,22 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 logger.warning(f"Page {page_num + 1}: No text found via OCR, skipping pattern matching")
                 continue
         
-        # Find sensitive patterns (only owner-related patterns)
+        # Find sensitive patterns
         matches = find_sensitive_patterns(page_text)
         
-        # Filter matches to ensure we only process owner patterns
-        # This is a safeguard - OCR should only be used for owner patterns
-        owner_pattern_types = {"owner_name", "owner_email", "owner_phone"}
-        filtered_matches = []
-        for pattern_type, matched_text in matches:
-            if pattern_type in owner_pattern_types:
-                filtered_matches.append((pattern_type, matched_text))
-            else:
-                logger.debug(f"Page {page_num + 1}: Skipping non-owner pattern '{pattern_type}' (OCR only for owner patterns)")
-                continue  # skip OCR for non-owner patterns
-        
-        matches = filtered_matches
+        # Only filter matches if we used OCR (OCR should only be used for owner patterns)
+        # If we have extractable text, process ALL patterns including SSN, credit card, address
+        if not has_text(page):
+            # We used OCR, so only process owner patterns
+            owner_pattern_types = {"owner_name", "owner_email", "owner_phone"}
+            filtered_matches = []
+            for pattern_type, matched_text in matches:
+                if pattern_type in owner_pattern_types:
+                    filtered_matches.append((pattern_type, matched_text))
+                else:
+                    logger.debug(f"Page {page_num + 1}: Skipping non-owner pattern '{pattern_type}' (OCR only for owner patterns)")
+            matches = filtered_matches
+        # If we have extractable text, keep ALL matches (including SSN, credit card, address)
         
         if not matches:
             logger.debug(f"Page {page_num + 1}: No sensitive patterns found")
@@ -376,23 +377,94 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 
                 logger.debug(f"Page {page_num + 1}: Redaction allowed for '{search_text}', proceeding with redaction")
                 
-                # Search for text instances on the page
-                text_instances = page.search_for(search_text)
+                # Search for text instances on the page using multiple strategies
+                text_instances = []
                 
+                # Strategy 1: Exact match
+                text_instances = page.search_for(search_text)
+                logger.debug(f"Page {page_num + 1}: Exact search for '{search_text}' found {len(text_instances)} instance(s)")
+                
+                # Strategy 2: Try without special characters (normalize)
                 if not text_instances:
-                    # Try searching for parts of the text if full match fails
+                    # Remove special characters and try again
+                    normalized = re.sub(r'[^\w\s]', '', search_text)
+                    if normalized and normalized != search_text:
+                        text_instances = page.search_for(normalized)
+                        logger.debug(f"Page {page_num + 1}: Normalized search for '{normalized}' found {len(text_instances)} instance(s)")
+                
+                # Strategy 3: Search for parts of the text
+                if not text_instances:
                     words = search_text.split()
                     if len(words) > 1:
                         # Try searching for first few words
                         partial_text = " ".join(words[:2])
                         text_instances = page.search_for(partial_text)
+                        logger.debug(f"Page {page_num + 1}: Partial search for '{partial_text}' found {len(text_instances)} instance(s)")
+                
+                # Strategy 4: Use text blocks/dicts to find text by content
+                if not text_instances:
+                    # Get text blocks and search for the text in them
+                    try:
+                        text_dict = page.get_text("dict")
+                        for block in text_dict.get("blocks", []):
+                            if "lines" in block:
+                                for line in block["lines"]:
+                                    if "spans" in line:
+                                        line_text = "".join(span.get("text", "") for span in line["spans"])
+                                        # Check if our search text is in this line
+                                        if search_text.lower() in line_text.lower():
+                                            # Get the bounding box of this line
+                                            bbox = line.get("bbox", [])
+                                            if len(bbox) == 4:
+                                                rect = fitz.Rect(bbox)
+                                                text_instances.append(rect)
+                                                logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
+                    except Exception as e:
+                        logger.debug(f"Page {page_num + 1}: Text block search failed: {e}")
+                
+                # Strategy 5: Search for individual words/parts for long text
+                if not text_instances and len(search_text) > 10:
+                    # For long text like addresses, try searching for key parts
+                    if pattern_type == "address":
+                        # Try searching for street number and street name
+                        addr_parts = re.search(r"(\d+)\s+([A-Za-z]+)", search_text)
+                        if addr_parts:
+                            street_num = addr_parts.group(1)
+                            street_name = addr_parts.group(2)
+                            search_term = f"{street_num} {street_name}"
+                            text_instances = page.search_for(search_term)
+                            logger.debug(f"Page {page_num + 1}: Address part search for '{search_term}' found {len(text_instances)} instance(s)")
+                    elif pattern_type in ["ssn", "credit_card"]:
+                        # For SSN and credit card, try searching for just the numbers
+                        numbers_only = re.sub(r'[^\d]', '', search_text)
+                        if numbers_only:
+                            # Try searching for the number with different formatting
+                            if pattern_type == "ssn" and len(numbers_only) == 9:
+                                formatted = f"{numbers_only[:3]}-{numbers_only[3:5]}-{numbers_only[5:]}"
+                                text_instances = page.search_for(formatted)
+                                if not text_instances:
+                                    text_instances = page.search_for(numbers_only)
+                            elif pattern_type == "credit_card" and len(numbers_only) >= 13:
+                                # Try with spaces every 4 digits
+                                formatted = " ".join([numbers_only[i:i+4] for i in range(0, len(numbers_only), 4)])
+                                text_instances = page.search_for(formatted)
+                                if not text_instances:
+                                    text_instances = page.search_for(numbers_only)
+                            logger.debug(f"Page {page_num + 1}: Number-only search found {len(text_instances)} instance(s)")
                 
                 # Add redaction annotation for each instance
-                for inst in text_instances:
-                    # Create redaction annotation with solid black fill
-                    redaction = page.add_redact_annot(inst, fill=(0, 0, 0))  # Black fill
-                    page_redactions += 1
-                    total_redactions += 1
+                if text_instances:
+                    for inst in text_instances:
+                        try:
+                            # Create redaction annotation with solid black fill
+                            redaction = page.add_redact_annot(inst, fill=(0, 0, 0))  # Black fill
+                            page_redactions += 1
+                            total_redactions += 1
+                            logger.info(f"Page {page_num + 1}: Added redaction for '{search_text}' at {inst}")
+                        except Exception as e:
+                            logger.warning(f"Page {page_num + 1}: Failed to add redaction annotation: {e}")
+                else:
+                    logger.warning(f"Page {page_num + 1}: Could not locate '{search_text}' on page for redaction")
                     
             except Exception as e:
                 logger.warning(f"Failed to redact '{search_text}' on page {page_num + 1}: {e}")
