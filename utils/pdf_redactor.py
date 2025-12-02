@@ -230,6 +230,17 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     # Only add if it looks like an address (has at least a number and some text)
                     if len(addr) >= 5 and re.search(r'\d', addr):
                         matches.append((pattern_type, addr))
+                        
+                        # Also add city/state/zip as separate match if present
+                        # This helps catch cases where address is split across lines
+                        city_state_zip = re.search(r'([A-Za-z]+),\s*([A-Z]{2})\s+(\d{5})', addr)
+                        if city_state_zip:
+                            city_state = f"{city_state_zip.group(1)}, {city_state_zip.group(2)} {city_state_zip.group(3)}"
+                            # Add as separate match to ensure it gets redacted even if split
+                            matches.append((pattern_type, city_state))
+                            # Also add just the state/zip part
+                            state_zip = f"{city_state_zip.group(2)} {city_state_zip.group(3)}"
+                            matches.append((pattern_type, state_zip))
     
     return matches
 
@@ -317,6 +328,29 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                     logger.debug(f"Page {page_num + 1}: Skipping non-owner pattern '{pattern_type}' (OCR only for owner patterns)")
             matches = filtered_matches
         # If we have extractable text, keep ALL matches (including SSN, credit card, address)
+        
+        # For addresses, also search for city/state/zip patterns that might be on separate lines
+        # This helps catch cases where the address is split (e.g., "a, HI 96734" visible)
+        address_matches = [m for m in matches if m[0] == "address"]
+        if address_matches:
+            for pattern_type, addr_text in address_matches:
+                # Extract city/state/zip if present
+                city_state_match = re.search(r'([A-Za-z]+),\s*([A-Z]{2})\s+(\d{5})', addr_text)
+                if city_state_match:
+                    # Add city, state zip as separate match
+                    city_state_zip = f"{city_state_match.group(1)}, {city_state_match.group(2)} {city_state_match.group(3)}"
+                    if (pattern_type, city_state_zip) not in matches:
+                        matches.append((pattern_type, city_state_zip))
+                    # Add state zip
+                    state_zip = f"{city_state_match.group(2)} {city_state_match.group(3)}"
+                    if (pattern_type, state_zip) not in matches:
+                        matches.append((pattern_type, state_zip))
+                    # Also search for patterns like ", HI 96734" or "a, HI 96734" (partial city)
+                    partial_city = re.search(r'([a-z]),\s*([A-Z]{2})\s+(\d{5})', addr_text.lower())
+                    if partial_city:
+                        partial_pattern = f"{partial_city.group(1)}, {partial_city.group(2).upper()} {partial_city.group(3)}"
+                        if (pattern_type, partial_pattern) not in matches:
+                            matches.append((pattern_type, partial_pattern))
         
         if not matches:
             logger.debug(f"Page {page_num + 1}: No sensitive patterns found")
@@ -446,22 +480,24 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                             # Try to find key parts of the address (street number, city, state, zip)
                                             addr_parts = re.findall(r'\d+', search_text)
                                             city_state_match = re.search(r'([A-Za-z]+),\s*([A-Z]{2})\s+(\d{5})', search_text)
-                                            if addr_parts and any(part in line_text for part in addr_parts):
-                                                # Check if this line looks like part of an address
-                                                if re.search(r'\d+.*[A-Za-z]|[A-Za-z]+,\s*[A-Z]{2}', line_text):
-                                                    bbox = line.get("bbox", [])
-                                                    if len(bbox) == 4:
-                                                        rect = fitz.Rect(bbox)
-                                                        text_instances.append(rect)
-                                                        logger.debug(f"Page {page_num + 1}: Found address part in text block at {bbox}")
-                                            elif city_state_match:
-                                                # Look for city, state, zip pattern
-                                                if city_state_match.group(1).lower() in line_text.lower() or city_state_match.group(2) in line_text:
-                                                    bbox = line.get("bbox", [])
-                                                    if len(bbox) == 4:
-                                                        rect = fitz.Rect(bbox)
-                                                        text_instances.append(rect)
-                                                        logger.debug(f"Page {page_num + 1}: Found city/state/zip in text block at {bbox}")
+                                            
+                                            # Check if this line contains any address-like patterns
+                                            # Look for: zip codes, state codes, city names, or address numbers
+                                            has_zip = re.search(r'\b\d{5}\b', line_text)
+                                            has_state = re.search(r'\b[A-Z]{2}\b', line_text)
+                                            has_city = city_state_match and city_state_match.group(1).lower() in line_text.lower()
+                                            has_street_num = any(part in line_text for part in addr_parts[:2])  # First 2 numbers
+                                            
+                                            # Check for patterns like ", HI 96734" or "a, HI 96734" (partial city name)
+                                            has_partial_city_state_zip = re.search(r'[a-z],\s*[A-Z]{2}\s+\d{5}', line_text.lower())
+                                            
+                                            # If line contains address-like content, redact it
+                                            if has_zip or (has_state and has_zip) or has_city or (has_street_num and (has_city or has_state)) or has_partial_city_state_zip:
+                                                bbox = line.get("bbox", [])
+                                                if len(bbox) == 4:
+                                                    rect = fitz.Rect(bbox)
+                                                    text_instances.append(rect)
+                                                    logger.debug(f"Page {page_num + 1}: Found address part in text block at {bbox} (zip={bool(has_zip)}, state={bool(has_state)}, city={bool(has_city)}, partial={bool(has_partial_city_state_zip)})")
                     except Exception as e:
                         logger.debug(f"Page {page_num + 1}: Text block search failed: {e}")
                 
@@ -477,6 +513,38 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                             search_term = f"{street_num} {street_name}"
                             text_instances = page.search_for(search_term)
                             logger.debug(f"Page {page_num + 1}: Address part search for '{search_term}' found {len(text_instances)} instance(s)")
+                        
+                        # Also try searching for city/state/zip pattern
+                        if not text_instances:
+                            city_state_match = re.search(r'([A-Za-z]+),\s*([A-Z]{2})\s+(\d{5})', search_text)
+                            if city_state_match:
+                                # Try full city, state zip
+                                city_state_zip = f"{city_state_match.group(1)}, {city_state_match.group(2)} {city_state_match.group(3)}"
+                                text_instances = page.search_for(city_state_zip)
+                                if not text_instances:
+                                    # Try just state zip
+                                    state_zip = f"{city_state_match.group(2)} {city_state_match.group(3)}"
+                                    text_instances = page.search_for(state_zip)
+                                if not text_instances:
+                                    # Try just the city name
+                                    city = city_state_match.group(1)
+                                    text_instances = page.search_for(city)
+                                logger.debug(f"Page {page_num + 1}: City/state/zip search found {len(text_instances)} instance(s)")
+                        
+                        # Also search for any remaining address parts that might be visible
+                        # Look for patterns like ", HI 96734" or "HI 96734" or just "96734"
+                        if not text_instances:
+                            zip_match = re.search(r'(\d{5})', search_text)
+                            if zip_match:
+                                zip_code = zip_match.group(1)
+                                text_instances = page.search_for(zip_code)
+                                if not text_instances:
+                                    # Try with state code if present
+                                    state_match = re.search(r'([A-Z]{2})\s+(\d{5})', search_text)
+                                    if state_match:
+                                        state_zip = f"{state_match.group(1)} {state_match.group(2)}"
+                                        text_instances = page.search_for(state_zip)
+                                logger.debug(f"Page {page_num + 1}: Zip code search found {len(text_instances)} instance(s)")
                     elif pattern_type in ["ssn", "credit_card"]:
                         # For SSN and credit card, try searching for just the numbers
                         numbers_only = re.sub(r'[^\d]', '', search_text)
