@@ -16,7 +16,7 @@ class AdminCreateUser(BaseModel):
     - metadata (optional dict for any future expansion)
 
     Password is handled by Supabase automatically via:
-        supabase.auth.admin.create_user({...})
+        supabase.auth.admin.create_user({"email": email, "password": auto_generated})
     """
 
     full_name: Optional[str] = None
