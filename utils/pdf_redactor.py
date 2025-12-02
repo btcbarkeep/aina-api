@@ -2,8 +2,8 @@
 PDF Redaction System for Aina Protocol
 
 This module provides automated PDF redaction capabilities using PyMuPDF (fitz)
-to detect and redact sensitive information including emails, phone numbers,
-TMK patterns, owner names, addresses, and contractor license numbers.
+to detect and redact owner-related sensitive information including owner names,
+owner emails, and owner phone numbers when preceded by owner context keywords.
 """
 
 import io
@@ -30,33 +30,32 @@ from core.logging_config import logger
 
 
 # ======================================================
-# Pattern Definitions - Conservative Patterns
+# Pattern Definitions - Owner Context Patterns
 # ======================================================
 
-SENSITIVE_PATTERNS = [
-    # Emails
-    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+# Only redact when owner-related words are present
+OWNER_CONTEXT_PATTERNS = [
+    # Owner names when preceded by context words
+    r"(?i)(Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]?\s+[A-Za-z ,.'\-]+",
     
-    # Phone numbers
-    r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
+    # Owner email
+    r"(?i)(Owner|Contact|Tenant).{0,10}[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
     
-    # Hawaii Contractor License: CT-xxxxx or BC-xxxxx etc.
-    r"(CT|BC|BE|C)\-?\d{4,6}",
-    
-    # TMK format (leave off generic numbers!)
-    r"\d{3}\-\d{3}\-\d{3}\-\d{3}",
-    
-    # Addresses (VERY controlled)
-    r"\d+\s+[A-Za-z ]+(Street|St|Avenue|Ave|Way|Road|Rd|Boulevard|Blvd|Lane|Ln)",
-    
-    # Owner names (ONLY redact if preceded by specific keywords)
-    r"(?i)(Owner Name|Owner|Prepared By|Contact|Manager)\s*[:\-]?\s+[A-Za-z ,.'-]+",
+    # Owner phone
+    r"(?i)(Owner|Contact|Tenant).{0,10}\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
 ]
 
-# Compile all patterns with case-insensitive flag where needed
+# Compile all patterns (all are case-insensitive)
 COMPILED_PATTERNS = [
-    re.compile(pattern, re.IGNORECASE if i >= 4 else 0)  # Last 2 patterns are case-insensitive
-    for i, pattern in enumerate(SENSITIVE_PATTERNS)
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in OWNER_CONTEXT_PATTERNS
+]
+
+# Whitelist words - matches containing these words will be skipped
+WHITELIST = [
+    "Cost", "Prepared", "Contractor License", "LLC", "Lahaina", "HI", "Project", "Roof", "Replacement",
+    "Scope", "Description", "Labor", "Equipment", "Flashing",
+    "Venting", "Underlayment", "Shingles", "Metal", "Scaffolding"
 ]
 
 
@@ -120,7 +119,8 @@ def ocr_page_to_text(page: fitz.Page) -> str:
 
 def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
     """
-    Find all sensitive patterns in text using conservative pattern matching.
+    Find all sensitive patterns in text using owner context-based pattern matching.
+    Only matches patterns that are preceded by owner-related keywords.
     
     Args:
         text: Text to search
@@ -129,24 +129,37 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
         List of tuples: (pattern_type, matched_text)
     """
     matches = []
-    pattern_types = ["email", "phone", "contractor_license", "tmk", "address", "owner_name"]
+    pattern_types = ["owner_name", "owner_email", "owner_phone"]
     
     # Iterate through all compiled patterns
     for pattern_type, compiled_pattern in zip(pattern_types, COMPILED_PATTERNS):
+        # Ensure we only process owner patterns (safeguard for OCR usage)
+        # OCR is ONLY used for owner-related patterns
+        if pattern_type not in {"owner_name", "owner_email", "owner_phone"}:
+            continue  # skip OCR for non-owner patterns
+        
         for match in compiled_pattern.finditer(text):
             matched_text = match.group()
-            # For owner_name pattern, extract just the name part (after the keyword)
+            
+            # Extract the actual sensitive data from the match
             if pattern_type == "owner_name":
-                # The pattern captures the whole match, but we want just the name part
-                # Extract text after the keyword and colon/dash
-                name_match = re.search(r"[:\-]?\s+([A-Za-z ,.'-]+)", matched_text, re.IGNORECASE)
+                # Extract just the name part (after the keyword and colon/dash)
+                name_match = re.search(r"[:\-]?\s+([A-Za-z ,.'\-]+)", matched_text, re.IGNORECASE)
                 if name_match:
-                    matched_text = name_match.group(1).strip()
+                    extracted_name = name_match.group(1).strip()
                     # Only add if it looks like a name (has at least 2 words)
-                    if len(matched_text.split()) >= 2:
-                        matches.append((pattern_type, matched_text))
-            else:
-                matches.append((pattern_type, matched_text))
+                    if len(extracted_name.split()) >= 2:
+                        matches.append((pattern_type, extracted_name))
+            elif pattern_type == "owner_email":
+                # Extract just the email part (after the keyword)
+                email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", matched_text, re.IGNORECASE)
+                if email_match:
+                    matches.append((pattern_type, email_match.group(1)))
+            elif pattern_type == "owner_phone":
+                # Extract just the phone number part (after the keyword)
+                phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", matched_text)
+                if phone_match:
+                    matches.append((pattern_type, phone_match.group(1)))
     
     return matches
 
@@ -206,14 +219,28 @@ def apply_redactions(input_path: str, output_path: str) -> None:
             text = page.get_text()
             logger.debug(f"Page {page_num + 1}: Extracted {len(text)} characters from text layer")
         else:
-            logger.info(f"Page {page_num + 1}: No extractable text, attempting OCR...")
+            # OCR is ONLY used for owner-related patterns
+            logger.info(f"Page {page_num + 1}: No extractable text, attempting OCR for owner patterns only...")
             text = ocr_page_to_text(page)
             if not text:
                 logger.warning(f"Page {page_num + 1}: No text found via OCR, skipping pattern matching")
                 continue
         
-        # Find sensitive patterns
+        # Find sensitive patterns (only owner-related patterns)
         matches = find_sensitive_patterns(text)
+        
+        # Filter matches to ensure we only process owner patterns
+        # This is a safeguard - OCR should only be used for owner patterns
+        owner_pattern_types = {"owner_name", "owner_email", "owner_phone"}
+        filtered_matches = []
+        for pattern_type, matched_text in matches:
+            if pattern_type in owner_pattern_types:
+                filtered_matches.append((pattern_type, matched_text))
+            else:
+                logger.debug(f"Page {page_num + 1}: Skipping non-owner pattern '{pattern_type}' (OCR only for owner patterns)")
+                continue  # skip OCR for non-owner patterns
+        
+        matches = filtered_matches
         
         if not matches:
             logger.debug(f"Page {page_num + 1}: No sensitive patterns found")
@@ -235,8 +262,41 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         
         # Locate and redact each match
         page_redactions = 0
+        # Context keywords that must be present in the context window
+        context_keywords = ["owner", "unit owner", "tenant", "contact", "homeowner"]
+        
         for pattern_type, search_text in matches:
             try:
+                # Check whitelist - skip if match contains any whitelist word
+                if any(word.lower() in search_text.lower() for word in WHITELIST):
+                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - contains whitelist word")
+                    continue  # skip
+                
+                # Find the match position in the text to extract context
+                match_pos = text.find(search_text)
+                if match_pos == -1:
+                    # Try case-insensitive search
+                    match_pos = text.lower().find(search_text.lower())
+                
+                if match_pos == -1:
+                    # Match not found in text, skip redaction
+                    logger.debug(f"Page {page_num + 1}: Match '{search_text}' not found in text, skipping redaction")
+                    continue
+                
+                # Extract 40 characters before and after the match
+                start_pos = max(0, match_pos - 40)
+                end_pos = min(len(text), match_pos + len(search_text) + 40)
+                context_window = text[start_pos:end_pos].lower()
+                
+                # Check if context window contains any of the required keywords
+                has_context = any(keyword.lower() in context_window for keyword in context_keywords)
+                
+                if not has_context:
+                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - no owner context found in window")
+                    continue  # Skip redaction if context not found
+                
+                logger.debug(f"Page {page_num + 1}: Owner context found for '{search_text}', proceeding with redaction")
+                
                 # Search for text instances on the page
                 text_instances = page.search_for(search_text)
                 
