@@ -9,7 +9,7 @@ import boto3
 import os
 import re
 import tempfile
-from pathlib import Path
+from pathlib import Path as PathLib
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from dependencies.auth import (
@@ -249,7 +249,7 @@ async def upload_document(
 
     try:
         # Save uploaded file to temporary location
-        file_extension = Path(file.filename or clean_filename).suffix.lower()
+        file_extension = PathLib(file.filename or clean_filename).suffix.lower()
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
             temp_original_path = temp_file.name
             # Read and write the file content
