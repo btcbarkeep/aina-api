@@ -363,8 +363,13 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 end_pos = min(len(page_text), match_pos + len(search_text) + 60)
                 context_lower = page_text[start_pos:end_pos].lower()
                 
+                # For email and address patterns, always allow redaction if the pattern matched
+                # (since the pattern itself requires context like "Email:" or "Home Address:")
+                if pattern_type in ["owner_email", "address"]:
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Pattern '{pattern_type}' matched with context, allowing redaction")
                 # FIRST: Check sensitive keywords (MUST come before owner-context check)
-                if any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
+                elif any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
                     allow_redaction = True
                     logger.debug(f"Page {page_num + 1}: Sensitive keyword found in context for '{search_text}', allowing redaction")
                 # ELSE: Check owner-context
@@ -434,6 +439,29 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                                 rect = fitz.Rect(bbox)
                                                 text_instances.append(rect)
                                                 logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
+                                        
+                                        # For addresses, also try to find and redact remaining parts
+                                        # (in case the address is split across lines)
+                                        if pattern_type == "address" and search_text.lower() not in line_text.lower():
+                                            # Try to find key parts of the address (street number, city, state, zip)
+                                            addr_parts = re.findall(r'\d+', search_text)
+                                            city_state_match = re.search(r'([A-Za-z]+),\s*([A-Z]{2})\s+(\d{5})', search_text)
+                                            if addr_parts and any(part in line_text for part in addr_parts):
+                                                # Check if this line looks like part of an address
+                                                if re.search(r'\d+.*[A-Za-z]|[A-Za-z]+,\s*[A-Z]{2}', line_text):
+                                                    bbox = line.get("bbox", [])
+                                                    if len(bbox) == 4:
+                                                        rect = fitz.Rect(bbox)
+                                                        text_instances.append(rect)
+                                                        logger.debug(f"Page {page_num + 1}: Found address part in text block at {bbox}")
+                                            elif city_state_match:
+                                                # Look for city, state, zip pattern
+                                                if city_state_match.group(1).lower() in line_text.lower() or city_state_match.group(2) in line_text:
+                                                    bbox = line.get("bbox", [])
+                                                    if len(bbox) == 4:
+                                                        rect = fitz.Rect(bbox)
+                                                        text_instances.append(rect)
+                                                        logger.debug(f"Page {page_num + 1}: Found city/state/zip in text block at {bbox}")
                     except Exception as e:
                         logger.debug(f"Page {page_num + 1}: Text block search failed: {e}")
                 
