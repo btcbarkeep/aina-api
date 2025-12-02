@@ -483,38 +483,54 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 # Check if the found text is part of a label (e.g., "Owner Name:" contains "Name")
                 if text_instances:
                     filtered_instances = []
+                    label_keywords = ["owner name:", "name:", "home address:", "address:", "social security", "ssn:", "credit card", "credit:", "phone:", "email:"]
+                    
                     for inst in text_instances:
                         # Get the text around this instance to check context
                         try:
-                            # Get a small area around the instance to check for label keywords
+                            # Get a wider area around the instance to check for label keywords
                             rect = fitz.Rect(inst)
-                            # Expand slightly to get context
-                            context_rect = fitz.Rect(rect.x0 - 50, rect.y0, rect.x1 + 50, rect.y1)
+                            # Expand significantly to the left to catch labels
+                            context_rect = fitz.Rect(max(0, rect.x0 - 150), rect.y0 - 5, rect.x1 + 50, rect.y1 + 5)
                             context_text = page.get_textbox(context_rect).lower()
                             
-                            # Check if this instance is preceded by a label keyword
-                            label_keywords = ["owner name:", "name:", "home address:", "address:", "social security", "ssn:", "credit card", "credit:", "phone:", "email:"]
-                            
-                            # If the context contains a label keyword right before our search text, skip it
-                            # (this means we're probably matching the label, not the data)
+                            # Check if this instance is part of a label line
+                            # A label line would have the pattern: "Label: search_text" or "Label search_text"
                             is_label_match = False
-                            for label in label_keywords:
-                                # Check if label appears right before our search text in the context
-                                label_pos = context_text.find(label)
-                                search_pos = context_text.find(search_text.lower())
-                                if label_pos != -1 and search_pos != -1:
-                                    # If label is very close before search text (within 10 chars), it's likely a label match
-                                    if 0 <= (search_pos - label_pos) <= len(label) + 10:
+                            
+                            # Find where our search text appears in the context
+                            search_lower = search_text.lower()
+                            search_pos = context_text.find(search_lower)
+                            
+                            if search_pos != -1:
+                                # Get text before our search text (this is where the label would be)
+                                text_before = context_text[:search_pos].strip()
+                                
+                                # Check if any label keyword appears right before our search text
+                                for label in label_keywords:
+                                    label_lower = label.lower()
+                                    # Check if label appears at the end of text_before (immediately before search text)
+                                    if text_before.endswith(label_lower) or text_before.endswith(label_lower.rstrip(':')):
+                                        # Label is immediately before - this is likely a label match
                                         is_label_match = True
-                                        logger.debug(f"Page {page_num + 1}: Skipping instance - appears to be part of label '{label}'")
+                                        logger.info(f"Page {page_num + 1}: Skipping instance - '{search_text}' appears right after label '{label}'")
+                                        break
+                                    
+                                    # Also check if label appears very close before (within 5 chars)
+                                    label_pos = text_before.rfind(label_lower)
+                                    if label_pos != -1 and (len(text_before) - label_pos) <= len(label_lower) + 5:
+                                        is_label_match = True
+                                        logger.info(f"Page {page_num + 1}: Skipping instance - '{search_text}' appears close after label '{label}'")
                                         break
                             
                             if not is_label_match:
                                 filtered_instances.append(inst)
+                            else:
+                                logger.debug(f"Page {page_num + 1}: Filtered out label match for '{search_text}'")
                         except Exception as e:
-                            # If we can't check context, include it (better to redact than miss)
-                            filtered_instances.append(inst)
-                            logger.debug(f"Page {page_num + 1}: Could not check context for instance: {e}")
+                            # If we can't check context, be conservative and skip it
+                            logger.warning(f"Page {page_num + 1}: Could not check context for instance, skipping to avoid redacting label: {e}")
+                            # Don't add to filtered_instances - skip it to be safe
                     
                     text_instances = filtered_instances
                     logger.debug(f"Page {page_num + 1}: After filtering labels, {len(text_instances)} instance(s) remain")
