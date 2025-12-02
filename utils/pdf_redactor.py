@@ -79,8 +79,9 @@ def has_text(page) -> bool:
         True if the page has extractable text, False otherwise
     """
     try:
-        text = page.get_text().strip()
-        return len(text) > 0
+        blocks = page.get_text("blocks")
+        page_text = " ".join(b[4] for b in blocks if len(b) > 4)
+        return len(page_text.strip()) > 0
     except Exception as e:
         logger.warning(f"Error checking for text on page {page.number}: {e}")
         return False
@@ -222,21 +223,22 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         page = doc[page_num]
         logger.info(f"Processing page {page_num + 1}/{len(doc)}")
         
-        # Extract text
-        text = ""
+        # Extract text using block-based extraction
+        page_text = ""
         if has_text(page):
-            text = page.get_text()
-            logger.debug(f"Page {page_num + 1}: Extracted {len(text)} characters from text layer")
+            blocks = page.get_text("blocks")
+            page_text = " ".join(b[4] for b in blocks if len(b) > 4)
+            logger.debug(f"Page {page_num + 1}: Extracted {len(page_text)} characters from text layer")
         else:
             # OCR is ONLY used for owner-related patterns
             logger.info(f"Page {page_num + 1}: No extractable text, attempting OCR for owner patterns only...")
-            text = ocr_page_to_text(page)
-            if not text:
+            page_text = ocr_page_to_text(page)
+            if not page_text:
                 logger.warning(f"Page {page_num + 1}: No text found via OCR, skipping pattern matching")
                 continue
         
         # Find sensitive patterns (only owner-related patterns)
-        matches = find_sensitive_patterns(text)
+        matches = find_sensitive_patterns(page_text)
         
         # Filter matches to ensure we only process owner patterns
         # This is a safeguard - OCR should only be used for owner patterns
@@ -281,22 +283,22 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                     logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - contains whitelist word")
                     continue  # skip
                 
-                # Find the match position in the text to extract context
-                match_pos = text.find(search_text)
+                # Find the match position in the page_text to extract context
+                match_pos = page_text.find(search_text)
                 if match_pos == -1:
                     # Try case-insensitive search
-                    match_pos = text.lower().find(search_text.lower())
+                    match_pos = page_text.lower().find(search_text.lower())
                 
                 if match_pos == -1:
-                    # Match not found in text, skip redaction
-                    logger.debug(f"Page {page_num + 1}: Match '{search_text}' not found in text, skipping redaction")
+                    # Match not found in page_text, skip redaction
+                    logger.debug(f"Page {page_num + 1}: Match '{search_text}' not found in page_text, skipping redaction")
                     continue
                 
                 # Extract 50-80 character context window around the matched text
                 # Using 60 characters as middle ground (50-80 range)
                 start_pos = max(0, match_pos - 60)
-                end_pos = min(len(text), match_pos + len(search_text) + 60)
-                context = text[start_pos:end_pos].lower()
+                end_pos = min(len(page_text), match_pos + len(search_text) + 60)
+                context = page_text[start_pos:end_pos].lower()
                 
                 # Check if context includes owner keywords
                 has_owner_context = any(c in context for c in context_keywords)
