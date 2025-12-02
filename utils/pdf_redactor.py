@@ -366,22 +366,8 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                     if (pattern_type, zip_code) not in matches:
                         matches.append((pattern_type, zip_code))
         
-        # Also search the entire page for common address patterns that might have been missed
-        # Look for state/zip patterns like "HI 96734" anywhere on the page
-        state_zip_anywhere = re.findall(r'\b([A-Z]{2})\s+(\d{5})\b', page_text)
-        for state, zip_code in state_zip_anywhere:
-            state_zip = f"{state} {zip_code}"
-            # Only add if it's not already in matches and looks like it could be part of an address
-            if (pattern_type, state_zip) not in matches:
-                # Check if this appears near "address" or "home" keywords
-                state_zip_pos = page_text.find(state_zip)
-                if state_zip_pos != -1:
-                    context_start = max(0, state_zip_pos - 100)
-                    context_end = min(len(page_text), state_zip_pos + len(state_zip) + 100)
-                    context = page_text[context_start:context_end].lower()
-                    if any(kw in context for kw in ["address", "home address", "home addres"]):
-                        matches.append(("address", state_zip))
-                        logger.debug(f"Page {page_num + 1}: Found state/zip pattern '{state_zip}' near address keyword, adding to matches")
+        # Don't search the entire page for address patterns - too aggressive
+        # Only use the patterns we found from the actual address matches
         
         if not matches:
             logger.debug(f"Page {page_num + 1}: No sensitive patterns found")
@@ -507,12 +493,15 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                                     text_instances.append(rect)
                                                     logger.debug(f"Page {page_num + 1}: Found '{search_text}' in text block at {bbox}")
                                         
-                                        # For addresses, ALWAYS check all lines for address patterns
+                                        # For addresses, check lines for address patterns BUT only if they're related to our address
                                         # (in case the address is split across lines)
                                         if pattern_type == "address":
-                                            # Check if this line contains any address-like patterns
-                                            has_zip = re.search(r'\b\d{5}\b', line_text)
-                                            has_state = re.search(r'\b[A-Z]{2}\b', line_text)
+                                            # Only redact if this line contains parts that match our search_text
+                                            # or if it's clearly a continuation of the address
+                                            
+                                            # Check if this line contains parts of our address
+                                            search_text_lower = search_text.lower()
+                                            line_text_lower = line_text.lower()
                                             
                                             # Check for patterns like ", HI 96734" or "a, HI 96734" (partial city name)
                                             has_partial_city_state_zip = re.search(r'[a-z],\s*[A-Z]{2}\s+\d{5}', line_text.lower())
@@ -520,19 +509,36 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                             # Check for state/zip pattern (e.g., "HI 96734")
                                             has_state_zip = re.search(r'\b[A-Z]{2}\s+\d{5}\b', line_text)
                                             
+                                            # Extract state/zip from our search_text to compare
+                                            search_state_zip = re.search(r'\b([A-Z]{2})\s+(\d{5})\b', search_text)
+                                            
                                             line_bbox = line.get("bbox", [])
                                             if len(line_bbox) == 4:
                                                 should_redact = False
                                                 
-                                                # Always redact if it has state/zip pattern (most reliable indicator)
-                                                if has_state_zip or has_partial_city_state_zip:
+                                                # Only redact if:
+                                                # 1. The line contains parts of our search_text, OR
+                                                # 2. It has state/zip that matches our address's state/zip
+                                                if search_text_lower in line_text_lower:
+                                                    # Line contains our search text
                                                     should_redact = True
-                                                    logger.info(f"Page {page_num + 1}: Found state/zip pattern '{line_text.strip()}' in line, will redact")
-                                                
-                                                # Also redact if it has zip and state together (even if not adjacent)
-                                                elif has_zip and has_state and len(line_text.strip()) < 50:
-                                                    should_redact = True
-                                                    logger.info(f"Page {page_num + 1}: Found zip and state in short line '{line_text.strip()}', will redact")
+                                                elif search_state_zip and has_state_zip:
+                                                    # Check if the state/zip matches
+                                                    line_state_zip = re.search(r'\b([A-Z]{2})\s+(\d{5})\b', line_text)
+                                                    if line_state_zip:
+                                                        if (line_state_zip.group(1) == search_state_zip.group(1) and 
+                                                            line_state_zip.group(2) == search_state_zip.group(2)):
+                                                            should_redact = True
+                                                            logger.info(f"Page {page_num + 1}: Found matching state/zip '{line_text.strip()}' for address, will redact")
+                                                elif has_partial_city_state_zip:
+                                                    # Check if the state/zip in the partial matches our address
+                                                    if search_state_zip:
+                                                        partial_state_zip = re.search(r'([A-Z]{2})\s+(\d{5})', line_text)
+                                                        if partial_state_zip:
+                                                            if (partial_state_zip.group(1) == search_state_zip.group(1) and 
+                                                                partial_state_zip.group(2) == search_state_zip.group(2)):
+                                                                should_redact = True
+                                                                logger.info(f"Page {page_num + 1}: Found matching partial city/state/zip '{line_text.strip()}' for address, will redact")
                                                 
                                                 if should_redact:
                                                     rect = fitz.Rect(line_bbox)
