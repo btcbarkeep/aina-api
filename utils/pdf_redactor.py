@@ -263,7 +263,7 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         # Locate and redact each match
         page_redactions = 0
         # Context keywords that must be present in the context window
-        context_keywords = ["owner", "unit owner", "tenant", "contact", "homeowner"]
+        context_keywords = ["owner", "unit owner", "homeowner", "contact", "tenant"]
         
         for pattern_type, search_text in matches:
             try:
@@ -283,17 +283,29 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                     logger.debug(f"Page {page_num + 1}: Match '{search_text}' not found in text, skipping redaction")
                     continue
                 
-                # Extract 40 characters before and after the match
-                start_pos = max(0, match_pos - 40)
-                end_pos = min(len(text), match_pos + len(search_text) + 40)
-                context_window = text[start_pos:end_pos].lower()
+                # Extract 50-80 character context window around the matched text
+                # Using 60 characters as middle ground (50-80 range)
+                start_pos = max(0, match_pos - 60)
+                end_pos = min(len(text), match_pos + len(search_text) + 60)
+                context = text[start_pos:end_pos].lower()
                 
-                # Check if context window contains any of the required keywords
-                has_context = any(keyword.lower() in context_window for keyword in context_keywords)
+                # Check if context includes owner keywords
+                has_owner_context = any(c in context for c in context_keywords)
                 
-                if not has_context:
+                # Check if matched text is purely numeric (allowing commas and periods)
+                # Remove commas, periods, and spaces, then check if remaining is all digits
+                numeric_text = search_text.replace(",", "").replace(".", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                is_purely_numeric = numeric_text.isdigit() and len(numeric_text) > 0
+                
+                # If purely numeric and no owner context, skip redaction
+                if is_purely_numeric and not has_owner_context:
+                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - purely numeric without owner context")
+                    continue  # skip the redaction
+                
+                # Only allow redaction if ANY of the context keywords appear
+                if not has_owner_context:
                     logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - no owner context found in window")
-                    continue  # Skip redaction if context not found
+                    continue  # DO NOT REDACT OUTSIDE OWNER CONTEXT
                 
                 logger.debug(f"Page {page_num + 1}: Owner context found for '{search_text}', proceeding with redaction")
                 
