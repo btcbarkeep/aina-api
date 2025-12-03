@@ -19,7 +19,6 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from utils.pdf_redactor import apply_redactions
 
 router = APIRouter(
     prefix="/uploads",
@@ -164,8 +163,7 @@ async def upload_document(
 
     category: str | None = Form(None),
 
-    # Redaction and visibility toggles
-    is_redacted: bool = Form(False, description="Whether the document should be marked as redacted"),
+    # Visibility toggle (redaction is now manual via separate endpoint)
     is_public: bool = Form(False, description="Whether the document should be public (false = private)"),
 
     current_user: CurrentUser = Depends(get_current_user),
@@ -241,84 +239,37 @@ async def upload_document(
         s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
 
     # -----------------------------------------------------
-    # Handle PDF redaction if requested
+    # Save file temporarily and upload to S3
     # -----------------------------------------------------
-    temp_original_path = None
-    temp_redacted_path = None
-    file_path_to_upload = None
+    temp_file_path = None
 
     try:
         # Save uploaded file to temporary location
         file_extension = PathLib(file.filename or clean_filename).suffix.lower()
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-            temp_original_path = temp_file.name
+            temp_file_path = temp_file.name
             # Read and write the file content
             content = await file.read()
             temp_file.write(content)
             temp_file.flush()
 
-        # Check if redaction is requested and file is a PDF
-        if is_redacted:
-            print("🔒 Redaction requested…")
-            
-            # Only apply redaction to PDF files
-            if file_extension == '.pdf' or file.content_type == 'application/pdf':
-                # Generate redacted file path using os.path.splitext
-                temp_redacted_path = f"{os.path.splitext(temp_original_path)[0]}_redacted.pdf"
-                
-                print("🔍 Running PDF redactor…")
-                try:
-                    # Apply redactions
-                    apply_redactions(temp_original_path, temp_redacted_path)
-                    
-                    # Use redacted file for upload
-                    file_path_to_upload = temp_redacted_path
-                    print("✔ Redaction complete, uploading redacted version")
-                except Exception as e:
-                    print(f"⚠ Redaction failed: {e}, uploading original file")
-                    # Fallback to original file if redaction fails
-                    file_path_to_upload = temp_original_path
-            else:
-                print(f"⚠ Redaction requested but file is not a PDF ({file_extension}), uploading original file")
-                file_path_to_upload = temp_original_path
-        else:
-            # Use original file
-            file_path_to_upload = temp_original_path
-
         # Upload file to S3
         try:
-            if file_path_to_upload:
-                # Upload from file path
-                s3.upload_file(
-                    Filename=file_path_to_upload,
-                    Bucket=bucket,
-                    Key=s3_key,
-                    ExtraArgs={"ContentType": file.content_type},
-                )
-            else:
-                # Fallback: read file content and upload
-                with open(temp_original_path, 'rb') as f:
-                    s3.upload_fileobj(
-                        Fileobj=f,
-                        Bucket=bucket,
-                        Key=s3_key,
-                        ExtraArgs={"ContentType": file.content_type},
-                    )
+            s3.upload_file(
+                Filename=temp_file_path,
+                Bucket=bucket,
+                Key=s3_key,
+                ExtraArgs={"ContentType": file.content_type},
+            )
         except Exception as e:
             raise HTTPException(500, f"S3 upload error: {e}")
     finally:
-        # Clean up temporary files
-        if temp_original_path and os.path.exists(temp_original_path):
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
             try:
-                os.unlink(temp_original_path)
+                os.unlink(temp_file_path)
             except Exception as e:
-                print(f"Warning: Failed to delete temp file {temp_original_path}: {e}")
-        
-        if temp_redacted_path and os.path.exists(temp_redacted_path):
-            try:
-                os.unlink(temp_redacted_path)
-            except Exception as e:
-                print(f"Warning: Failed to delete temp redacted file {temp_redacted_path}: {e}")
+                print(f"Warning: Failed to delete temp file {temp_file_path}: {e}")
 
     # Generate presigned URL for immediate use (expires in 1 day)
     # Note: For long-term access, use the /documents/{id}/download endpoint
@@ -342,7 +293,7 @@ async def upload_document(
         "s3_key": s3_key,
         "content_type": file.content_type,
         "uploaded_by": current_user.id,
-        "is_redacted": is_redacted,
+        "is_redacted": False,  # Manual redaction is handled via separate endpoint
         "is_public": is_public,
         # Note: Don't store download_url - it expires. Use /documents/{id}/download endpoint instead
     })
