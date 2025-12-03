@@ -55,14 +55,15 @@ def verify_user_building_access(user_id: str, building_id: str):
 
 
 # -----------------------------------------------------
-# event_id → building_id, unit_id
+# event_id → building_id
 # -----------------------------------------------------
 def get_event_info(event_id: str):
+    """Get building_id for an event. Returns (building_id, None) for compatibility."""
     client = get_supabase_client()
 
     rows = (
         client.table("events")
-        .select("building_id, unit_id")
+        .select("building_id")
         .eq("id", event_id)
         .limit(1)
         .execute()
@@ -71,7 +72,7 @@ def get_event_info(event_id: str):
     if not rows:
         raise HTTPException(404, "Event not found")
 
-    return rows[0]["building_id"], rows[0].get("unit_id")
+    return rows[0]["building_id"], None
 
 
 # -----------------------------------------------------
@@ -101,11 +102,15 @@ def validate_units_in_building(unit_ids: list, building_id: str):
     if not unit_ids:
         return
     
+    # Check for duplicates
+    if len(unit_ids) != len(set(unit_ids)):
+        raise HTTPException(400, "Duplicate unit IDs are not allowed")
+    
     client = get_supabase_client()
     for unit_id in unit_ids:
         unit_building = get_unit_building(str(unit_id))
         if unit_building != building_id:
-            raise HTTPException(400, f"Unit {unit_id} does not belong to building {building_id}")
+            raise HTTPException(400, f"Unit {unit_id} does not belong to the specified building")
 
 
 # -----------------------------------------------------
@@ -258,8 +263,10 @@ def list_documents(
         query = query.eq("building_id", building_id)
     if event_id:
         query = query.eq("event_id", event_id)
-    if unit_id:
-        query = query.eq("unit_id", unit_id)
+    
+    # Note: unit_id filtering is now done via document_units junction table
+    # For now, we'll filter in memory after fetching (or use a join query)
+    # TODO: Implement proper junction table filtering if needed
 
     res = query.order("created_at", desc=True).limit(limit).execute()
     documents = res.data or []
@@ -285,27 +292,51 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     event_id = payload.event_id
     building_id = payload.building_id
     
-    # Handle multiple units: prefer unit_ids over unit_id for backward compatibility
-    unit_ids = []
-    if payload.unit_ids:
-        unit_ids = [str(u) for u in payload.unit_ids]
-    elif payload.unit_id:
-        unit_ids = [str(payload.unit_id)]
+    # Validate building_id is not None (required by schema)
+    if not building_id:
+        raise HTTPException(400, "building_id is required and cannot be null")
     
-    # Handle multiple contractors
-    contractor_ids = []
-    if payload.contractor_ids:
-        contractor_ids = [str(c) for c in payload.contractor_ids]
+    # Validate building exists
+    client = get_supabase_client()
+    building_rows = (
+        client.table("buildings")
+        .select("id")
+        .eq("id", str(building_id))
+        .execute()
+    ).data
+    if not building_rows:
+        raise HTTPException(400, f"Building {building_id} does not exist")
+    
+    # Get unit_ids and contractor_ids from payload
+    unit_ids = [str(u) for u in (payload.unit_ids or [])]
+    contractor_ids = [str(c) for c in (payload.contractor_ids or [])]
+    
+    # Check for duplicates
+    if len(unit_ids) != len(set(unit_ids)):
+        raise HTTPException(400, "Duplicate unit IDs are not allowed")
+    if len(contractor_ids) != len(set(contractor_ids)):
+        raise HTTPException(400, "Duplicate contractor IDs are not allowed")
+    
+    # Validate contractors exist
+    if contractor_ids:
+        client = get_supabase_client()
+        for cid in contractor_ids:
+            contractor_rows = (
+                client.table("contractors")
+                .select("id")
+                .eq("id", cid)
+                .execute()
+            ).data
+            if not contractor_rows:
+                raise HTTPException(400, f"Contractor {cid} does not exist")
 
     # -------------------------------------------------
     # Determine building based on payload
     # -------------------------------------------------
     if event_id:
         # event defines building
-        building_id, event_unit = get_event_info(event_id)
-        # Add event's unit to unit_ids if not already present
-        if event_unit and str(event_unit) not in unit_ids:
-            unit_ids.append(str(event_unit))
+        building_id, _ = get_event_info(event_id)
+        building_id = str(building_id)
 
     elif unit_ids:
         # derive building from first unit
@@ -318,7 +349,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
         building_id = str(building_id)
 
     else:
-        raise HTTPException(400, "Must provide event_id OR unit_id/unit_ids OR building_id.")
+        raise HTTPException(400, "Must provide event_id OR unit_ids OR building_id.")
 
     # -------------------------------------------------
     # Access Control
@@ -331,9 +362,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     # -------------------------------------------------
     doc_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids"}))
     
-    # Set legacy unit_id for backward compatibility (first unit if any)
     doc_data["building_id"] = str(building_id)
-    doc_data["unit_id"] = unit_ids[0] if unit_ids else None
     doc_data["event_id"] = str(event_id) if event_id else None
     doc_data["uploaded_by"] = str(current_user.id)
 
@@ -403,45 +432,42 @@ def update_document(document_id: str, payload: DocumentUpdate):
     unit_ids = None
     if payload.unit_ids is not None:
         unit_ids = [str(u) for u in payload.unit_ids]
-        validate_units_in_building(unit_ids, building_id)
-    elif payload.unit_id is not None:
-        # Backward compatibility: convert single unit_id to list
-        unit_ids = [str(payload.unit_id)]
-        validate_units_in_building(unit_ids, building_id)
+        if unit_ids:
+            validate_units_in_building(unit_ids, building_id)
     
     # Handle contractor_ids update
     contractor_ids = None
     if payload.contractor_ids is not None:
         contractor_ids = [str(c) for c in payload.contractor_ids]
+        if contractor_ids:
+            # Check for duplicates
+            if len(contractor_ids) != len(set(contractor_ids)):
+                raise HTTPException(400, "Duplicate contractor IDs are not allowed")
+            
+            # Validate contractors exist
+            client = get_supabase_client()
+            for cid in contractor_ids:
+                contractor_rows = (
+                    client.table("contractors")
+                    .select("id")
+                    .eq("id", cid)
+                    .execute()
+                ).data
+                if not contractor_rows:
+                    raise HTTPException(400, f"Contractor {cid} does not exist")
 
     # Prepare update data (exclude junction table fields)
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids"}))
 
-    # event_id changed → derive new building / unit
+    # event_id changed → derive new building
     if "event_id" in update_data and update_data["event_id"]:
-        building_id, unit_id = get_event_info(update_data["event_id"])
+        building_id, _ = get_event_info(update_data["event_id"])
         update_data["building_id"] = str(building_id)
-        update_data["unit_id"] = str(unit_id) if unit_id else None
-        # If unit_ids not provided, use event's unit
-        if unit_ids is None and unit_id:
-            unit_ids = [str(unit_id)]
-
-    # unit_id changed → derive new building
-    elif "unit_id" in update_data and update_data["unit_id"]:
-        building_id = get_unit_building(update_data["unit_id"])
-        update_data["building_id"] = str(building_id)
-        # If unit_ids not provided, use single unit_id
-        if unit_ids is None:
-            unit_ids = [str(update_data["unit_id"])]
 
     # building only changed → allow (rare)
     if "building_id" in update_data:
         update_data["building_id"] = str(update_data["building_id"])
         building_id = update_data["building_id"]
-    
-    # Set legacy unit_id for backward compatibility
-    if unit_ids:
-        update_data["unit_id"] = unit_ids[0]
 
     # Step 1 — Update
     try:
