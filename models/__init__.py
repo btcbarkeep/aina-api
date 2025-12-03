@@ -30,14 +30,8 @@ from .document import (
 )
 
 # -------------------------
-# Redaction Models
+# Redaction Models - REMOVED (replaced with manual redaction)
 # -------------------------
-from .redaction import (
-    RedactionRegion,
-    RedactionCreate,
-    RedactionRead,
-    RedactionUpdate,
-)
 
 # -------------------------
 # Event Comments
@@ -92,11 +86,7 @@ __all__ = [
     "DocumentRead",
     "DocumentUpdate",
 
-    # redaction
-    "RedactionRegion",
-    "RedactionCreate",
-    "RedactionRead",
-    "RedactionUpdate",
+    # redaction - REMOVED
 
     # event comments
     "EventCommentBase",
