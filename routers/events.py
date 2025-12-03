@@ -11,6 +11,14 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.logging_config import logger
+from core.permission_helpers import (
+    is_admin,
+    require_building_access,
+    require_units_access,
+    require_event_access,
+    get_user_accessible_unit_ids,
+    get_user_accessible_building_ids,
+)
 from models.event import EventCreate, EventUpdate, EventRead
 
 
@@ -449,6 +457,42 @@ def list_events(
     res = query.execute()
     events = res.data or []
     
+    # Apply permission-based filtering for non-admin users
+    if not is_admin(current_user):
+        accessible_unit_ids = get_user_accessible_unit_ids(current_user)
+        accessible_building_ids = get_user_accessible_building_ids(current_user)
+        
+        filtered_events = []
+        for event in events:
+            event_building_id = event.get("building_id")
+            
+            # AOAO roles: filter by building access
+            if current_user.role in ["aoao", "aoao_staff"]:
+                if accessible_building_ids is None or event_building_id in accessible_building_ids:
+                    filtered_events.append(event)
+                continue
+            
+            # Other roles: filter by unit access
+            # Get units for this event
+            event_units_result = (
+                client.table("event_units")
+                .select("unit_id")
+                .eq("event_id", event.get("id"))
+                .execute()
+            )
+            event_unit_ids = [row["unit_id"] for row in (event_units_result.data or [])]
+            
+            if not event_unit_ids:
+                # Event has no units, check building access
+                if accessible_building_ids is None or event_building_id in accessible_building_ids:
+                    filtered_events.append(event)
+            else:
+                # Check if user has access to any unit in the event
+                if accessible_unit_ids is None or any(uid in accessible_unit_ids for uid in event_unit_ids):
+                    filtered_events.append(event)
+        
+        events = filtered_events
+    
     # Enrich each event with units and contractors
     enriched_events = [enrich_event_with_relations(event) for event in events]
     
@@ -542,9 +586,16 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     auth_user_id = getattr(current_user, "auth_user_id", None) or str(current_user.id)
     event_data["created_by"] = auth_user_id
 
-    # Building access rules
-    if current_user.role not in ["admin", "super_admin"]:
-        verify_user_building_access(current_user.id, building_id)
+    # Permission checks: ensure user has access to building and all units
+    if not is_admin(current_user):
+        # Check building access
+        require_building_access(current_user, building_id)
+        
+        # Check unit access (if units provided)
+        if unit_ids:
+            # AOAO roles can create events for their building even without unit access
+            if current_user.role not in ["aoao", "aoao_staff"]:
+                require_units_access(current_user, unit_ids)
 
     # Insert event
     try:
@@ -597,13 +648,15 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     "/{event_id}",
     dependencies=[Depends(requires_permission("events:write"))],
 )
-def update_event(event_id: str, payload: EventUpdate):
+def update_event(event_id: str, payload: EventUpdate, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
 
+    # Permission check: ensure user has access to this event
+    require_event_access(current_user, event_id)
+    
     # Get building_id for validation
     building_id = get_event_building_id(event_id)
     
-    # Handle unit_ids update
     unit_ids = None
     if payload.unit_ids is not None:
         unit_ids = payload.unit_ids
@@ -644,6 +697,13 @@ def update_event(event_id: str, payload: EventUpdate):
             
             contractor_ids = normalized if normalized else None
 
+    # Permission check for unit_ids if being updated
+    if unit_ids is not None and unit_ids:
+        if not is_admin(current_user):
+            # AOAO roles can update events for their building even without unit access
+            if current_user.role not in ["aoao", "aoao_staff"]:
+                require_units_access(current_user, unit_ids)
+    
     # Prepare update data (exclude junction table fields)
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids"}))
     update_data = ensure_datetime_strings(update_data)
