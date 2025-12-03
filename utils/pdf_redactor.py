@@ -423,9 +423,9 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 end_pos = min(len(page_text), match_pos + len(search_text) + 60)
                 context_lower = page_text[start_pos:end_pos].lower()
                 
-                # For email and address patterns, always allow redaction if the pattern matched
-                # (since the pattern itself requires context like "Email:" or "Home Address:")
-                if pattern_type in ["owner_email", "address"]:
+                # For email, phone, address, credit card, and SSN patterns, always allow redaction if the pattern matched
+                # (since the pattern itself requires context like "Email:", "Phone:", "Home Address:", "Credit Card:", "Social Security:")
+                if pattern_type in ["owner_email", "owner_phone", "address", "credit_card", "ssn"]:
                     allow_redaction = True
                     logger.debug(f"Page {page_num + 1}: Pattern '{pattern_type}' matched with context, allowing redaction")
                 # FIRST: Check sensitive keywords (MUST come before owner-context check)
