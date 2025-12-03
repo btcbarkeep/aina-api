@@ -170,12 +170,18 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
         for match in compiled_pattern.finditer(text):
             matched_text = match.group()
             
+            # For redaction, we want to redact the entire match including the label
+            # So we'll add both the full match (with label) and the extracted data
+            
             # Extract the actual sensitive data from the match
             if pattern_type == "owner_name":
-                # Extract just the name part (after the keyword and colon/dash)
-                # The matched_text is like "Owner Name: Michael Andrew Thompson"
-                # We need to extract everything after the colon
-                # First, try to match the full pattern with capture group
+                # Redact the entire match including the label (e.g., "Owner Name: Michael Andrew Thompson")
+                # First add the full match to redact the label too
+                full_match = matched_text.strip()
+                if len(full_match) > 5:  # Make sure it's not too short
+                    matches.append((pattern_type, full_match))
+                
+                # Also extract just the name part as a fallback in case full match doesn't work
                 name_match = re.search(r"(?:Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]\s+([A-Za-z ,.'\-]+)", matched_text, re.IGNORECASE)
                 if name_match:
                     extracted_name = name_match.group(1).strip()
@@ -183,21 +189,9 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
                     # Filter out common label words that might have been captured
                     label_words = ["name", "owner", "owner name", "unit owner", "homeowner", "tenant", "contact"]
-                    if extracted_name.lower() in label_words:
-                        # Skip if we only extracted a label word
-                        pass
-                    # Only add if it looks like a name (has at least 2 words and is not just "Name")
-                    elif len(extracted_name.split()) >= 2 and extracted_name.lower() not in ["name", "owner name"]:
-                        matches.append((pattern_type, extracted_name))
-                else:
-                    # Fallback: try simple extraction after colon
-                    name_match = re.search(r":[:\-]\s+([A-Za-z ,.'\-]{5,})", matched_text, re.IGNORECASE)
-                    if name_match:
-                        extracted_name = name_match.group(1).strip()
-                        extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
-                        # Filter out label words
-                        label_words = ["name", "owner", "owner name", "unit owner", "homeowner", "tenant", "contact"]
-                        if extracted_name.lower() not in label_words and len(extracted_name.split()) >= 2:
+                    if extracted_name.lower() not in label_words and len(extracted_name.split()) >= 2:
+                        # Only add if it's different from the full match
+                        if extracted_name.lower() not in full_match.lower():
                             matches.append((pattern_type, extracted_name))
             elif pattern_type == "owner_email":
                 # Extract just the email part (after the keyword)
@@ -205,18 +199,29 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                 if email_match:
                     matches.append((pattern_type, email_match.group(1)))
             elif pattern_type == "owner_phone":
-                # Extract just the phone number part (after the keyword)
+                # Redact the entire match including the label (e.g., "Phone: (808) 555-8812")
+                full_match = matched_text.strip()
+                if len(full_match) > 5:
+                    matches.append((pattern_type, full_match))
+                
+                # Also extract just the phone number part as a fallback
                 phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", matched_text)
                 if phone_match:
-                    matches.append((pattern_type, phone_match.group(1)))
+                    phone = phone_match.group(1)
+                    if phone not in full_match or len(phone) < len(full_match) - 10:
+                        matches.append((pattern_type, phone))
             elif pattern_type == "ssn":
                 # Extract just the SSN part (XXX-XX-XXXX format)
                 ssn_match = re.search(r"(\d{3}[-.\s]?\d{2}[-.\s]?\d{4})", matched_text)
                 if ssn_match:
                     matches.append((pattern_type, ssn_match.group(1)))
             elif pattern_type == "credit_card":
-                # Extract just the credit card number part
-                # Match digits with optional spaces/dashes between them (13-19 digits total)
+                # Redact the entire match including the label (e.g., "Credit Card Number: 4539 4512 3256 2210")
+                full_match = matched_text.strip()
+                if len(full_match) > 5:
+                    matches.append((pattern_type, full_match))
+                
+                # Also extract just the credit card number part as a fallback
                 cc_match = re.search(r"([\d][\d\s-]{11,17}[\d])", matched_text)
                 if cc_match:
                     # Clean up the card number (normalize spaces)
@@ -224,10 +229,15 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     # Ensure we have at least 13 digits
                     digit_count = len(re.sub(r"[^\d]", "", cc_number))
                     if digit_count >= 13 and digit_count <= 19:
-                        matches.append((pattern_type, cc_number))
+                        if cc_number not in full_match or len(cc_number) < len(full_match) - 20:
+                            matches.append((pattern_type, cc_number))
             elif pattern_type == "address":
-                # Extract the address part (after the keyword and colon)
-                # More flexible - just get everything after "Home Address:" or "Address:"
+                # Redact the entire match including the label (e.g., "Home Address: 77-221 Hanu Street...")
+                full_match = matched_text.strip()
+                if len(full_match) > 5:
+                    matches.append((pattern_type, full_match))
+                
+                # Also extract just the address part as a fallback
                 addr_match = re.search(r"[:\-]?\s+(\d+[\s\w,.-]{5,80})", matched_text, re.IGNORECASE)
                 if addr_match:
                     addr = addr_match.group(1).strip()
@@ -238,7 +248,8 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                     label_words = ["address", "home address", "home addres"]
                     # Only add if it looks like an address (has at least a number and some text) and is not just a label
                     if len(addr) >= 5 and re.search(r'\d', addr) and addr.lower() not in label_words:
-                        matches.append((pattern_type, addr))
+                        if addr.lower() not in full_match.lower() or len(addr) < len(full_match) - 15:
+                            matches.append((pattern_type, addr))
                         
                         # Also add city/state/zip as separate match if present
                         # This helps catch cases where address is split across lines
@@ -457,20 +468,7 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 
                 logger.debug(f"Page {page_num + 1}: Redaction allowed for '{search_text}', proceeding with redaction")
                 
-                # Validate that search_text doesn't contain label words (safety check)
-                # Common label words that should never be redacted
-                label_words = ["name", "owner name", "address", "home address", "home addres", "social security", "ssn", "credit card", "credit", "phone", "email"]
-                search_lower = search_text.lower().strip()
-                
-                # Skip if search_text is just a label word or very short label-like text
-                if search_lower in label_words:
-                    logger.warning(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - appears to be a label word, not data")
-                    continue
-                
-                # Skip if search_text is very short (1-2 words) and contains a label word
-                if len(search_text.split()) <= 2 and any(label in search_lower for label in label_words):
-                    logger.warning(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - too short and contains label word")
-                    continue
+                # No longer filtering out labels - we want to redact everything including labels
                 
                 # Search for text instances on the page using multiple strategies
                 text_instances = []
@@ -479,86 +477,7 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 text_instances = page.search_for(search_text)
                 logger.debug(f"Page {page_num + 1}: Exact search for '{search_text}' found {len(text_instances)} instance(s)")
                 
-                # Filter out any instances that might be matching labels instead of data
-                # Check if the found text is part of a label (e.g., "Owner Name:" contains "Name")
-                if text_instances:
-                    filtered_instances = []
-                    label_keywords = ["owner name:", "name:", "home address:", "address:", "social security", "ssn:", "credit card", "credit:", "phone:", "email:"]
-                    
-                    for inst in text_instances:
-                        # Get the text around this instance to check context
-                        try:
-                            # Get a wider area around the instance to check for label keywords
-                            rect = fitz.Rect(inst)
-                            # Expand significantly to the left to catch labels
-                            context_rect = fitz.Rect(max(0, rect.x0 - 150), rect.y0 - 5, rect.x1 + 50, rect.y1 + 5)
-                            context_text = page.get_textbox(context_rect).lower()
-                            
-                            # Check if this instance is part of a label line
-                            # A label line would have the pattern: "Label: search_text" or "Label search_text"
-                            is_label_match = False
-                            
-                            # Find where our search text appears in the context
-                            search_lower = search_text.lower()
-                            search_pos = context_text.find(search_lower)
-                            
-                            if search_pos != -1:
-                                # Get text before our search text (this is where the label would be)
-                                text_before = context_text[:search_pos].strip()
-                                
-                            # Check if any label keyword appears right before our search text
-                            # BUT: Only skip if the search_text itself is part of the label (e.g., "Name" in "Owner Name:")
-                            # If search_text is clearly data (numbers, email, etc.), don't skip even if label is before it
-                            is_clearly_data = False
-                            
-                            # Check if search_text is clearly data (not a label word)
-                            if pattern_type in ["ssn", "credit_card", "owner_phone"]:
-                                # These are always data (numbers)
-                                is_clearly_data = True
-                            elif pattern_type == "owner_email":
-                                # Email addresses are always data
-                                is_clearly_data = True
-                            elif pattern_type == "owner_name":
-                                # Names should have multiple words and not be just "Name"
-                                if len(search_text.split()) >= 2 and search_text.lower() not in ["name", "owner name"]:
-                                    is_clearly_data = True
-                            elif pattern_type == "address":
-                                # Addresses should have numbers
-                                if re.search(r'\d', search_text):
-                                    is_clearly_data = True
-                            
-                            # Only check for label matches if it's not clearly data
-                            if not is_clearly_data:
-                                for label in label_keywords:
-                                    label_lower = label.lower()
-                                    # Check if label appears at the end of text_before (immediately before search text)
-                                    if text_before.endswith(label_lower) or text_before.endswith(label_lower.rstrip(':')):
-                                        # Label is immediately before - this is likely a label match
-                                        is_label_match = True
-                                        logger.info(f"Page {page_num + 1}: Skipping instance - '{search_text}' appears right after label '{label}'")
-                                        break
-                                    
-                                    # Also check if label appears very close before (within 5 chars)
-                                    label_pos = text_before.rfind(label_lower)
-                                    if label_pos != -1 and (len(text_before) - label_pos) <= len(label_lower) + 5:
-                                        is_label_match = True
-                                        logger.info(f"Page {page_num + 1}: Skipping instance - '{search_text}' appears close after label '{label}'")
-                                        break
-                            else:
-                                # It's clearly data, so even if there's a label before it, that's fine - it's the data after the label
-                                logger.debug(f"Page {page_num + 1}: '{search_text}' is clearly data, allowing redaction even if label is present")
-                            
-                            if not is_label_match:
-                                filtered_instances.append(inst)
-                            else:
-                                logger.debug(f"Page {page_num + 1}: Filtered out label match for '{search_text}'")
-                        except Exception as e:
-                            # If we can't check context, be conservative and skip it
-                            logger.warning(f"Page {page_num + 1}: Could not check context for instance, skipping to avoid redacting label: {e}")
-                            # Don't add to filtered_instances - skip it to be safe
-                    
-                    text_instances = filtered_instances
-                    logger.debug(f"Page {page_num + 1}: After filtering labels, {len(text_instances)} instance(s) remain")
+                # No longer filtering out labels - we want to redact everything including labels
                 
                 # Strategy 2: Try without special characters (normalize)
                 if not text_instances:
@@ -720,67 +639,12 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 if text_instances:
                     for inst in text_instances:
                         try:
-                            # Double-check that this instance is not part of a label before redacting
-                            rect = fitz.Rect(inst)
-                            # Get text in a wider area to check for labels
-                            check_rect = fitz.Rect(max(0, rect.x0 - 200), rect.y0 - 2, rect.x1 + 50, rect.y1 + 2)
-                            check_text = page.get_textbox(check_rect).lower()
-                            
-                            # Check if this appears to be part of a label
-                            # BUT: Only skip if search_text is actually part of the label, not the data after it
-                            is_clearly_data = False
-                            
-                            # Check if search_text is clearly data (not a label word)
-                            if pattern_type in ["ssn", "credit_card", "owner_phone"]:
-                                # These are always data (numbers)
-                                is_clearly_data = True
-                            elif pattern_type == "owner_email":
-                                # Email addresses are always data
-                                is_clearly_data = True
-                            elif pattern_type == "owner_name":
-                                # Names should have multiple words and not be just "Name"
-                                if len(search_text.split()) >= 2 and search_text.lower() not in ["name", "owner name"]:
-                                    is_clearly_data = True
-                            elif pattern_type == "address":
-                                # Addresses should have numbers
-                                if re.search(r'\d', search_text):
-                                    is_clearly_data = True
-                            
-                            is_label = False
-                            # Only check for label patterns if it's not clearly data
-                            if not is_clearly_data:
-                                label_patterns = [
-                                    r"owner\s+name\s*:",
-                                    r"home\s+address\s*:",
-                                    r"social\s+security\s+(?:number|num)\s*:?",
-                                    r"ssn\s*:",
-                                    r"credit\s+(?:card\s+)?(?:number|num)\s*:?",
-                                    r"phone\s*:",
-                                    r"email\s*:"
-                                ]
-                                
-                                search_lower = search_text.lower()
-                                search_pos = check_text.find(search_lower)
-                                
-                                if search_pos != -1:
-                                    text_before = check_text[:search_pos].strip()
-                                    for pattern in label_patterns:
-                                        if re.search(pattern + r"\s*$", text_before):
-                                            is_label = True
-                                            logger.info(f"Page {page_num + 1}: Skipping redaction - '{search_text}' appears after label pattern '{pattern}'")
-                                            break
-                            else:
-                                # It's clearly data, so even if there's a label before it, that's fine
-                                logger.debug(f"Page {page_num + 1}: '{search_text}' is clearly data, allowing redaction")
-                            
-                            if not is_label:
-                                # Create redaction annotation with solid black fill
-                                redaction = page.add_redact_annot(inst, fill=(0, 0, 0))  # Black fill
-                                page_redactions += 1
-                                total_redactions += 1
-                                logger.info(f"Page {page_num + 1}: Added redaction for '{search_text}' at {inst}")
-                            else:
-                                logger.debug(f"Page {page_num + 1}: Skipped redaction for '{search_text}' - detected as label")
+                            # Create redaction annotation with solid black fill
+                            # No longer checking for labels - we want to redact everything including labels
+                            redaction = page.add_redact_annot(inst, fill=(0, 0, 0))  # Black fill
+                            page_redactions += 1
+                            total_redactions += 1
+                            logger.info(f"Page {page_num + 1}: Added redaction for '{search_text}' at {inst}")
                         except Exception as e:
                             logger.warning(f"Page {page_num + 1}: Failed to add redaction annotation: {e}")
                 else:
