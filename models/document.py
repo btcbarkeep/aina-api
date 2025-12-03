@@ -59,7 +59,7 @@ class DocumentBase(BaseModel):
 
     # Redaction and visibility controls
     is_redacted: Optional[bool] = Field(False, description="Whether the document has been redacted")
-    is_public: Optional[bool] = Field(False, description="Whether the document is publicly accessible (false = private)")
+    is_public: Optional[bool] = Field(True, description="Whether the document is publicly accessible (true = public, false = private)")
 
     # -----------------------------
     # Validators
