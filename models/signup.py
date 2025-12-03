@@ -8,7 +8,7 @@ from datetime import datetime
 # Must match real RBAC roles from your system.
 # --------------------------------------------------------------------
 SignupAllowedRoles = Literal[
-    "hoa",
+    "aoao",
     "property_manager",
     "owner",
     "contractor",
@@ -30,7 +30,7 @@ class SignupRequestCreate(BaseModel):
     phone: Optional[str] = None
     organization_name: Optional[str] = None
 
-    requester_role: SignupAllowedRoles = "hoa"
+    requester_role: SignupAllowedRoles = "aoao"
     notes: Optional[str] = None
 
 
@@ -46,7 +46,7 @@ class SignupRequest(BaseModel):
     phone: Optional[str] = None
     organization_name: Optional[str] = None
 
-    requester_role: str = "hoa"
+    requester_role: str = "aoao"
     notes: Optional[str] = None
 
     # System populated
