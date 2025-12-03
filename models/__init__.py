@@ -20,6 +20,16 @@ from .event import (
 )
 
 # -------------------------
+# Enums
+# -------------------------
+from .enums import (
+    EventType as EventTypeEnum,
+    EventSeverity,
+    EventStatus,
+    ContractorRole,
+)
+
+# -------------------------
 # Document Models
 # -------------------------
 from .document import (
@@ -79,6 +89,11 @@ __all__ = [
     "EventCreate",
     "EventRead",
     "EventUpdate",
+    
+    # enums
+    "EventSeverity",
+    "EventStatus",
+    "ContractorRole",
 
     # documents
     "DocumentBase",
