@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
@@ -308,26 +308,142 @@ def enrich_event_with_relations(event: dict) -> dict:
 
 
 # -----------------------------------------------------
-# LIST EVENTS (with NEW unit filtering)
+# Helper — Apply event filters
+# -----------------------------------------------------
+def apply_event_filters(query, params: dict):
+    """Apply filtering to events query based on provided parameters."""
+    client = get_supabase_client()
+    
+    # building_id filter
+    if params.get("building_id"):
+        query = query.eq("building_id", params["building_id"])
+    
+    # category filter
+    if params.get("category"):
+        query = query.eq("category_id", params["category"])
+    
+    # status filter
+    if params.get("status"):
+        query = query.eq("status", params["status"])
+    
+    # severity filter
+    if params.get("severity"):
+        query = query.eq("severity", params["severity"])
+    
+    # date range filters
+    if params.get("start_date"):
+        query = query.gte("occurred_at", params["start_date"])
+    if params.get("end_date"):
+        query = query.lte("occurred_at", params["end_date"])
+    
+    # unit_id filter (via event_units junction table)
+    if params.get("unit_id"):
+        # Get event IDs that have this unit
+        event_units_result = (
+            client.table("event_units")
+            .select("event_id")
+            .eq("unit_id", params["unit_id"])
+            .execute()
+        )
+        event_ids = [row["event_id"] for row in (event_units_result.data or [])]
+        if event_ids:
+            query = query.in_("id", event_ids)
+        else:
+            # No events match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # unit_ids filter (via event_units junction table)
+    if params.get("unit_ids"):
+        unit_ids = params["unit_ids"]
+        if unit_ids:
+            # Get event IDs that have ANY of these units
+            event_units_result = (
+                client.table("event_units")
+                .select("event_id")
+                .in_("unit_id", unit_ids)
+                .execute()
+            )
+            event_ids = list(set([row["event_id"] for row in (event_units_result.data or [])]))
+            if event_ids:
+                query = query.in_("id", event_ids)
+            else:
+                # No events match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # contractor_id filter (via event_contractors junction table)
+    if params.get("contractor_id"):
+        # Get event IDs that have this contractor
+        event_contractors_result = (
+            client.table("event_contractors")
+            .select("event_id")
+            .eq("contractor_id", params["contractor_id"])
+            .execute()
+        )
+        event_ids = [row["event_id"] for row in (event_contractors_result.data or [])]
+        if event_ids:
+            query = query.in_("id", event_ids)
+        else:
+            # No events match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # contractor_ids filter (via event_contractors junction table)
+    if params.get("contractor_ids"):
+        contractor_ids = params["contractor_ids"]
+        if contractor_ids:
+            # Get event IDs that have ANY of these contractors
+            event_contractors_result = (
+                client.table("event_contractors")
+                .select("event_id")
+                .in_("contractor_id", contractor_ids)
+                .execute()
+            )
+            event_ids = list(set([row["event_id"] for row in (event_contractors_result.data or [])]))
+            if event_ids:
+                query = query.in_("id", event_ids)
+            else:
+                # No events match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    return query
+
+
+# -----------------------------------------------------
+# LIST EVENTS (with comprehensive filtering)
 # -----------------------------------------------------
 @router.get("", summary="List Events", response_model=List[EventRead])
 def list_events(
-    limit: int = 200,
-    building_id: Optional[str] = None,
-    unit_id: Optional[str] = None,
+    limit: int = Query(200, description="Maximum number of events to return"),
+    building_id: Optional[str] = Query(None, description="Filter by building ID"),
+    unit_id: Optional[str] = Query(None, description="Filter by single unit ID"),
+    unit_ids: Optional[List[str]] = Query([], description="Filter by list of unit IDs"),
+    contractor_id: Optional[str] = Query(None, description="Filter by single contractor ID"),
+    contractor_ids: Optional[List[str]] = Query([], description="Filter by list of contractor IDs"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    severity: Optional[str] = Query(None, description="Filter by severity"),
+    start_date: Optional[datetime] = Query(None, description="Filter events from this date (ISO datetime)"),
+    end_date: Optional[datetime] = Query(None, description="Filter events until this date (ISO datetime)"),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
     query = client.table("events").select("*")
-
-    if building_id:
-        query = query.eq("building_id", building_id)
     
-    # Note: unit_id filtering is now done via event_units junction table
-    # For now, we'll filter in memory after fetching (or use a join query)
-    # TODO: Implement proper junction table filtering if needed
-
+    # Apply filters
+    filter_params = {
+        "building_id": building_id,
+        "unit_id": unit_id,
+        "unit_ids": unit_ids if unit_ids else None,
+        "contractor_id": contractor_id,
+        "contractor_ids": contractor_ids if contractor_ids else None,
+        "category": category,
+        "status": status,
+        "severity": severity,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+    }
+    
+    query = apply_event_filters(query, filter_params)
     query = query.order("created_at", desc=True).limit(limit)
 
     res = query.execute()
