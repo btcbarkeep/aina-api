@@ -110,16 +110,21 @@ def validate_unit_in_building(unit_id: str, building_id: str):
         return
 
     client = get_supabase_client()
-    rows = (
+    
+    # First check if unit exists
+    unit_rows = (
         client.table("units")
-        .select("id")
+        .select("id, building_id")
         .eq("id", unit_id)
-        .eq("building_id", building_id)
         .execute()
     ).data
-
-    if not rows:
-        raise HTTPException(400, "Unit does not belong to this building.")
+    
+    if not unit_rows:
+        raise HTTPException(400, f"Unit {unit_id} does not exist")
+    
+    unit_building_id = unit_rows[0]["building_id"]
+    if unit_building_id != building_id:
+        raise HTTPException(400, f"Unit {unit_id} does not belong to the specified building")
 
 
 # -----------------------------------------------------
@@ -128,6 +133,10 @@ def validate_unit_in_building(unit_id: str, building_id: str):
 def validate_units_in_building(unit_ids: List[str], building_id: str):
     if not unit_ids:
         return
+    
+    # Check for duplicates
+    if len(unit_ids) != len(set(unit_ids)):
+        raise HTTPException(400, "Duplicate unit IDs are not allowed")
     
     client = get_supabase_client()
     for unit_id in unit_ids:
@@ -201,6 +210,71 @@ def update_event_contractors(event_id: str, contractor_ids: List[str]):
 
 
 # -----------------------------------------------------
+# NEW — Fetch units for an event
+# -----------------------------------------------------
+def get_event_units(event_id: str) -> list:
+    client = get_supabase_client()
+    
+    # Join event_units with units table
+    result = (
+        client.table("event_units")
+        .select("unit_id, units(*)")
+        .eq("event_id", event_id)
+        .execute()
+    )
+    
+    units = []
+    if result.data:
+        for row in result.data:
+            if row.get("units"):
+                units.append(row["units"])
+    
+    return units
+
+
+# -----------------------------------------------------
+# NEW — Fetch contractors for an event
+# -----------------------------------------------------
+def get_event_contractors(event_id: str) -> list:
+    client = get_supabase_client()
+    
+    # Join event_contractors with contractors table
+    result = (
+        client.table("event_contractors")
+        .select("contractor_id, contractors(*)")
+        .eq("event_id", event_id)
+        .execute()
+    )
+    
+    contractors = []
+    if result.data:
+        for row in result.data:
+            if row.get("contractors"):
+                contractors.append(row["contractors"])
+    
+    return contractors
+
+
+# -----------------------------------------------------
+# NEW — Enrich event with units and contractors
+# -----------------------------------------------------
+def enrich_event_with_relations(event: dict) -> dict:
+    """Add units and contractors arrays to event dict"""
+    event_id = event.get("id")
+    if not event_id:
+        return event
+    
+    event["units"] = get_event_units(event_id)
+    event["contractors"] = get_event_contractors(event_id)
+    
+    # Also add unit_ids and contractor_ids for convenience
+    event["unit_ids"] = [u["id"] for u in event["units"]]
+    event["contractor_ids"] = [c["id"] for c in event["contractors"]]
+    
+    return event
+
+
+# -----------------------------------------------------
 # LIST EVENTS (with NEW unit filtering)
 # -----------------------------------------------------
 @router.get("", summary="List Events", response_model=List[EventRead])
@@ -216,10 +290,10 @@ def list_events(
 
     if building_id:
         query = query.eq("building_id", building_id)
-    if unit_id:
-        # Support filtering by unit_id (legacy) or through event_units junction table
-        # For now, check both legacy unit_id and junction table
-        query = query.eq("unit_id", unit_id)
+    
+    # Note: unit_id filtering is now done via event_units junction table
+    # For now, we'll filter in memory after fetching (or use a join query)
+    # TODO: Implement proper junction table filtering if needed
 
     query = query.order("created_at", desc=True).limit(limit)
 
@@ -245,14 +319,67 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     building_id = payload.building_id
     
-    # Handle multiple units: prefer unit_ids over unit_id for backward compatibility
-    unit_ids = payload.unit_ids if payload.unit_ids else ([payload.unit_id] if payload.unit_id else [])
+    # Validate building_id is not None (required by schema)
+    if not building_id:
+        raise HTTPException(400, "building_id is required and cannot be null")
     
-    # Validate all units belong to building
-    validate_units_in_building(unit_ids, building_id)
-
-    # Handle multiple contractors: prefer contractor_ids over contractor_id
-    contractor_ids = payload.contractor_ids if payload.contractor_ids else ([payload.contractor_id] if payload.contractor_id else [])
+    # Validate building exists
+    building_rows = (
+        client.table("buildings")
+        .select("id")
+        .eq("id", building_id)
+        .execute()
+    ).data
+    if not building_rows:
+        raise HTTPException(400, f"Building {building_id} does not exist")
+    
+    # Get unit_ids and contractor_ids from payload
+    unit_ids = payload.unit_ids or []
+    contractor_ids = payload.contractor_ids or []
+    
+    # Validate: all units must belong to the same building
+    if unit_ids:
+        validate_units_in_building(unit_ids, building_id)
+        # Remove duplicates
+        unit_ids = list(dict.fromkeys(unit_ids))  # Preserves order while removing duplicates
+    
+    # Validate: all contractors must exist
+    if contractor_ids:
+        # Check for duplicates
+        if len(contractor_ids) != len(set(contractor_ids)):
+            raise HTTPException(400, "Duplicate contractor IDs are not allowed")
+        
+        normalized_contractor_ids = []
+        for cid in contractor_ids:
+            normalized = normalize_contractor_id(cid)
+            if normalized:
+                normalized_contractor_ids.append(normalized)
+            else:
+                raise HTTPException(400, f"Contractor {cid} does not exist or is invalid")
+        
+        # Verify contractors exist in database
+        client = get_supabase_client()
+        for cid in normalized_contractor_ids:
+            contractor_rows = (
+                client.table("contractors")
+                .select("id")
+                .eq("id", cid)
+                .execute()
+            ).data
+            if not contractor_rows:
+                raise HTTPException(400, f"Contractor {cid} does not exist")
+        
+        contractor_ids = normalized_contractor_ids
+    
+    # contractor role assignment logic
+    # If user is contractor and no contractor_ids provided, add their contractor_id
+    if current_user.role == "contractor":
+        if not getattr(current_user, "contractor_id", None):
+            raise HTTPException(400, "Contractor account missing contractor_id")
+        # Add contractor's own ID if not already in list
+        contractor_id_str = str(current_user.contractor_id)
+        if contractor_id_str not in contractor_ids:
+            contractor_ids.append(contractor_id_str)
 
     # JSON-safe payload (remove unit_ids and contractor_ids from event_data - they go to junction tables)
     event_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids"}))
@@ -265,31 +392,6 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     # -----------------------------------------------------
     auth_user_id = getattr(current_user, "auth_user_id", None) or str(current_user.id)
     event_data["created_by"] = auth_user_id
-
-
-    # contractor role assignment logic
-    # If user is contractor and no contractor_ids provided, add their contractor_id
-    if current_user.role == "contractor":
-        if not getattr(current_user, "contractor_id", None):
-            raise HTTPException(400, "Contractor account missing contractor_id")
-        # Add contractor's own ID if not already in list
-        contractor_id_str = str(current_user.contractor_id)
-        if contractor_id_str not in contractor_ids:
-            contractor_ids.append(contractor_id_str)
-    else:
-        # Normalize contractor_ids
-        normalized_contractor_ids = []
-        for cid in contractor_ids:
-            normalized = normalize_contractor_id(cid)
-            if normalized:
-                normalized_contractor_ids.append(normalized)
-        contractor_ids = normalized_contractor_ids
-    
-    # Set legacy contractor_id for backward compatibility (first contractor if any)
-    if contractor_ids:
-        event_data["contractor_id"] = contractor_ids[0]
-    else:
-        event_data["contractor_id"] = None
 
     # Building access rules
     if current_user.role not in ["admin", "super_admin"]:
@@ -356,38 +458,47 @@ def update_event(event_id: str, payload: EventUpdate):
     unit_ids = None
     if payload.unit_ids is not None:
         unit_ids = payload.unit_ids
-        validate_units_in_building(unit_ids, building_id)
-    elif payload.unit_id is not None:
-        # Backward compatibility: convert single unit_id to list
-        unit_ids = [payload.unit_id]
-        validate_units_in_building(unit_ids, building_id)
+        if unit_ids:
+            validate_units_in_building(unit_ids, building_id)
+            # Remove duplicates
+            unit_ids = list(dict.fromkeys(unit_ids))
     
     # Handle contractor_ids update
     contractor_ids = None
     if payload.contractor_ids is not None:
         contractor_ids = payload.contractor_ids
-        # Normalize contractor IDs
-        normalized = []
-        for cid in contractor_ids:
-            normalized_cid = normalize_contractor_id(cid)
-            if normalized_cid:
-                normalized.append(normalized_cid)
-        contractor_ids = normalized if normalized else None
-    elif payload.contractor_id is not None:
-        # Backward compatibility: convert single contractor_id to list
-        normalized_cid = normalize_contractor_id(payload.contractor_id)
-        contractor_ids = [normalized_cid] if normalized_cid else None
+        if contractor_ids:
+            # Check for duplicates
+            if len(contractor_ids) != len(set(contractor_ids)):
+                raise HTTPException(400, "Duplicate contractor IDs are not allowed")
+            
+            # Normalize and validate contractor IDs
+            normalized = []
+            for cid in contractor_ids:
+                normalized_cid = normalize_contractor_id(cid)
+                if normalized_cid:
+                    normalized.append(normalized_cid)
+                else:
+                    raise HTTPException(400, f"Contractor {cid} does not exist or is invalid")
+            
+            # Verify contractors exist in database
+            client = get_supabase_client()
+            for cid in normalized:
+                contractor_rows = (
+                    client.table("contractors")
+                    .select("id")
+                    .eq("id", cid)
+                    .execute()
+                ).data
+                if not contractor_rows:
+                    raise HTTPException(400, f"Contractor {cid} does not exist")
+            
+            contractor_ids = normalized if normalized else None
 
     # Prepare update data (exclude junction table fields)
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids"}))
     update_data = ensure_datetime_strings(update_data)
     update_data = ensure_uuid_strings(update_data)
-    
-    # Set legacy contractor_id for backward compatibility
-    if contractor_ids:
-        update_data["contractor_id"] = contractor_ids[0]
-    elif "contractor_id" in update_data:
-        update_data["contractor_id"] = normalize_contractor_id(update_data.get("contractor_id"))
 
     # Update
     res = client.table("events").update(update_data).eq("id", event_id).execute()
