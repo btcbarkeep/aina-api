@@ -16,7 +16,7 @@ router = APIRouter(
     tags=["Units"],
 )
 
-FULL_ACCESS_ROLES = ["admin", "super_admin", "hoa"]
+FULL_ACCESS_ROLES = ["admin", "super_admin", "aoao"]
 
 
 # -------------------------------------------------------------
