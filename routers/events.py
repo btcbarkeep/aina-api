@@ -123,6 +123,84 @@ def validate_unit_in_building(unit_id: str, building_id: str):
 
 
 # -----------------------------------------------------
+# NEW — Validate multiple units belong to building
+# -----------------------------------------------------
+def validate_units_in_building(unit_ids: List[str], building_id: str):
+    if not unit_ids:
+        return
+    
+    client = get_supabase_client()
+    for unit_id in unit_ids:
+        validate_unit_in_building(unit_id, building_id)
+
+
+# -----------------------------------------------------
+# NEW — Create event_units junction table entries
+# -----------------------------------------------------
+def create_event_units(event_id: str, unit_ids: List[str]):
+    if not unit_ids:
+        return
+    
+    client = get_supabase_client()
+    for unit_id in unit_ids:
+        try:
+            client.table("event_units").insert({
+                "event_id": event_id,
+                "unit_id": unit_id
+            }).execute()
+        except Exception as e:
+            # Ignore duplicate key errors (unique constraint)
+            if "duplicate" not in str(e).lower():
+                logger.warning(f"Failed to create event_unit relationship: {e}")
+
+
+# -----------------------------------------------------
+# NEW — Create event_contractors junction table entries
+# -----------------------------------------------------
+def create_event_contractors(event_id: str, contractor_ids: List[str]):
+    if not contractor_ids:
+        return
+    
+    client = get_supabase_client()
+    for contractor_id in contractor_ids:
+        try:
+            client.table("event_contractors").insert({
+                "event_id": event_id,
+                "contractor_id": contractor_id
+            }).execute()
+        except Exception as e:
+            # Ignore duplicate key errors (unique constraint)
+            if "duplicate" not in str(e).lower():
+                logger.warning(f"Failed to create event_contractor relationship: {e}")
+
+
+# -----------------------------------------------------
+# NEW — Update event_units junction table (replace all)
+# -----------------------------------------------------
+def update_event_units(event_id: str, unit_ids: List[str]):
+    client = get_supabase_client()
+    
+    # Delete existing relationships
+    client.table("event_units").delete().eq("event_id", event_id).execute()
+    
+    # Create new relationships
+    create_event_units(event_id, unit_ids)
+
+
+# -----------------------------------------------------
+# NEW — Update event_contractors junction table (replace all)
+# -----------------------------------------------------
+def update_event_contractors(event_id: str, contractor_ids: List[str]):
+    client = get_supabase_client()
+    
+    # Delete existing relationships
+    client.table("event_contractors").delete().eq("event_id", event_id).execute()
+    
+    # Create new relationships
+    create_event_contractors(event_id, contractor_ids)
+
+
+# -----------------------------------------------------
 # LIST EVENTS (with NEW unit filtering)
 # -----------------------------------------------------
 @router.get("", summary="List Events", response_model=List[EventRead])
@@ -139,12 +217,19 @@ def list_events(
     if building_id:
         query = query.eq("building_id", building_id)
     if unit_id:
+        # Support filtering by unit_id (legacy) or through event_units junction table
+        # For now, check both legacy unit_id and junction table
         query = query.eq("unit_id", unit_id)
 
     query = query.order("created_at", desc=True).limit(limit)
 
     res = query.execute()
-    return res.data or []
+    events = res.data or []
+    
+    # Enrich each event with units and contractors
+    enriched_events = [enrich_event_with_relations(event) for event in events]
+    
+    return enriched_events
 
 
 # -----------------------------------------------------
@@ -159,13 +244,18 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     client = get_supabase_client()
 
     building_id = payload.building_id
-    unit_id = payload.unit_id
+    
+    # Handle multiple units: prefer unit_ids over unit_id for backward compatibility
+    unit_ids = payload.unit_ids if payload.unit_ids else ([payload.unit_id] if payload.unit_id else [])
+    
+    # Validate all units belong to building
+    validate_units_in_building(unit_ids, building_id)
 
-    # Validate building/unit match
-    validate_unit_in_building(unit_id, building_id)
+    # Handle multiple contractors: prefer contractor_ids over contractor_id
+    contractor_ids = payload.contractor_ids if payload.contractor_ids else ([payload.contractor_id] if payload.contractor_id else [])
 
-    # JSON-safe payload
-    event_data = sanitize(payload.model_dump())
+    # JSON-safe payload (remove unit_ids and contractor_ids from event_data - they go to junction tables)
+    event_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids"}))
     event_data = ensure_datetime_strings(event_data)
     event_data = ensure_uuid_strings(event_data)
 
@@ -178,14 +268,28 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
 
     # contractor role assignment logic
+    # If user is contractor and no contractor_ids provided, add their contractor_id
     if current_user.role == "contractor":
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id")
-        event_data["contractor_id"] = str(current_user.contractor_id)
-
+        # Add contractor's own ID if not already in list
+        contractor_id_str = str(current_user.contractor_id)
+        if contractor_id_str not in contractor_ids:
+            contractor_ids.append(contractor_id_str)
     else:
-        cid = normalize_contractor_id(event_data.get("contractor_id"))
-        event_data["contractor_id"] = cid
+        # Normalize contractor_ids
+        normalized_contractor_ids = []
+        for cid in contractor_ids:
+            normalized = normalize_contractor_id(cid)
+            if normalized:
+                normalized_contractor_ids.append(normalized)
+        contractor_ids = normalized_contractor_ids
+    
+    # Set legacy contractor_id for backward compatibility (first contractor if any)
+    if contractor_ids:
+        event_data["contractor_id"] = contractor_ids[0]
+    else:
+        event_data["contractor_id"] = None
 
     # Building access rules
     if current_user.role not in ["admin", "super_admin"]:
@@ -199,12 +303,23 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
         event_id = res.data[0]["id"]
 
-        # Fetch created event
+        # Create junction table entries for units
+        create_event_units(event_id, unit_ids)
+        
+        # Create junction table entries for contractors
+        create_event_contractors(event_id, contractor_ids)
+
+        # Fetch created event with related units and contractors
         fetch = client.table("events").select("*").eq("id", event_id).execute()
         if not fetch.data:
             raise HTTPException(500, "Created event not found")
 
-        return fetch.data[0]
+        event = fetch.data[0]
+        
+        # Enrich with units and contractors
+        event = enrich_event_with_relations(event)
+
+        return event
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
@@ -234,31 +349,69 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 def update_event(event_id: str, payload: EventUpdate):
     client = get_supabase_client()
 
-    update_data = sanitize(payload.model_dump(exclude_unset=True))
+    # Get building_id for validation
+    building_id = get_event_building_id(event_id)
+    
+    # Handle unit_ids update
+    unit_ids = None
+    if payload.unit_ids is not None:
+        unit_ids = payload.unit_ids
+        validate_units_in_building(unit_ids, building_id)
+    elif payload.unit_id is not None:
+        # Backward compatibility: convert single unit_id to list
+        unit_ids = [payload.unit_id]
+        validate_units_in_building(unit_ids, building_id)
+    
+    # Handle contractor_ids update
+    contractor_ids = None
+    if payload.contractor_ids is not None:
+        contractor_ids = payload.contractor_ids
+        # Normalize contractor IDs
+        normalized = []
+        for cid in contractor_ids:
+            normalized_cid = normalize_contractor_id(cid)
+            if normalized_cid:
+                normalized.append(normalized_cid)
+        contractor_ids = normalized if normalized else None
+    elif payload.contractor_id is not None:
+        # Backward compatibility: convert single contractor_id to list
+        normalized_cid = normalize_contractor_id(payload.contractor_id)
+        contractor_ids = [normalized_cid] if normalized_cid else None
+
+    # Prepare update data (exclude junction table fields)
+    update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids"}))
     update_data = ensure_datetime_strings(update_data)
     update_data = ensure_uuid_strings(update_data)
-
-    # If unit is being changed, validate it matches building
-    if "unit_id" in update_data:
-        # Need existing event to know its building
-        building_id = get_event_building_id(event_id)
-        validate_unit_in_building(update_data["unit_id"], building_id)
-
-    # Normalize contractor_id
-    if "contractor_id" in update_data:
-        update_data["contractor_id"] = normalize_contractor_id(update_data["contractor_id"])
+    
+    # Set legacy contractor_id for backward compatibility
+    if contractor_ids:
+        update_data["contractor_id"] = contractor_ids[0]
+    elif "contractor_id" in update_data:
+        update_data["contractor_id"] = normalize_contractor_id(update_data.get("contractor_id"))
 
     # Update
     res = client.table("events").update(update_data).eq("id", event_id).execute()
     if not res.data:
         raise HTTPException(404, "Event not found")
 
+    # Update junction tables if provided
+    if unit_ids is not None:
+        update_event_units(event_id, unit_ids)
+    
+    if contractor_ids is not None:
+        update_event_contractors(event_id, contractor_ids)
+
     # Fetch updated
     fetch = client.table("events").select("*").eq("id", event_id).execute()
     if not fetch.data:
         raise HTTPException(500, "Updated event not found")
 
-    return fetch.data[0]
+    event = fetch.data[0]
+    
+    # Enrich with units and contractors
+    event = enrich_event_with_relations(event)
+
+    return event
 
 
 # -----------------------------------------------------
