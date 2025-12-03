@@ -695,11 +695,43 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 if text_instances:
                     for inst in text_instances:
                         try:
-                            # Create redaction annotation with solid black fill
-                            redaction = page.add_redact_annot(inst, fill=(0, 0, 0))  # Black fill
-                            page_redactions += 1
-                            total_redactions += 1
-                            logger.info(f"Page {page_num + 1}: Added redaction for '{search_text}' at {inst}")
+                            # Double-check that this instance is not part of a label before redacting
+                            rect = fitz.Rect(inst)
+                            # Get text in a wider area to check for labels
+                            check_rect = fitz.Rect(max(0, rect.x0 - 200), rect.y0 - 2, rect.x1 + 50, rect.y1 + 2)
+                            check_text = page.get_textbox(check_rect).lower()
+                            
+                            # Check if this appears to be part of a label
+                            label_patterns = [
+                                r"owner\s+name\s*:",
+                                r"home\s+address\s*:",
+                                r"social\s+security\s+(?:number|num)\s*:?",
+                                r"ssn\s*:",
+                                r"credit\s+(?:card\s+)?(?:number|num)\s*:?",
+                                r"phone\s*:",
+                                r"email\s*:"
+                            ]
+                            
+                            is_label = False
+                            search_lower = search_text.lower()
+                            search_pos = check_text.find(search_lower)
+                            
+                            if search_pos != -1:
+                                text_before = check_text[:search_pos].strip()
+                                for pattern in label_patterns:
+                                    if re.search(pattern + r"\s*$", text_before):
+                                        is_label = True
+                                        logger.info(f"Page {page_num + 1}: Skipping redaction - '{search_text}' appears after label pattern '{pattern}'")
+                                        break
+                            
+                            if not is_label:
+                                # Create redaction annotation with solid black fill
+                                redaction = page.add_redact_annot(inst, fill=(0, 0, 0))  # Black fill
+                                page_redactions += 1
+                                total_redactions += 1
+                                logger.info(f"Page {page_num + 1}: Added redaction for '{search_text}' at {inst}")
+                            else:
+                                logger.debug(f"Page {page_num + 1}: Skipped redaction for '{search_text}' - detected as label")
                         except Exception as e:
                             logger.warning(f"Page {page_num + 1}: Failed to add redaction annotation: {e}")
                 else:
