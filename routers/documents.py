@@ -504,7 +504,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     # -------------------------------------------------
     # Access Control
     # -------------------------------------------------
-    if current_user.role not in ["admin", "super_admin", "hoa"]:
+    if current_user.role not in ["admin", "super_admin", "aoao"]:
         verify_user_building_access(current_user.id, building_id)
 
     # -------------------------------------------------
