@@ -163,7 +163,7 @@ def approve_request(
         raise HTTPException(400, "Request already processed")
 
     email = req["email"].strip().lower()
-    requested_role = req.get("requester_role") or "hoa"
+    requested_role = req.get("requester_role") or "aoao"
 
     validate_role_assignment(requested_role, current_user)
 
