@@ -11,6 +11,14 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.permission_helpers import (
+    is_admin,
+    require_building_access,
+    require_units_access,
+    require_document_access,
+    get_user_accessible_unit_ids,
+    get_user_accessible_building_ids,
+)
 from models.document import (
     DocumentCreate,
     DocumentUpdate,
@@ -421,6 +429,42 @@ def list_documents(
     res = query.execute()
     documents = res.data or []
     
+    # Apply permission-based filtering for non-admin users
+    if not is_admin(current_user):
+        accessible_unit_ids = get_user_accessible_unit_ids(current_user)
+        accessible_building_ids = get_user_accessible_building_ids(current_user)
+        
+        filtered_documents = []
+        for document in documents:
+            document_building_id = document.get("building_id")
+            
+            # AOAO roles: filter by building access
+            if current_user.role in ["aoao", "aoao_staff"]:
+                if accessible_building_ids is None or document_building_id in accessible_building_ids:
+                    filtered_documents.append(document)
+                continue
+            
+            # Other roles: filter by unit access
+            # Get units for this document
+            document_units_result = (
+                client.table("document_units")
+                .select("unit_id")
+                .eq("document_id", document.get("id"))
+                .execute()
+            )
+            document_unit_ids = [row["unit_id"] for row in (document_units_result.data or [])]
+            
+            if not document_unit_ids:
+                # Document has no units, check building access
+                if accessible_building_ids is None or document_building_id in accessible_building_ids:
+                    filtered_documents.append(document)
+            else:
+                # Check if user has access to any unit in the document
+                if accessible_unit_ids is None or any(uid in accessible_unit_ids for uid in document_unit_ids):
+                    filtered_documents.append(document)
+        
+        documents = filtered_documents
+    
     # Enrich each document with units and contractors
     enriched_documents = [enrich_document_with_relations(doc) for doc in documents]
     
@@ -502,10 +546,17 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
         raise HTTPException(400, "Must provide event_id OR unit_ids OR building_id.")
 
     # -------------------------------------------------
-    # Access Control
+    # Permission checks: ensure user has access to building and all units
     # -------------------------------------------------
-    if current_user.role not in ["admin", "super_admin", "aoao"]:
-        verify_user_building_access(current_user.id, building_id)
+    if not is_admin(current_user):
+        # Check building access
+        require_building_access(current_user, building_id)
+        
+        # Check unit access (if units provided)
+        if unit_ids:
+            # AOAO roles can create documents for their building even without unit access
+            if current_user.role not in ["aoao", "aoao_staff"]:
+                require_units_access(current_user, unit_ids)
 
     # -------------------------------------------------
     # Prepare record (exclude unit_ids and contractor_ids - they go to junction tables)
@@ -561,8 +612,11 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     summary="Update Document",
     dependencies=[Depends(requires_permission("documents:write"))],
 )
-def update_document(document_id: str, payload: DocumentUpdate):
+def update_document(document_id: str, payload: DocumentUpdate, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
+
+    # Permission check: ensure user has access to this document
+    require_document_access(current_user, document_id)
 
     # Get current document to determine building_id for validation
     current_doc = (
@@ -584,6 +638,11 @@ def update_document(document_id: str, payload: DocumentUpdate):
         unit_ids = [str(u) for u in payload.unit_ids]
         if unit_ids:
             validate_units_in_building(unit_ids, building_id)
+            # Permission check for unit_ids if being updated
+            if not is_admin(current_user):
+                # AOAO roles can update documents for their building even without unit access
+                if current_user.role not in ["aoao", "aoao_staff"]:
+                    require_units_access(current_user, unit_ids)
     
     # Handle contractor_ids update
     contractor_ids = None
