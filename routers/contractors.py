@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from dependencies.auth import (
     get_current_user,
@@ -11,6 +11,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from models.enums import ContractorRole
 
 
 router = APIRouter(
@@ -66,9 +67,29 @@ class ContractorBase(BaseModel):
     insurance_info: Optional[str] = None
     address: Optional[str] = None
     logo_url: Optional[str] = None
+    role: ContractorRole
+
+    @field_validator("role", mode="before")
+    def validate_role(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, ContractorRole):
+            return v
+        if isinstance(v, str):
+            # Try to match the string value to an enum value
+            try:
+                return ContractorRole(v.lower())
+            except ValueError:
+                # Check if it's a valid enum value (case-insensitive)
+                valid_values = [e.value for e in ContractorRole]
+                if v.lower() in [val.lower() for val in valid_values]:
+                    return ContractorRole(v.lower())
+                raise ValueError(f"Invalid contractor role: {v}. Must be one of: {', '.join(valid_values)}")
+        raise ValueError(f"Invalid contractor role type: {type(v)}")
 
 
 class ContractorCreate(ContractorBase):
+    """Role is required when creating a contractor."""
     pass
 
 
@@ -86,23 +107,52 @@ class ContractorUpdate(BaseModel):
     insurance_info: Optional[str] = None
     address: Optional[str] = None
     logo_url: Optional[str] = None
+    role: Optional[ContractorRole] = None
+
+    @field_validator("role", mode="before")
+    def validate_role(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, ContractorRole):
+            return v
+        if isinstance(v, str):
+            # Try to match the string value to an enum value
+            try:
+                return ContractorRole(v.lower())
+            except ValueError:
+                # Check if it's a valid enum value (case-insensitive)
+                valid_values = [e.value for e in ContractorRole]
+                if v.lower() in [val.lower() for val in valid_values]:
+                    return ContractorRole(v.lower())
+                raise ValueError(f"Invalid contractor role: {v}. Must be one of: {', '.join(valid_values)}")
+        raise ValueError(f"Invalid contractor role type: {type(v)}")
 
 
 # ============================================================
 # LIST CONTRACTORS (FIXED: managers should NOT have global view)
 # ============================================================
 @router.get("", response_model=List[ContractorRead])
-def list_contractors(current_user: CurrentUser = Depends(get_current_user)):
+def list_contractors(
+    role: Optional[str] = None,
+    current_user: CurrentUser = Depends(get_current_user)
+):
     if current_user.role not in ["admin", "super_admin"]:
         raise HTTPException(403, "Only admin roles can list all contractors.")
 
     client = get_supabase_client()
-    result = (
-        client.table("contractors")
-        .select("*")
-        .order("company_name")
-        .execute()
-    )
+    query = client.table("contractors").select("*")
+
+    # Filter by role if provided
+    if role:
+        # Validate role is a valid enum value
+        try:
+            role_enum = ContractorRole(role.lower())
+            query = query.eq("role", role_enum.value)
+        except ValueError:
+            valid_roles = [e.value for e in ContractorRole]
+            raise HTTPException(400, f"Invalid role: {role}. Must be one of: {', '.join(valid_roles)}")
+
+    result = query.order("company_name").execute()
 
     return result.data or []
 
@@ -216,16 +266,29 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
 def delete_contractor(contractor_id: str):
     client = get_supabase_client()
 
-    # Prevent deletion if referenced by events
-    events = (
-        client.table("events")
-        .select("id")
+    # Prevent deletion if referenced by events (via event_contractors junction table)
+    event_contractors = (
+        client.table("event_contractors")
+        .select("event_id")
         .eq("contractor_id", contractor_id)
+        .limit(1)
         .execute()
     )
 
-    if events.data:
+    if event_contractors.data:
         raise HTTPException(400, "Cannot delete contractor — events reference this contractor.")
+    
+    # Prevent deletion if referenced by documents (via document_contractors junction table)
+    document_contractors = (
+        client.table("document_contractors")
+        .select("document_id")
+        .eq("contractor_id", contractor_id)
+        .limit(1)
+        .execute()
+    )
+
+    if document_contractors.data:
+        raise HTTPException(400, "Cannot delete contractor — documents reference this contractor.")
 
     # Step 1 — delete
     try:
