@@ -441,12 +441,45 @@ async def upload_document(
     if document_contractors.data:
         for row in document_contractors.data:
             if row.get("contractors"):
-                contractors.append(row["contractors"])
+                contractor = row["contractors"]
+                # Enrich contractor with roles
+                contractor = enrich_contractor_with_roles(contractor)
+                contractors.append(contractor)
     
     document["units"] = units
     document["contractors"] = contractors
     document["unit_ids"] = [u["id"] for u in units]
     document["contractor_ids"] = [c["id"] for c in contractors]
+
+
+# -----------------------------------------------------
+# Helper — Enrich contractor with roles
+# -----------------------------------------------------
+def enrich_contractor_with_roles(contractor: dict) -> dict:
+    """Add roles array to contractor dict."""
+    contractor_id = contractor.get("id")
+    if not contractor_id:
+        contractor["roles"] = []
+        return contractor
+    
+    client = get_supabase_client()
+    
+    # Get roles for this contractor
+    role_result = (
+        client.table("contractor_role_assignments")
+        .select("role_id, contractor_roles(name)")
+        .eq("contractor_id", contractor_id)
+        .execute()
+    )
+    
+    roles = []
+    if role_result.data:
+        for row in role_result.data:
+            if row.get("contractor_roles") and row["contractor_roles"].get("name"):
+                roles.append(row["contractor_roles"]["name"])
+    
+    contractor["roles"] = roles
+    return contractor
 
     # -----------------------------------------------------
     # Update event with s3_key if event_id is provided
