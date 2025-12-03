@@ -19,7 +19,7 @@ class BaseStrEnum(str, Enum):
 # EVENT TYPE
 # -----------------------------------------------------
 class EventType(BaseStrEnum):
-    """Used for categorizing events (HOA notices, repairs, etc.)."""
+    """Used for categorizing events (AOAO notices, repairs, etc.)."""
 
     maintenance = "maintenance"
     notice = "notice"
@@ -27,7 +27,7 @@ class EventType(BaseStrEnum):
     plumbing = "plumbing"
     electrical = "electrical"
     general = "general"
-    warning = "Warning"  # HOA violations, warnings, etc.
+    warning = "Warning"  # AOAO violations, warnings, etc.
 
 
 # -----------------------------------------------------
