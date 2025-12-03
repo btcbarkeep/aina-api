@@ -95,9 +95,9 @@ def get_current_user(
     # ---------------------------------------------------------
     # NORMAL USER PATH
     # ---------------------------------------------------------
-    role = metadata.get("role", "hoa")
+    role = metadata.get("role", "aoao")
     if role not in ROLE_PERMISSIONS:
-        role = "hoa"
+        role = "aoao"
 
     extended_permissions = metadata.get("permissions", [])
     if not isinstance(extended_permissions, list):
