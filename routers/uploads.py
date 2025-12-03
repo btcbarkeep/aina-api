@@ -168,7 +168,7 @@ async def upload_document(
     category: str | None = Form(None),
 
     # Visibility toggle (redaction is now manual via separate endpoint)
-    is_public: bool = Form(False, description="Whether the document should be public (false = private)"),
+    is_public: bool = Form(True, description="Whether the document should be public (true = public, false = private)"),
 
     current_user: CurrentUser = Depends(get_current_user),
 ):
