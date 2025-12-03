@@ -710,7 +710,7 @@ def delete_event(event_id: str):
 ALLOWED_COMMENT_ROLES = {
     "admin",
     "super_admin",
-    "hoa",
+    "aoao",
     "property_manager",
 }
 
@@ -731,7 +731,7 @@ def get_event_creator(event_id: str) -> Optional[str]:
 def can_modify_comments(current_user: CurrentUser, event_creator_id: str) -> bool:
     """
     True if:
-      - user is admin/super_admin/hoa/property_manager
+      - user is admin/super_admin/aoao/property_manager
       - OR user is the event creator
     """
     if current_user.role in ALLOWED_COMMENT_ROLES:
@@ -824,7 +824,7 @@ def update_event_comment(
     event_creator = get_event_creator(event_id)
 
     # Permission check:
-    #   Admin/HOA/PM/Super OR the event creator OR the comment owner
+    #   Admin/AOAO/PM/Super OR the event creator OR the comment owner
     if not (
         current_user.role in ALLOWED_COMMENT_ROLES
         or str(current_user.id) == str(event_creator)
