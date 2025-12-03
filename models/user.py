@@ -14,7 +14,7 @@ class UserMetadata(BaseModel):
     """
     Mirrors auth.users.user_metadata (or raw_user_meta_data)
     """
-    role: Optional[str] = "hoa"
+    role: Optional[str] = "aoao"
     full_name: Optional[str] = None
     contractor_id: Optional[UUID] = None
     organization_name: Optional[str] = None
@@ -52,7 +52,7 @@ class UserCreate(BaseModel):
     """
     email: EmailStr
     full_name: Optional[str] = None
-    role: Optional[str] = "hoa"
+    role: Optional[str] = "aoao"
     contractor_id: Optional[UUID] = None
     organization_name: Optional[str] = None
     phone: Optional[str] = None
