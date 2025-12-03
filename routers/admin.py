@@ -35,7 +35,7 @@ class AdminCreateUser(BaseModel):
     email: EmailStr
     organization_name: Optional[str] = None
     phone: Optional[str] = None
-    role: str = "hoa"
+    role: str = "aoao"
     permissions: Optional[List[str]] = None
 
 
@@ -98,7 +98,7 @@ def validate_role_change(
         if not target_user:
             raise HTTPException(404, "Target user not found")
 
-        target_role = (target_user.user_metadata or {}).get("role", "hoa")
+        target_role = (target_user.user_metadata or {}).get("role", "aoao")
 
         if (
             target_role == "super_admin"
@@ -204,7 +204,7 @@ def list_users(role: str | None = None):
     results = []
     for u in users:
         meta = u.user_metadata or {}
-        u_role = meta.get("role", "hoa")
+        u_role = meta.get("role", "aoao")
 
         if role is None or u_role == role:
             results.append({
@@ -291,7 +291,7 @@ def update_user(
 
     current_meta = resp.user.user_metadata or {}
 
-    new_role = updates.get("role", current_meta.get("role", "hoa"))
+    new_role = updates.get("role", current_meta.get("role", "aoao"))
 
     validate_role_change(current_user, new_role, target_user_id=user_id)
 
