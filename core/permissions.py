@@ -67,7 +67,7 @@ ROLE_PERMISSIONS = {
     # =====================================================
     # AOAO MANAGER
     # =====================================================
-    "hoa": [
+    "aoao": [
         "buildings:read",
         "events:read", "events:write",
         "documents:read", "documents:write",
@@ -77,7 +77,7 @@ ROLE_PERMISSIONS = {
     # =====================================================
     # AOAO STAFF
     # =====================================================
-    "hoa_staff": [
+    "aoao_staff": [
         "buildings:read",
         "events:read", "events:write",
         "documents:read", "documents:write",
