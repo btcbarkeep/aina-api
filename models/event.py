@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 
 from .enums import EventType, EventSeverity, EventStatus
 
@@ -12,8 +12,12 @@ from .enums import EventType, EventSeverity, EventStatus
 class EventBase(BaseModel):
     building_id: str
 
-    # NEW — Unit FK (UUID string)
+    # Legacy single unit_id (for backward compatibility)
+    # If unit_ids is provided, this is ignored
     unit_id: Optional[str] = None
+
+    # NEW — Multiple units support
+    unit_ids: Optional[List[str]] = Field(None, description="List of unit IDs associated with this event")
 
     event_type: EventType
     title: str
@@ -23,8 +27,12 @@ class EventBase(BaseModel):
     severity: Optional[EventSeverity] = EventSeverity.medium
     status: Optional[EventStatus] = EventStatus.open
 
-    # Supabase returns UUID as string → enforce string always
+    # Legacy single contractor_id (for backward compatibility)
+    # If contractor_ids is provided, this is ignored
     contractor_id: Optional[str] = None
+
+    # NEW — Multiple contractors support
+    contractor_ids: Optional[List[str]] = Field(None, description="List of contractor IDs associated with this event")
 
     # -------------------------------------------------
     # Normalize timestamps like "2025-01-01T00:00:00Z"
@@ -63,6 +71,50 @@ class EventBase(BaseModel):
         except Exception:
             return None
 
+    # -------------------------------------------------
+    # Normalize unit_ids (List of UUIDs → List of strings)
+    # -------------------------------------------------
+    @field_validator("unit_ids", mode="before")
+    def validate_unit_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            if not item:
+                continue
+            if isinstance(item, UUID):
+                result.append(str(item))
+            else:
+                try:
+                    result.append(str(UUID(str(item))))
+                except Exception:
+                    continue
+        return result if result else None
+
+    # -------------------------------------------------
+    # Normalize contractor_ids (List of UUIDs → List of strings)
+    # -------------------------------------------------
+    @field_validator("contractor_ids", mode="before")
+    def validate_contractor_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            if not item:
+                continue
+            if isinstance(item, UUID):
+                result.append(str(item))
+            else:
+                try:
+                    result.append(str(UUID(str(item))))
+                except Exception:
+                    continue
+        return result if result else None
+
 
 # -------------------------------------------------
 # Create Event
@@ -95,6 +147,7 @@ class EventRead(EventBase):
 class EventUpdate(BaseModel):
     building_id: Optional[str] = None
     unit_id: Optional[str] = None
+    unit_ids: Optional[List[str]] = Field(None, description="List of unit IDs associated with this event")
 
     event_type: Optional[EventType] = None
     title: Optional[str] = None
@@ -105,6 +158,7 @@ class EventUpdate(BaseModel):
     status: Optional[EventStatus] = None
 
     contractor_id: Optional[str] = None
+    contractor_ids: Optional[List[str]] = Field(None, description="List of contractor IDs associated with this event")
 
     @field_validator("occurred_at", mode="before")
     def parse_update_occurred_at(cls, v):
@@ -133,3 +187,41 @@ class EventUpdate(BaseModel):
             return str(UUID(str(v)))
         except Exception:
             return None
+
+    @field_validator("unit_ids", mode="before")
+    def validate_update_unit_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            if not item:
+                continue
+            if isinstance(item, UUID):
+                result.append(str(item))
+            else:
+                try:
+                    result.append(str(UUID(str(item))))
+                except Exception:
+                    continue
+        return result if result else None
+
+    @field_validator("contractor_ids", mode="before")
+    def validate_update_contractor_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            if not item:
+                continue
+            if isinstance(item, UUID):
+                result.append(str(item))
+            else:
+                try:
+                    result.append(str(UUID(str(item))))
+                except Exception:
+                    continue
+        return result if result else None
