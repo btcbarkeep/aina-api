@@ -5,7 +5,12 @@ from typing import Optional, List
 from datetime import datetime
 
 from dependencies.auth import get_current_user, CurrentUser
-from core.permission_helpers import requires_permission
+from core.permission_helpers import (
+    requires_permission,
+    is_admin,
+    require_building_access,
+    get_user_accessible_building_ids,
+)
 
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
@@ -68,6 +73,12 @@ def list_buildings(
 
     try:
         query = client.table("buildings").select("*").limit(limit)
+
+        # Apply permission-based filtering for non-admin users
+        if not is_admin(current_user):
+            accessible_building_ids = get_user_accessible_building_ids(current_user)
+            if accessible_building_ids is not None:
+                query = query.in_("id", accessible_building_ids)
 
         if name:
             query = query.ilike("name", f"%{name}%")
@@ -132,7 +143,11 @@ def create_building(payload: BuildingCreate):
     summary="Update Building",
     dependencies=[Depends(requires_permission("buildings:write"))],
 )
-def update_building(building_id: str, payload: BuildingUpdate):
+def update_building(building_id: str, payload: BuildingUpdate, current_user: CurrentUser = Depends(get_current_user)):
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
+    
     client = get_supabase_client()
     update_data = sanitize(payload.model_dump(exclude_unset=True))
 
@@ -171,7 +186,11 @@ def update_building(building_id: str, payload: BuildingUpdate):
     summary="Delete Building",
     dependencies=[Depends(requires_permission("buildings:write"))],
 )
-def delete_building(building_id: str):
+def delete_building(building_id: str, current_user: CurrentUser = Depends(get_current_user)):
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
+    
     client = get_supabase_client()
 
     try:
@@ -208,6 +227,10 @@ def get_building_events(
     status: Optional[str] = None,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
+    
     client = get_supabase_client()
 
     try:
@@ -248,16 +271,28 @@ def get_building_units(
     building_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
+    
     client = get_supabase_client()
 
     try:
-        rows = (
+        query = (
             client.table("units")
             .select("*")
             .eq("building_id", building_id)
-            .order("unit_number")
-            .execute()
-        ).data or []
+        )
+        
+        # For non-admin users, filter to only units they have access to
+        if not is_admin(current_user):
+            from core.permission_helpers import get_user_accessible_unit_ids
+            accessible_unit_ids = get_user_accessible_unit_ids(current_user)
+            if accessible_unit_ids is not None:
+                query = query.in_("id", accessible_unit_ids)
+        
+        result = query.order("unit_number").execute()
+        rows = result.data or []
 
         return {
             "success": True,
@@ -282,6 +317,9 @@ def get_building_contractors(
     building_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
     client = get_supabase_client()
 
     try:
