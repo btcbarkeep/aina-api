@@ -200,7 +200,7 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                 if name_match:
                     extracted_name = name_match.group(1).strip()
                     # Split by common delimiters to get just the name part
-                    extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address|reported|said|stated', extracted_name)[0].strip()
+                    extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address|reported|said|stated|Date:', extracted_name)[0].strip()
                     
                     # Check if extracted text is actually a date (should not be redacted)
                     is_date = False
@@ -209,6 +209,15 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
                             is_date = True
                             logger.debug(f"Skipping '{extracted_name}' - appears to be a date, not a name")
                             break
+                    
+                    # Also check if it starts with a month name (common date format)
+                    month_names = ["january", "february", "march", "april", "may", "june", 
+                                  "july", "august", "september", "october", "november", "december"]
+                    if not is_date and extracted_name.split()[0].lower() in month_names:
+                        # Check if it has a year (4 digits)
+                        if re.search(r'\b(19|20)\d{2}\b', extracted_name):
+                            is_date = True
+                            logger.debug(f"Skipping '{extracted_name}' - appears to be a date (month + year)")
                     
                     if not is_date:
                         # Filter out common label words that might have been captured
