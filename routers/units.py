@@ -9,6 +9,12 @@ import io
 
 from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
+from core.permission_helpers import (
+    is_admin,
+    require_unit_access as require_unit_access_helper,
+    require_building_access,
+    get_user_accessible_unit_ids,
+)
 
 
 router = APIRouter(
@@ -20,9 +26,10 @@ FULL_ACCESS_ROLES = ["admin", "super_admin", "aoao"]
 
 
 # -------------------------------------------------------------
-# Permission check
+# Permission check (legacy - kept for backward compatibility)
 # -------------------------------------------------------------
 def require_unit_access(user: CurrentUser):
+    """Legacy function - checks if user can manage units (admin/aoao only)."""
     if user.role not in FULL_ACCESS_ROLES:
         raise HTTPException(403, "You do not have permission to manage units.")
 
@@ -43,18 +50,26 @@ def clean(value):
 # -------------------------------------------------------------
 @router.get("/building/{building_id}")
 def list_units(building_id: str, current_user: CurrentUser = Depends(get_current_user)):
-    require_unit_access(current_user)
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
 
     client = get_supabase_client()
 
     try:
-        result = (
+        query = (
             client.table("units")
             .select("*")
             .eq("building_id", building_id)
-            .order("unit_number")
-            .execute()
         )
+        
+        # For non-admin users, filter to only units they have access to
+        if not is_admin(current_user):
+            accessible_unit_ids = get_user_accessible_unit_ids(current_user)
+            if accessible_unit_ids is not None:
+                query = query.in_("id", accessible_unit_ids)
+        
+        result = query.order("unit_number").execute()
         return result.data or []
     except Exception as e:
         raise HTTPException(500, f"Unable to fetch units: {e}")
@@ -128,7 +143,9 @@ def delete_unit(unit_id: str, current_user: CurrentUser = Depends(get_current_us
 # -------------------------------------------------------------
 @router.get("/{unit_id}")
 def get_unit(unit_id: str, current_user: CurrentUser = Depends(get_current_user)):
-    require_unit_access(current_user)
+    # Permission check: ensure user has access to this unit
+    if not is_admin(current_user):
+        require_unit_access_helper(current_user, unit_id)
 
     client = get_supabase_client()
     try:
