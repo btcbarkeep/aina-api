@@ -29,6 +29,7 @@ from routers.contractors import router as contractors_router
 from routers.contractor_events import router as contractor_events_router
 
 from routers.uploads import router as uploads_router
+from routers.manual_redact import router as manual_redact_router
 from routers.health import router as health_router
 
 # Admin Routers
@@ -140,6 +141,9 @@ def create_app() -> FastAPI:
 
     # Uploads
     app.include_router(uploads_router)
+    
+    # Manual Redaction
+    app.include_router(manual_redact_router)
 
     # Health Check
     app.include_router(health_router)
