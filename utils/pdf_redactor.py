@@ -368,9 +368,11 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         if page_text:
             # Find all owner patterns
             matches = find_sensitive_patterns(page_text)
+            logger.debug(f"First pass page {page_num + 1}: Found {len(matches)} pattern matches")
             
             # Collect owner names, emails, phones
             for pattern_type, matched_text in matches:
+                logger.debug(f"First pass page {page_num + 1}: Processing {pattern_type}: '{matched_text[:50]}...'")
                 if pattern_type == "owner_name":
                     # Extract just the name part
                     name_only = matched_text
@@ -417,6 +419,7 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         
         # Find sensitive patterns
         matches = find_sensitive_patterns(page_text)
+        logger.info(f"Page {page_num + 1}: find_sensitive_patterns returned {len(matches)} matches")
         
         # Add all owner names/emails/phones found in first pass to matches for this page
         # This ensures we redact them everywhere, even if they appear before the label
@@ -584,11 +587,12 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                     end_pos = min(len(page_text), match_pos + len(search_text) + 60)
                     context_lower = page_text[start_pos:end_pos].lower()
                     
-                    # For email, phone, address, credit card, and SSN patterns, always allow redaction if the pattern matched
-                    # (since the pattern itself requires context like "Email:", "Phone:", "Home Address:", "Credit Card:", "Social Security:")
-                    if pattern_type in ["owner_email", "owner_phone", "address", "credit_card", "ssn"]:
+                    # IMPORTANT: If a pattern matched, it means the context was already in the pattern
+                    # So we should ALWAYS allow redaction for matched patterns
+                    # The patterns themselves require context keywords (like "Email:", "Phone:", "Home Address:", etc.)
+                    if pattern_type in ["owner_email", "owner_phone", "address", "credit_card", "ssn", "owner_name"]:
                         allow_redaction = True
-                        logger.debug(f"Page {page_num + 1}: Pattern '{pattern_type}' matched with context, allowing redaction")
+                        logger.info(f"Page {page_num + 1}: Pattern '{pattern_type}' matched - allowing redaction (pattern already includes context)")
                     # FIRST: Check sensitive keywords (MUST come before owner-context check)
                     elif any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
                         allow_redaction = True
