@@ -131,40 +131,35 @@ async def redact_manual(
     # Apply redactions
     try:
         for box in boxes:
-            # Normalize page number (assume frontend uses 1-indexed, PyMuPDF uses 0-indexed)
-            page_num = box.page - 1 if box.page > 0 else box.page
+            # Extract coordinates
+            x = box.x
+            y = box.y
+            w = box.width
+            h = box.height
+            page_index = box.page - 1  # Convert 1-indexed to 0-indexed
             
-            if page_num < 0 or page_num >= len(doc):
+            if page_index < 0 or page_index >= len(doc):
                 logger.warning(f"Skipping redaction box on invalid page {box.page} (PDF has {len(doc)} pages)")
                 continue
             
-            page = doc[page_num]
-            
-            # Create rectangle for redaction
-            # PDF coordinates have origin at bottom-left, but canvas uses top-left
-            # Convert from canvas coordinates (top-left origin) to PDF coordinates (bottom-left origin)
+            page = doc.load_page(page_index)
             page_height = page.rect.height
-            page_width = page.rect.width
             
-            # Convert coordinates: y_pdf = page_height - y_canvas - height
-            y_pdf = page_height - box.y - box.height
+            # Convert top-left origin (canvas) to bottom-left origin (PDF)
+            # incoming: x, y, width, height (top-left origin)
+            pdf_y = page_height - (y + h)
             
-            # Ensure coordinates are within page bounds
-            x1 = max(0, min(box.x, page_width))
-            y1 = max(0, min(y_pdf, page_height))
-            x2 = max(0, min(box.x + box.width, page_width))
-            y2 = max(0, min(y_pdf + box.height, page_height))
+            # Create rectangle in PDF coordinate system
+            rect = fitz.Rect(x, pdf_y, x + w, pdf_y + h)
             
-            rect = fitz.Rect(x1, y1, x2, y2)
+            # Add redaction annotation with black fill
+            page.add_redact_annot(rect, fill=(0, 0, 0))
             
-            # Add redaction annotation (this marks the area for redaction)
-            page.add_redact_annot(rect, fill=(0, 0, 0))  # Black fill
-            
-            logger.debug(f"Added redaction box on page {box.page}: {rect}")
+            logger.debug(f"Added redaction box on page {box.page}: {rect} (canvas y={y} -> PDF y={pdf_y})")
         
-        # Apply all redactions (this actually removes the content)
-        for page_num in range(len(doc)):
-            page = doc[page_num]
+        # Apply all redactions after adding all annotations
+        # This actually removes the content and applies black fill
+        for page in doc:
             page.apply_redactions()
         
         logger.info(f"Successfully applied redactions to {len(doc)} page(s)")
@@ -175,7 +170,10 @@ async def redact_manual(
     
     # Save redacted PDF to BytesIO
     try:
-        pdf_bytes = doc.tobytes()
+        output_pdf = io.BytesIO()
+        doc.save(output_pdf, deflate=True, clean=True)
+        output_pdf.seek(0)
+        pdf_bytes = output_pdf.read()
         doc.close()
     except Exception as e:
         doc.close()
