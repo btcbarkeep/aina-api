@@ -87,7 +87,7 @@ def validate_role_names(role_names: List[str]) -> List[str]:
                     validated_roles.append(db_role["name"])
                     break
         else:
-            raise HTTPException(400, f"Invalid role name: {role_name}. Role does not exist in contractor_roles table.")
+            raise HTTPException(400, detail={"error": f"Invalid role: {role_name}"})
     
     # Remove duplicates while preserving order
     return list(dict.fromkeys(validated_roles))
@@ -222,12 +222,29 @@ class ContractorBase(BaseModel):
 class ContractorCreate(ContractorBase):
     """Roles are required when creating a contractor."""
     roles: List[str] = Field(..., description="List of role names (e.g., ['plumber', 'electrician'])", example=["plumber"])
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "company_name": "Burger's Plumbing",
+                "roles": ["plumber"]
+            }
+        }
 
 
 class ContractorRead(ContractorBase):
     id: str
     created_at: Optional[str] = None
-    roles: List[str] = Field(default_factory=list, description="List of role names assigned to this contractor", example=["plumber"])
+    roles: List[str] = Field(default_factory=list, description="List of role names assigned to this contractor", example=["plumber", "inspector"])
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "company_name": "Burger's Plumbing",
+                "roles": ["plumber", "inspector"]
+            }
+        }
 
 
 class ContractorUpdate(BaseModel):
@@ -267,7 +284,7 @@ def list_contractors(
         )
         
         if not role_result.data:
-            raise HTTPException(400, f"Invalid role: {role}. Role does not exist in contractor_roles table.")
+            raise HTTPException(400, detail={"error": "Invalid role filter"})
         
         role_id = role_result.data[0]["id"]
         
