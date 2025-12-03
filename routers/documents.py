@@ -1,6 +1,8 @@
 # routers/documents.py
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import Optional, List
+from datetime import datetime
 
 from dependencies.auth import (
     get_current_user,
@@ -278,30 +280,145 @@ def enrich_document_with_relations(document: dict) -> dict:
 
 
 # -----------------------------------------------------
+# Helper — Apply document filters
+# -----------------------------------------------------
+def apply_document_filters(query, params: dict):
+    """Apply filtering to documents query based on provided parameters."""
+    client = get_supabase_client()
+    
+    # building_id filter
+    if params.get("building_id"):
+        query = query.eq("building_id", params["building_id"])
+    
+    # event_id filter
+    if params.get("event_id"):
+        query = query.eq("event_id", params["event_id"])
+    
+    # category filter
+    if params.get("category"):
+        query = query.eq("category_id", params["category"])
+    
+    # uploaded_by filter
+    if params.get("uploaded_by"):
+        query = query.eq("uploaded_by", params["uploaded_by"])
+    
+    # date range filters (using created_at)
+    if params.get("start_date"):
+        query = query.gte("created_at", params["start_date"])
+    if params.get("end_date"):
+        query = query.lte("created_at", params["end_date"])
+    
+    # unit_id filter (via document_units junction table)
+    if params.get("unit_id"):
+        # Get document IDs that have this unit
+        document_units_result = (
+            client.table("document_units")
+            .select("document_id")
+            .eq("unit_id", params["unit_id"])
+            .execute()
+        )
+        document_ids = [row["document_id"] for row in (document_units_result.data or [])]
+        if document_ids:
+            query = query.in_("id", document_ids)
+        else:
+            # No documents match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # unit_ids filter (via document_units junction table)
+    if params.get("unit_ids"):
+        unit_ids = params["unit_ids"]
+        if unit_ids:
+            # Get document IDs that have ANY of these units
+            document_units_result = (
+                client.table("document_units")
+                .select("document_id")
+                .in_("unit_id", unit_ids)
+                .execute()
+            )
+            document_ids = list(set([row["document_id"] for row in (document_units_result.data or [])]))
+            if document_ids:
+                query = query.in_("id", document_ids)
+            else:
+                # No documents match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # contractor_id filter (via document_contractors junction table)
+    if params.get("contractor_id"):
+        # Get document IDs that have this contractor
+        document_contractors_result = (
+            client.table("document_contractors")
+            .select("document_id")
+            .eq("contractor_id", params["contractor_id"])
+            .execute()
+        )
+        document_ids = [row["document_id"] for row in (document_contractors_result.data or [])]
+        if document_ids:
+            query = query.in_("id", document_ids)
+        else:
+            # No documents match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # contractor_ids filter (via document_contractors junction table)
+    if params.get("contractor_ids"):
+        contractor_ids = params["contractor_ids"]
+        if contractor_ids:
+            # Get document IDs that have ANY of these contractors
+            document_contractors_result = (
+                client.table("document_contractors")
+                .select("document_id")
+                .in_("contractor_id", contractor_ids)
+                .execute()
+            )
+            document_ids = list(set([row["document_id"] for row in (document_contractors_result.data or [])]))
+            if document_ids:
+                query = query.in_("id", document_ids)
+            else:
+                # No documents match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    return query
+
+
+# -----------------------------------------------------
 # LIST DOCUMENTS
 # -----------------------------------------------------
 @router.get("", summary="List Documents")
 def list_documents(
-    limit: int = 100,
-    building_id: str | None = None,
-    event_id: str | None = None,
-    unit_id: str | None = None,
+    limit: int = Query(100, description="Maximum number of documents to return"),
+    building_id: Optional[str] = Query(None, description="Filter by building ID"),
+    event_id: Optional[str] = Query(None, description="Filter by event ID"),
+    unit_id: Optional[str] = Query(None, description="Filter by single unit ID"),
+    unit_ids: Optional[List[str]] = Query([], description="Filter by list of unit IDs"),
+    contractor_id: Optional[str] = Query(None, description="Filter by single contractor ID"),
+    contractor_ids: Optional[List[str]] = Query([], description="Filter by list of contractor IDs"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    uploaded_by: Optional[str] = Query(None, description="Filter by user who uploaded"),
+    start_date: Optional[datetime] = Query(None, description="Filter documents from this date (ISO datetime)"),
+    end_date: Optional[datetime] = Query(None, description="Filter documents until this date (ISO datetime)"),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
 
     query = client.table("documents").select("*")
-
-    if building_id:
-        query = query.eq("building_id", building_id)
-    if event_id:
-        query = query.eq("event_id", event_id)
     
-    # Note: unit_id filtering is now done via document_units junction table
-    # For now, we'll filter in memory after fetching (or use a join query)
-    # TODO: Implement proper junction table filtering if needed
+    # Apply filters
+    filter_params = {
+        "building_id": building_id,
+        "event_id": event_id,
+        "unit_id": unit_id,
+        "unit_ids": unit_ids if unit_ids else None,
+        "contractor_id": contractor_id,
+        "contractor_ids": contractor_ids if contractor_ids else None,
+        "category": category,
+        "uploaded_by": uploaded_by,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+    }
+    
+    query = apply_document_filters(query, filter_params)
+    query = query.order("created_at", desc=True).limit(limit)
 
-    res = query.order("created_at", desc=True).limit(limit).execute()
+    res = query.execute()
     documents = res.data or []
     
     # Enrich each document with units and contractors
