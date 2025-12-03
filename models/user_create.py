@@ -11,7 +11,7 @@ class AdminCreateUser(BaseModel):
     - email
     - organization_name
     - phone
-    - role (admin, super_admin, hoa, property_manager, contractor, contractor_staff)
+    - role (admin, super_admin, aoao, property_manager, contractor, contractor_staff)
     - contractor_id (optional UUID string)
     - metadata (optional dict for any future expansion)
 
@@ -25,7 +25,7 @@ class AdminCreateUser(BaseModel):
     phone: Optional[str] = None
 
     # Default role
-    role: str = "hoa"     # admin can override this
+    role: str = "aoao"     # admin can override this
 
     # NEW — Only used for contractor accounts
     contractor_id: Optional[str] = None
