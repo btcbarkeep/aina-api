@@ -1,6 +1,6 @@
 # routers/contractors.py
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -260,25 +260,19 @@ class ContractorUpdate(BaseModel):
 
 
 # ============================================================
-# LIST CONTRACTORS (FIXED: managers should NOT have global view)
+# Helper — Apply contractor filters
 # ============================================================
-@router.get("", response_model=List[ContractorRead])
-def list_contractors(
-    role: Optional[str] = None,
-    current_user: CurrentUser = Depends(get_current_user)
-):
-    if current_user.role not in ["admin", "super_admin"]:
-        raise HTTPException(403, "Only admin roles can list all contractors.")
-
+def apply_contractor_filters(query, params: dict):
+    """Apply filtering to contractors query based on provided parameters."""
     client = get_supabase_client()
     
-    # If filtering by role, use junction table join
-    if role:
+    # role filter (via contractor_role_assignments junction table)
+    if params.get("role"):
         # Validate role exists in contractor_roles table
         role_result = (
             client.table("contractor_roles")
             .select("id, name")
-            .ilike("name", role)
+            .ilike("name", params["role"])
             .limit(1)
             .execute()
         )
@@ -298,26 +292,109 @@ def list_contractors(
         
         contractor_ids = [row["contractor_id"] for row in (assignments_result.data or [])]
         
-        if not contractor_ids:
-            return []
+        if contractor_ids:
+            query = query.in_("id", contractor_ids)
+        else:
+            # No contractors match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # building_id filter (via event_contractors → events)
+    if params.get("building_id"):
+        # First get all events in this building
+        events_result = (
+            client.table("events")
+            .select("id")
+            .eq("building_id", params["building_id"])
+            .execute()
+        )
+        event_ids = [row["id"] for row in (events_result.data or [])]
         
-        # Fetch contractors with these IDs
-        result = (
-            client.table("contractors")
-            .select("*")
-            .in_("id", contractor_ids)
-            .order("company_name")
+        if event_ids:
+            # Get contractor IDs from these events
+            event_contractors_result = (
+                client.table("event_contractors")
+                .select("contractor_id")
+                .in_("event_id", event_ids)
+                .execute()
+            )
+            contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or [])]))
+            if contractor_ids:
+                query = query.in_("id", contractor_ids)
+            else:
+                # No contractors match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+        else:
+            # No events match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # unit_id filter (via event_contractors → events → event_units)
+    if params.get("unit_id"):
+        # Get contractor IDs from events that have this unit
+        # First get event IDs with this unit
+        event_units_result = (
+            client.table("event_units")
+            .select("event_id")
+            .eq("unit_id", params["unit_id"])
             .execute()
         )
-    else:
-        # No filter - get all contractors
-        result = (
-            client.table("contractors")
-            .select("*")
-            .order("company_name")
-            .execute()
-        )
+        event_ids = [row["event_id"] for row in (event_units_result.data or [])]
+        
+        if event_ids:
+            # Get contractor IDs from these events
+            event_contractors_result = (
+                client.table("event_contractors")
+                .select("contractor_id")
+                .in_("event_id", event_ids)
+                .execute()
+            )
+            contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or [])]))
+            if contractor_ids:
+                query = query.in_("id", contractor_ids)
+            else:
+                # No contractors match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+        else:
+            # No events match, return empty result
+            query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
+    
+    # search filter (ILike on company_name)
+    if params.get("search"):
+        search_term = params["search"]
+        query = query.ilike("company_name", f"%{search_term}%")
+    
+    return query
 
+
+# ============================================================
+# LIST CONTRACTORS (FIXED: managers should NOT have global view)
+# ============================================================
+@router.get("", response_model=List[ContractorRead])
+def list_contractors(
+    role: Optional[str] = Query(None, description="Filter by contractor role name"),
+    building_id: Optional[str] = Query(None, description="Filter by building ID (contractors who worked on events in this building)"),
+    unit_id: Optional[str] = Query(None, description="Filter by unit ID (contractors who worked on events for this unit)"),
+    search: Optional[str] = Query(None, description="Search contractors by company name (case-insensitive)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admin roles can list all contractors.")
+
+    client = get_supabase_client()
+    
+    query = client.table("contractors").select("*")
+    
+    # Apply filters
+    filter_params = {
+        "role": role,
+        "building_id": building_id,
+        "unit_id": unit_id,
+        "search": search,
+    }
+    
+    query = apply_contractor_filters(query, filter_params)
+    query = query.order("company_name")
+
+    result = query.execute()
     contractors = result.data or []
     
     # Enrich each contractor with roles
