@@ -41,7 +41,8 @@ from core.logging_config import logger
 # Only redact when owner-related words are present
 OWNER_CONTEXT_PATTERNS = [
     # Owner names when preceded by context words - make it greedy to capture full name
-    r"(?i)(Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]\s+[A-Za-z ,.'\-]+(?:$|\n|(?=Social Security|Credit|Phone|Email|Home Address))",
+    # Matches formats like "Owner Name: John Doe" or "The owner, John Doe" or "owner John Doe"
+    r"(?i)(?:Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact|The owner)\s*[:\-,\s]+\s*[A-Za-z ,.'\-]+(?:$|\n|(?=Social Security|Credit|Phone|Email|Home Address|reported|said|stated))",
     
     # Owner email (also match standalone Email:) - more flexible to catch partial emails
     r"(?i)(Owner|Contact|Tenant|Email).{0,15}[A-Za-z0-9._%+-]+(?:@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
@@ -69,7 +70,15 @@ COMPILED_PATTERNS = [
 WHITELIST = [
     "Cost", "Prepared", "Contractor License", "LLC", "Lahaina", "HI", "Project", "Roof", "Replacement",
     "Scope", "Description", "Labor", "Equipment", "Flashing",
-    "Venting", "Underlayment", "Shingles", "Metal", "Scaffolding"
+    "Venting", "Underlayment", "Shingles", "Metal", "Scaffolding",
+    "Date", "Report", "Building", "Unit", "Event", "Performed", "License"
+]
+
+# Date patterns - these should never be redacted
+DATE_PATTERNS = [
+    r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b",
+    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
+    r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b",
 ]
 
 # Owner Context Keywords
@@ -175,24 +184,39 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
             
             # Extract the actual sensitive data from the match
             if pattern_type == "owner_name":
-                # Redact the entire match including the label (e.g., "Owner Name: Michael Andrew Thompson")
+                # Redact the entire match including the label (e.g., "Owner Name: Michael Andrew Thompson" or "The owner, Jessica K. Morrison")
                 # First add the full match to redact the label too
                 full_match = matched_text.strip()
                 if len(full_match) > 5:  # Make sure it's not too short
                     matches.append((pattern_type, full_match))
                 
-                # Also extract just the name part as a fallback in case full match doesn't work
+                # Also extract just the name part - handle different formats
+                # Format 1: "Owner Name: John Doe" or "Owner: John Doe"
                 name_match = re.search(r"(?:Owner|Unit Owner|Owner Name|Homeowner|Tenant|Contact)\s*[:\-]\s+([A-Za-z ,.'\-]+)", matched_text, re.IGNORECASE)
+                if not name_match:
+                    # Format 2: "The owner, John Doe" or "owner John Doe"
+                    name_match = re.search(r"(?:The\s+)?owner\s*[,:]\s*([A-Za-z ,.'\-]+)", matched_text, re.IGNORECASE)
+                
                 if name_match:
                     extracted_name = name_match.group(1).strip()
                     # Split by common delimiters to get just the name part
-                    extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address', extracted_name)[0].strip()
-                    # Filter out common label words that might have been captured
-                    label_words = ["name", "owner", "owner name", "unit owner", "homeowner", "tenant", "contact"]
-                    if extracted_name.lower() not in label_words and len(extracted_name.split()) >= 2:
-                        # Only add if it's different from the full match
-                        if extracted_name.lower() not in full_match.lower():
-                            matches.append((pattern_type, extracted_name))
+                    extracted_name = re.split(r'\n|Social Security|Credit|Phone|Email|Home Address|reported|said|stated', extracted_name)[0].strip()
+                    
+                    # Check if extracted text is actually a date (should not be redacted)
+                    is_date = False
+                    for date_pattern in DATE_PATTERNS:
+                        if re.search(date_pattern, extracted_name, re.IGNORECASE):
+                            is_date = True
+                            logger.debug(f"Skipping '{extracted_name}' - appears to be a date, not a name")
+                            break
+                    
+                    if not is_date:
+                        # Filter out common label words that might have been captured
+                        label_words = ["name", "owner", "owner name", "unit owner", "homeowner", "tenant", "contact", "the"]
+                        if extracted_name.lower() not in label_words and len(extracted_name.split()) >= 2:
+                            # Only add if it's different from the full match and looks like a real name
+                            if extracted_name.lower() not in full_match.lower() or len(extracted_name) < len(full_match) - 10:
+                                matches.append((pattern_type, extracted_name))
             elif pattern_type == "owner_email":
                 # Extract just the email part (after the keyword)
                 email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", matched_text, re.IGNORECASE)
@@ -416,6 +440,18 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 if any(word.lower() in search_text.lower() for word in WHITELIST):
                     logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - contains whitelist word")
                     continue  # skip
+                
+                # Check if search_text is a date - dates should never be redacted
+                import re
+                is_date = False
+                for date_pattern in DATE_PATTERNS:
+                    if re.search(date_pattern, search_text, re.IGNORECASE):
+                        is_date = True
+                        logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - appears to be a date")
+                        break
+                
+                if is_date:
+                    continue  # skip dates
                 
                 # Find the match position in the page_text to extract context
                 match_pos = page_text.find(search_text)
@@ -649,6 +685,57 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                             logger.warning(f"Page {page_num + 1}: Failed to add redaction annotation: {e}")
                 else:
                     logger.warning(f"Page {page_num + 1}: Could not locate '{search_text}' on page for redaction")
+                
+                # For owner names, also search for all instances of the extracted name throughout the page
+                # This ensures we catch the name even if it appears in different contexts (e.g., "The owner, Jessica K. Morrison")
+                if pattern_type == "owner_name":
+                    # Extract just the name part from search_text (in case it includes label)
+                    name_only = search_text
+                    # Remove common prefixes like "Owner Name:", "The owner,", etc.
+                    name_only = re.sub(r'^(?:Owner\s+Name|Owner|The\s+owner|Unit\s+Owner|Homeowner|Tenant|Contact)[:\s,]+', '', name_only, flags=re.IGNORECASE).strip()
+                    
+                    # Check if name_only is actually a date - skip if so
+                    is_date = False
+                    for date_pattern in DATE_PATTERNS:
+                        if re.search(date_pattern, name_only, re.IGNORECASE):
+                            is_date = True
+                            logger.debug(f"Page {page_num + 1}: Skipping '{name_only}' - appears to be a date, not a name")
+                            break
+                    
+                    # Only proceed if we have a meaningful name (at least 2 words) and it's not a date
+                    if not is_date and len(name_only.split()) >= 2:
+                        # Search for the name throughout the page to catch all instances
+                        all_name_instances = page.search_for(name_only)
+                        if all_name_instances:
+                            logger.info(f"Page {page_num + 1}: Found {len(all_name_instances)} total instance(s) of '{name_only}' on page")
+                            for inst in all_name_instances:
+                                # Only add if not already in text_instances (avoid duplicates)
+                                if not text_instances or inst not in text_instances:
+                                    try:
+                                        redaction = page.add_redact_annot(inst, fill=(0, 0, 0))
+                                        page_redactions += 1
+                                        total_redactions += 1
+                                        logger.info(f"Page {page_num + 1}: Added additional redaction for '{name_only}' at {inst}")
+                                    except Exception as e:
+                                        logger.warning(f"Page {page_num + 1}: Failed to add redaction for '{name_only}': {e}")
+                        
+                        # Also try searching for name parts if full name search didn't work
+                        if not all_name_instances and len(name_only.split()) >= 2:
+                            name_parts = name_only.split()
+                            # Try last name (usually most unique) - but check it's not a date
+                            last_name = name_parts[-1]
+                            # Skip if last name looks like a year (4 digits starting with 19 or 20)
+                            if not re.match(r'^(19|20)\d{2}$', last_name):
+                                last_name_instances = page.search_for(last_name)
+                                if last_name_instances:
+                                    logger.info(f"Page {page_num + 1}: Found '{last_name}' as fallback, adding redaction")
+                                    for inst in last_name_instances:
+                                        try:
+                                            redaction = page.add_redact_annot(inst, fill=(0, 0, 0))
+                                            page_redactions += 1
+                                            total_redactions += 1
+                                        except Exception as e:
+                                            logger.warning(f"Page {page_num + 1}: Failed to add redaction for '{last_name}': {e}")
                     
             except Exception as e:
                 logger.warning(f"Failed to redact '{search_text}' on page {page_num + 1}: {e}")
