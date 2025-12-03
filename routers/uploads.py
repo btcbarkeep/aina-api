@@ -160,6 +160,10 @@ async def upload_document(
     building_id: str | None = Form(None),
     event_id: str | None = Form(None),
     unit_id: str | None = Form(None),
+    
+    # NEW — Multiple units and contractors support
+    unit_ids: str | None = Form(None, description="JSON array of unit IDs: [\"uuid1\", \"uuid2\"]"),
+    contractor_ids: str | None = Form(None, description="JSON array of contractor IDs: [\"uuid1\", \"uuid2\"]"),
 
     category: str | None = Form(None),
 
@@ -178,31 +182,65 @@ async def upload_document(
     building_id = normalize_uuid_like(building_id)
     event_id = normalize_uuid_like(event_id)
     unit_id = normalize_uuid_like(unit_id)
+    
+    # Parse unit_ids and contractor_ids from JSON strings
+    parsed_unit_ids = []
+    if unit_ids:
+        try:
+            import json
+            parsed_unit_ids = json.loads(unit_ids)
+            if not isinstance(parsed_unit_ids, list):
+                parsed_unit_ids = []
+        except Exception:
+            parsed_unit_ids = []
+    
+    parsed_contractor_ids = []
+    if contractor_ids:
+        try:
+            import json
+            parsed_contractor_ids = json.loads(contractor_ids)
+            if not isinstance(parsed_contractor_ids, list):
+                parsed_contractor_ids = []
+        except Exception:
+            parsed_contractor_ids = []
+    
+    # Combine unit_id (legacy) with unit_ids (new)
+    if unit_id and unit_id not in parsed_unit_ids:
+        parsed_unit_ids.insert(0, unit_id)
+    elif not parsed_unit_ids and unit_id:
+        parsed_unit_ids = [unit_id]
 
     # -----------------------------------------------------
     # Resolve building + unit from ANY provided input
     # -----------------------------------------------------
 
     # If event is provided → derive building + unit
-    event_building, event_unit = get_event_info(event_id)
-
-    # If event provided, but user also supplied inconsistent building/unit
     if event_id:
+        event_building, event_unit = get_event_info(event_id)
+        
         if building_id and building_id != event_building:
             raise HTTPException(400, "Event does not belong to building.")
         building_id = event_building
 
-        if unit_id is None:
-            unit_id = event_unit  # inherit unit from event
-        elif event_unit and unit_id != event_unit:
-            raise HTTPException(400, "Event + unit mismatch.")
+        # Add event's unit to unit_ids if not already present
+        if event_unit and event_unit not in parsed_unit_ids:
+            parsed_unit_ids.append(event_unit)
 
-    # If unit provided → derive building
-    if unit_id:
-        unit_building = get_unit_building(unit_id)
+    # If units provided → derive building from first unit and validate all belong to same building
+    if parsed_unit_ids:
+        unit_building = get_unit_building(parsed_unit_ids[0])
         if building_id and building_id != unit_building:
             raise HTTPException(400, "Unit does not belong to building.")
         building_id = unit_building
+        
+        # Validate all units belong to same building
+        for uid in parsed_unit_ids[1:]:
+            uid_building = get_unit_building(uid)
+            if uid_building != building_id:
+                raise HTTPException(400, f"All units must belong to the same building. Unit {uid} belongs to {uid_building}, expected {building_id}.")
+    
+    # Set legacy unit_id for backward compatibility (first unit if any)
+    unit_id = parsed_unit_ids[0] if parsed_unit_ids else None
 
     # If building not provided → error
     if not building_id:
@@ -287,7 +325,7 @@ async def upload_document(
     payload = sanitize({
         "building_id": building_id,
         "event_id": event_id,
-        "unit_id": unit_id,
+        "unit_id": unit_id,  # Legacy field (first unit for backward compatibility)
         "category": category,
         "filename": clean_filename,
         "s3_key": s3_key,
@@ -310,7 +348,33 @@ async def upload_document(
 
     doc_id = insert_res.data[0]["id"]
 
-    # Step 2 — Fetch
+    # Step 2 — Create junction table entries for units
+    if parsed_unit_ids:
+        for unit_id_val in parsed_unit_ids:
+            try:
+                client.table("document_units").insert({
+                    "document_id": doc_id,
+                    "unit_id": unit_id_val
+                }).execute()
+            except Exception as e:
+                # Ignore duplicate key errors (unique constraint)
+                if "duplicate" not in str(e).lower():
+                    print(f"Warning: Failed to create document_unit relationship: {e}")
+    
+    # Step 3 — Create junction table entries for contractors
+    if parsed_contractor_ids:
+        for contractor_id_val in parsed_contractor_ids:
+            try:
+                client.table("document_contractors").insert({
+                    "document_id": doc_id,
+                    "contractor_id": contractor_id_val
+                }).execute()
+            except Exception as e:
+                # Ignore duplicate key errors (unique constraint)
+                if "duplicate" not in str(e).lower():
+                    print(f"Warning: Failed to create document_contractor relationship: {e}")
+
+    # Step 4 — Fetch with relations
     fetch_res = (
         client.table("documents")
         .select("*")
@@ -320,6 +384,39 @@ async def upload_document(
 
     if not fetch_res.data:
         raise HTTPException(500, "Created document not found")
+    
+    document = fetch_res.data[0]
+    
+    # Enrich with units and contractors
+    # Fetch units and contractors from junction tables
+    document_units = (
+        client.table("document_units")
+        .select("unit_id, units(*)")
+        .eq("document_id", doc_id)
+        .execute()
+    )
+    units = []
+    if document_units.data:
+        for row in document_units.data:
+            if row.get("units"):
+                units.append(row["units"])
+    
+    document_contractors = (
+        client.table("document_contractors")
+        .select("contractor_id, contractors(*)")
+        .eq("document_id", doc_id)
+        .execute()
+    )
+    contractors = []
+    if document_contractors.data:
+        for row in document_contractors.data:
+            if row.get("contractors"):
+                contractors.append(row["contractors"])
+    
+    document["units"] = units
+    document["contractors"] = contractors
+    document["unit_ids"] = [u["id"] for u in units]
+    document["contractor_ids"] = [c["id"] for c in contractors]
 
     # -----------------------------------------------------
     # Update event with s3_key if event_id is provided
@@ -343,7 +440,7 @@ async def upload_document(
             "presigned_url": presigned_url,  # Valid for 1 day
             "uploaded_at": datetime.utcnow().isoformat(),
         },
-        "document": fetch_res.data[0],
+        "document": document,
     }
 
 
