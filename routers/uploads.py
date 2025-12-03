@@ -19,6 +19,11 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.permission_helpers import (
+    is_admin,
+    require_building_access,
+    require_units_access,
+)
 
 router = APIRouter(
     prefix="/uploads",
@@ -261,9 +266,17 @@ async def upload_document(
         raise HTTPException(400, "Must provide either event_id, unit_ids, or building_id.")
 
     # -----------------------------------------------------
-    # Permission check
+    # Permission checks: ensure user has access to building and all units
     # -----------------------------------------------------
-    verify_user_building_access(current_user, building_id)
+    if not is_admin(current_user):
+        # Check building access
+        require_building_access(current_user, building_id)
+        
+        # Check unit access (if units provided)
+        if parsed_unit_ids:
+            # AOAO roles can upload documents for their building even without unit access
+            if current_user.role not in ["aoao", "aoao_staff"]:
+                require_units_access(current_user, parsed_unit_ids)
 
     # -----------------------------------------------------
     # Prepare S3 key
