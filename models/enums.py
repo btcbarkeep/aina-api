@@ -52,3 +52,19 @@ class EventStatus(BaseStrEnum):
     in_progress = "in_progress"
     resolved = "resolved"
     closed = "closed"  # Alternative to resolved
+
+
+# -----------------------------------------------------
+# CONTRACTOR ROLE
+# -----------------------------------------------------
+class ContractorRole(BaseStrEnum):
+    """Type of contractor/service provider."""
+
+    electrician = "electrician"
+    plumber = "plumber"
+    painter = "painter"
+    handyman = "handyman"
+    inspector = "inspector"
+    appraiser = "appraiser"
+    landscaper = "landscaper"
+    other = "other"
