@@ -506,7 +506,29 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                 # Get text before our search text (this is where the label would be)
                                 text_before = context_text[:search_pos].strip()
                                 
-                                # Check if any label keyword appears right before our search text
+                            # Check if any label keyword appears right before our search text
+                            # BUT: Only skip if the search_text itself is part of the label (e.g., "Name" in "Owner Name:")
+                            # If search_text is clearly data (numbers, email, etc.), don't skip even if label is before it
+                            is_clearly_data = False
+                            
+                            # Check if search_text is clearly data (not a label word)
+                            if pattern_type in ["ssn", "credit_card", "owner_phone"]:
+                                # These are always data (numbers)
+                                is_clearly_data = True
+                            elif pattern_type == "owner_email":
+                                # Email addresses are always data
+                                is_clearly_data = True
+                            elif pattern_type == "owner_name":
+                                # Names should have multiple words and not be just "Name"
+                                if len(search_text.split()) >= 2 and search_text.lower() not in ["name", "owner name"]:
+                                    is_clearly_data = True
+                            elif pattern_type == "address":
+                                # Addresses should have numbers
+                                if re.search(r'\d', search_text):
+                                    is_clearly_data = True
+                            
+                            # Only check for label matches if it's not clearly data
+                            if not is_clearly_data:
                                 for label in label_keywords:
                                     label_lower = label.lower()
                                     # Check if label appears at the end of text_before (immediately before search text)
@@ -522,6 +544,9 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                                         is_label_match = True
                                         logger.info(f"Page {page_num + 1}: Skipping instance - '{search_text}' appears close after label '{label}'")
                                         break
+                            else:
+                                # It's clearly data, so even if there's a label before it, that's fine - it's the data after the label
+                                logger.debug(f"Page {page_num + 1}: '{search_text}' is clearly data, allowing redaction even if label is present")
                             
                             if not is_label_match:
                                 filtered_instances.append(inst)
@@ -702,27 +727,51 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                             check_text = page.get_textbox(check_rect).lower()
                             
                             # Check if this appears to be part of a label
-                            label_patterns = [
-                                r"owner\s+name\s*:",
-                                r"home\s+address\s*:",
-                                r"social\s+security\s+(?:number|num)\s*:?",
-                                r"ssn\s*:",
-                                r"credit\s+(?:card\s+)?(?:number|num)\s*:?",
-                                r"phone\s*:",
-                                r"email\s*:"
-                            ]
+                            # BUT: Only skip if search_text is actually part of the label, not the data after it
+                            is_clearly_data = False
+                            
+                            # Check if search_text is clearly data (not a label word)
+                            if pattern_type in ["ssn", "credit_card", "owner_phone"]:
+                                # These are always data (numbers)
+                                is_clearly_data = True
+                            elif pattern_type == "owner_email":
+                                # Email addresses are always data
+                                is_clearly_data = True
+                            elif pattern_type == "owner_name":
+                                # Names should have multiple words and not be just "Name"
+                                if len(search_text.split()) >= 2 and search_text.lower() not in ["name", "owner name"]:
+                                    is_clearly_data = True
+                            elif pattern_type == "address":
+                                # Addresses should have numbers
+                                if re.search(r'\d', search_text):
+                                    is_clearly_data = True
                             
                             is_label = False
-                            search_lower = search_text.lower()
-                            search_pos = check_text.find(search_lower)
-                            
-                            if search_pos != -1:
-                                text_before = check_text[:search_pos].strip()
-                                for pattern in label_patterns:
-                                    if re.search(pattern + r"\s*$", text_before):
-                                        is_label = True
-                                        logger.info(f"Page {page_num + 1}: Skipping redaction - '{search_text}' appears after label pattern '{pattern}'")
-                                        break
+                            # Only check for label patterns if it's not clearly data
+                            if not is_clearly_data:
+                                label_patterns = [
+                                    r"owner\s+name\s*:",
+                                    r"home\s+address\s*:",
+                                    r"social\s+security\s+(?:number|num)\s*:?",
+                                    r"ssn\s*:",
+                                    r"credit\s+(?:card\s+)?(?:number|num)\s*:?",
+                                    r"phone\s*:",
+                                    r"email\s*:"
+                                ]
+                                
+                                search_lower = search_text.lower()
+                                search_pos = check_text.find(search_lower)
+                                
+                                if search_pos != -1:
+                                    text_before = check_text[:search_pos].strip()
+                                    for pattern in label_patterns:
+                                        if re.search(pattern + r"\s*$", text_before):
+                                            is_label = True
+                                            logger.info(f"Page {page_num + 1}: Skipping redaction - '{search_text}' appears after label pattern '{pattern}'")
+                                            break
+                            else:
+                                # It's clearly data, so even if there's a label before it, that's fine
+                                logger.debug(f"Page {page_num + 1}: '{search_text}' is clearly data, allowing redaction")
                             
                             if not is_label:
                                 # Create redaction annotation with solid black fill
