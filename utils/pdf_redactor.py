@@ -536,51 +536,71 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 if is_date:
                     continue  # skip dates
                 
-                # Find the match position in the page_text to extract context
-                match_pos = page_text.find(search_text)
-                if match_pos == -1:
-                    # Try case-insensitive search
-                    match_pos = page_text.lower().find(search_text.lower())
-                
-                if match_pos == -1:
-                    # Match not found in page_text, skip redaction
-                    logger.debug(f"Page {page_num + 1}: Match '{search_text}' not found in page_text, skipping redaction")
-                    continue
-                
-                # Extract 50-80 character context window around the matched text
-                # Using 60 characters as middle ground (50-80 range)
-                start_pos = max(0, match_pos - 60)
-                end_pos = min(len(page_text), match_pos + len(search_text) + 60)
-                context_lower = page_text[start_pos:end_pos].lower()
-                
-                # For email, phone, address, credit card, and SSN patterns, always allow redaction if the pattern matched
-                # (since the pattern itself requires context like "Email:", "Phone:", "Home Address:", "Credit Card:", "Social Security:")
-                # ALSO: If this owner info was found in first pass, always allow redaction (it was already validated)
-                if pattern_type in ["owner_email", "owner_phone", "address", "credit_card", "ssn"]:
-                    allow_redaction = True
-                    logger.debug(f"Page {page_num + 1}: Pattern '{pattern_type}' matched with context, allowing redaction")
                 # Check if this is owner info from first pass (already validated, so always allow)
-                elif pattern_type == "owner_name" and search_text in all_owner_names:
+                # Check this FIRST before any context checks
+                # For owner_name, we need to extract the name part to check against all_owner_names
+                is_from_first_pass = False
+                if pattern_type == "owner_name":
+                    # Try to extract the name part from search_text (in case it includes the label)
+                    name_only = search_text
+                    name_only = re.sub(r'^(?:Owner\s+Name|Owner|The\s+owner|Unit\s+Owner|Homeowner|Tenant|Contact)[:\s,]+', '', name_only, flags=re.IGNORECASE).strip()
+                    # Check if the extracted name (or original search_text) is in all_owner_names
+                    is_from_first_pass = (name_only in all_owner_names) or (search_text in all_owner_names)
+                elif pattern_type == "owner_email":
+                    # Extract just the email part
+                    email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", search_text, re.IGNORECASE)
+                    if email_match:
+                        is_from_first_pass = email_match.group(1) in all_owner_emails
+                    else:
+                        is_from_first_pass = search_text in all_owner_emails
+                elif pattern_type == "owner_phone":
+                    # Extract just the phone part
+                    phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", search_text)
+                    if phone_match:
+                        is_from_first_pass = phone_match.group(1) in all_owner_phones
+                    else:
+                        is_from_first_pass = search_text in all_owner_phones
+                
+                if is_from_first_pass:
+                    # Skip context check for first pass items - they're already validated
                     allow_redaction = True
-                    logger.debug(f"Page {page_num + 1}: Owner name '{search_text}' from first pass, allowing redaction")
-                elif pattern_type == "owner_email" and search_text in all_owner_emails:
-                    allow_redaction = True
-                    logger.debug(f"Page {page_num + 1}: Owner email '{search_text}' from first pass, allowing redaction")
-                elif pattern_type == "owner_phone" and search_text in all_owner_phones:
-                    allow_redaction = True
-                    logger.debug(f"Page {page_num + 1}: Owner phone '{search_text}' from first pass, allowing redaction")
-                # FIRST: Check sensitive keywords (MUST come before owner-context check)
-                elif any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
-                    allow_redaction = True
-                    logger.debug(f"Page {page_num + 1}: Sensitive keyword found in context for '{search_text}', allowing redaction")
-                # ELSE: Check owner-context
-                elif any(w in context_lower for w in OWNER_CONTEXT_KEYWORDS):
-                    allow_redaction = True
-                    logger.debug(f"Page {page_num + 1}: Owner context found for '{search_text}', allowing redaction")
-                # ELSE: No context found
+                    logger.info(f"Page {page_num + 1}: '{search_text}' from first pass, skipping context check, allowing redaction")
                 else:
-                    allow_redaction = False
-                    logger.warning(f"Page {page_num + 1}: No context found for '{search_text}' (pattern_type: {pattern_type}) - will NOT redact")
+                    # For other items, check context
+                    # Find the match position in the page_text to extract context
+                    match_pos = page_text.find(search_text)
+                    if match_pos == -1:
+                        # Try case-insensitive search
+                        match_pos = page_text.lower().find(search_text.lower())
+                    
+                    if match_pos == -1:
+                        # Match not found in page_text, skip redaction
+                        logger.debug(f"Page {page_num + 1}: Match '{search_text}' not found in page_text, skipping redaction")
+                        continue
+                    
+                    # Extract 50-80 character context window around the matched text
+                    # Using 60 characters as middle ground (50-80 range)
+                    start_pos = max(0, match_pos - 60)
+                    end_pos = min(len(page_text), match_pos + len(search_text) + 60)
+                    context_lower = page_text[start_pos:end_pos].lower()
+                    
+                    # For email, phone, address, credit card, and SSN patterns, always allow redaction if the pattern matched
+                    # (since the pattern itself requires context like "Email:", "Phone:", "Home Address:", "Credit Card:", "Social Security:")
+                    if pattern_type in ["owner_email", "owner_phone", "address", "credit_card", "ssn"]:
+                        allow_redaction = True
+                        logger.debug(f"Page {page_num + 1}: Pattern '{pattern_type}' matched with context, allowing redaction")
+                    # FIRST: Check sensitive keywords (MUST come before owner-context check)
+                    elif any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
+                        allow_redaction = True
+                        logger.debug(f"Page {page_num + 1}: Sensitive keyword found in context for '{search_text}', allowing redaction")
+                    # ELSE: Check owner-context
+                    elif any(w in context_lower for w in OWNER_CONTEXT_KEYWORDS):
+                        allow_redaction = True
+                        logger.debug(f"Page {page_num + 1}: Owner context found for '{search_text}', allowing redaction")
+                    # ELSE: No context found
+                    else:
+                        allow_redaction = False
+                        logger.warning(f"Page {page_num + 1}: No context found for '{search_text}' (pattern_type: {pattern_type}) - will NOT redact. Context: '{context_lower[:100]}...'")
                 
                 # Check if matched text is purely numeric (allowing commas and periods)
                 # Remove commas, periods, and spaces, then check if remaining is all digits
