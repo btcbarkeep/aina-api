@@ -83,7 +83,7 @@ def get_s3():
 # Building access check
 # -----------------------------------------------------
 def verify_user_building_access(current_user: CurrentUser, building_id: str):
-    if current_user.role in ["admin", "super_admin", "hoa"]:
+    if current_user.role in ["admin", "super_admin", "aoao"]:
         return
 
     client = get_supabase_client()
