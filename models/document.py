@@ -33,21 +33,20 @@ class DocumentBase(BaseModel):
     """
     Shared fields for create/update/read.
     building_id REQUIRED for direct uploads.
-    event_id/unit_id are optional.
+    event_id is optional.
     """
 
     event_id: Optional[UUID] = None
     building_id: UUID
     
-    # Legacy single unit_id (for backward compatibility)
-    # If unit_ids is provided, this is ignored
-    unit_id: Optional[UUID] = None
-
-    # NEW — Multiple units support
+    # Multiple units support (many-to-many via document_units junction table)
     unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs associated with this document")
 
-    # NEW — Multiple contractors support
+    # Multiple contractors support (many-to-many via document_contractors junction table)
     contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs associated with this document")
+
+    # Category support
+    category_id: Optional[UUID] = Field(None, description="Category ID for this document")
 
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
@@ -76,10 +75,6 @@ class DocumentBase(BaseModel):
             raise ValueError("building_id must be a valid UUID")
         return uuid_val
 
-    @field_validator("unit_id", mode="before")
-    def validate_unit_id(cls, v):
-        return _parse_uuid(v)
-
     @field_validator("unit_ids", mode="before")
     def validate_unit_ids(cls, v):
         if not v:
@@ -105,6 +100,10 @@ class DocumentBase(BaseModel):
             if parsed:
                 result.append(parsed)
         return result if result else None
+
+    @field_validator("category_id", mode="before")
+    def validate_category_id(cls, v):
+        return _parse_uuid(v)
 
 
 # ======================================================
@@ -125,9 +124,9 @@ class DocumentCreate(DocumentBase):
 class DocumentUpdate(BaseModel):
     event_id: Optional[UUID] = None
     building_id: Optional[UUID] = None
-    unit_id: Optional[UUID] = None
     unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs associated with this document")
     contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs associated with this document")
+    category_id: Optional[UUID] = Field(None, description="Category ID for this document")
 
     s3_key: Optional[str] = None
     filename: Optional[str] = None
@@ -147,8 +146,8 @@ class DocumentUpdate(BaseModel):
     def validate_building_id(cls, v):
         return _parse_uuid(v)
 
-    @field_validator("unit_id", mode="before")
-    def validate_unit_id(cls, v):
+    @field_validator("category_id", mode="before")
+    def validate_category_id(cls, v):
         return _parse_uuid(v)
 
     @field_validator("unit_ids", mode="before")
@@ -176,6 +175,10 @@ class DocumentUpdate(BaseModel):
             if parsed:
                 result.append(parsed)
         return result if result else None
+
+    @field_validator("category_id", mode="before")
+    def validate_category_id(cls, v):
+        return _parse_uuid(v)
 
 
 # ======================================================
