@@ -168,16 +168,23 @@ def find_sensitive_patterns(text: str) -> List[Tuple[str, str]]:
     matches = []
     pattern_types = ["owner_name", "owner_email", "owner_phone", "ssn", "credit_card", "address"]
     
+    logger.debug(f"find_sensitive_patterns: Searching in text of length {len(text)}")
+    logger.debug(f"find_sensitive_patterns: First 200 chars: {text[:200]}")
+    
     # Iterate through all compiled patterns
     for pattern_type, compiled_pattern in zip(pattern_types, COMPILED_PATTERNS):
+        pattern_matches = list(compiled_pattern.finditer(text))
+        logger.debug(f"find_sensitive_patterns: Pattern '{pattern_type}' found {len(pattern_matches)} matches")
+        
         # Ensure we only process owner patterns for OCR (safeguard for OCR usage)
         # OCR is ONLY used for owner-related patterns
         if pattern_type not in {"owner_name", "owner_email", "owner_phone"}:
             # For non-owner patterns, still check but note they won't use OCR
             pass
         
-        for match in compiled_pattern.finditer(text):
+        for match in pattern_matches:
             matched_text = match.group()
+            logger.debug(f"find_sensitive_patterns: Found {pattern_type} match: '{matched_text[:50]}...'")
             
             # For redaction, we want to redact the entire match including the label
             # So we'll add both the full match (with label) and the extracted data
@@ -539,6 +546,9 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 if is_date:
                     continue  # skip dates
                 
+                # Initialize allow_redaction - default to False, will be set to True if conditions are met
+                allow_redaction = False
+                
                 # Check if this is owner info from first pass (already validated, so always allow)
                 # Check this FIRST before any context checks
                 # For owner_name, we need to extract the name part to check against all_owner_names
@@ -618,10 +628,10 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 
                 # If not allow_redaction, continue (ONLY executes after BOTH checks)
                 if not allow_redaction:
-                    logger.debug(f"Page {page_num + 1}: Skipping redaction for '{search_text}' - no owner context or sensitive keywords found in window")
+                    logger.warning(f"Page {page_num + 1}: ❌ SKIPPING redaction for '{search_text}' (pattern: {pattern_type}) - allow_redaction is False")
                     continue  # DO NOT REDACT OUTSIDE OWNER CONTEXT
                 
-                logger.debug(f"Page {page_num + 1}: Redaction allowed for '{search_text}', proceeding with redaction")
+                logger.info(f"Page {page_num + 1}: ✅ Redaction ALLOWED for '{search_text}' (pattern: {pattern_type}), proceeding with redaction")
                 
                 # No longer filtering out labels - we want to redact everything including labels
                 
@@ -874,11 +884,14 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         # Apply redactions on this page
         if page_redactions > 0:
             try:
+                logger.info(f"Page {page_num + 1}: Applying {page_redactions} redaction(s)...")
                 page.apply_redactions()
                 pages_with_redactions += 1
-                logger.info(f"Page {page_num + 1}: Applied {page_redactions} redaction(s)")
+                logger.info(f"Page {page_num + 1}: ✅ Successfully applied {page_redactions} redaction(s)")
             except Exception as e:
-                logger.error(f"Failed to apply redactions on page {page_num + 1}: {e}")
+                logger.error(f"Page {page_num + 1}: ❌ Failed to apply redactions: {e}")
+        else:
+            logger.debug(f"Page {page_num + 1}: No redactions to apply (page_redactions = 0)")
     
     # Save or copy the PDF
     try:
