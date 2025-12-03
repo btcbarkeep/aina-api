@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel, field_validator, Field
 
@@ -38,7 +38,16 @@ class DocumentBase(BaseModel):
 
     event_id: Optional[UUID] = None
     building_id: UUID
+    
+    # Legacy single unit_id (for backward compatibility)
+    # If unit_ids is provided, this is ignored
     unit_id: Optional[UUID] = None
+
+    # NEW — Multiple units support
+    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs associated with this document")
+
+    # NEW — Multiple contractors support
+    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs associated with this document")
 
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
@@ -71,6 +80,32 @@ class DocumentBase(BaseModel):
     def validate_unit_id(cls, v):
         return _parse_uuid(v)
 
+    @field_validator("unit_ids", mode="before")
+    def validate_unit_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            parsed = _parse_uuid(item)
+            if parsed:
+                result.append(parsed)
+        return result if result else None
+
+    @field_validator("contractor_ids", mode="before")
+    def validate_contractor_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            parsed = _parse_uuid(item)
+            if parsed:
+                result.append(parsed)
+        return result if result else None
+
 
 # ======================================================
 # CREATE MODEL
@@ -91,6 +126,8 @@ class DocumentUpdate(BaseModel):
     event_id: Optional[UUID] = None
     building_id: Optional[UUID] = None
     unit_id: Optional[UUID] = None
+    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs associated with this document")
+    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs associated with this document")
 
     s3_key: Optional[str] = None
     filename: Optional[str] = None
@@ -113,6 +150,32 @@ class DocumentUpdate(BaseModel):
     @field_validator("unit_id", mode="before")
     def validate_unit_id(cls, v):
         return _parse_uuid(v)
+
+    @field_validator("unit_ids", mode="before")
+    def validate_unit_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            parsed = _parse_uuid(item)
+            if parsed:
+                result.append(parsed)
+        return result if result else None
+
+    @field_validator("contractor_ids", mode="before")
+    def validate_contractor_ids(cls, v):
+        if not v:
+            return None
+        if not isinstance(v, list):
+            return None
+        result = []
+        for item in v:
+            parsed = _parse_uuid(item)
+            if parsed:
+                result.append(parsed)
+        return result if result else None
 
 
 # ======================================================
