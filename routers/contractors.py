@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field
 
 from dependencies.auth import (
     get_current_user,
@@ -11,7 +11,6 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
-from models.enums import ContractorRole
 
 
 router = APIRouter(
@@ -56,6 +55,157 @@ def ensure_contractor_access(current_user: CurrentUser, contractor_id: str):
 
 
 # ============================================================
+# Helper — Validate role names exist in contractor_roles table
+# ============================================================
+def validate_role_names(role_names: List[str]) -> List[str]:
+    """Validate that all role names exist in contractor_roles table. Returns list of valid role names."""
+    if not role_names:
+        return []
+    
+    client = get_supabase_client()
+    
+    # Get all valid role names from contractor_roles table
+    roles_result = (
+        client.table("contractor_roles")
+        .select("name")
+        .execute()
+    )
+    
+    valid_role_names = {row["name"].lower() for row in (roles_result.data or [])}
+    
+    # Validate each provided role name
+    validated_roles = []
+    for role_name in role_names:
+        if not role_name or not isinstance(role_name, str):
+            continue
+        role_lower = role_name.lower()
+        # Check if role exists (case-insensitive)
+        if role_lower in valid_role_names:
+            # Find the exact case from database
+            for db_role in roles_result.data:
+                if db_role["name"].lower() == role_lower:
+                    validated_roles.append(db_role["name"])
+                    break
+        else:
+            raise HTTPException(400, f"Invalid role name: {role_name}. Role does not exist in contractor_roles table.")
+    
+    # Remove duplicates while preserving order
+    return list(dict.fromkeys(validated_roles))
+
+
+# ============================================================
+# Helper — Get role IDs for role names
+# ============================================================
+def get_role_ids(role_names: List[str]) -> List[str]:
+    """Get role IDs for given role names."""
+    if not role_names:
+        return []
+    
+    client = get_supabase_client()
+    
+    # Get role IDs for the validated role names
+    role_names_lower = [name.lower() for name in role_names]
+    roles_result = (
+        client.table("contractor_roles")
+        .select("id, name")
+        .execute()
+    )
+    
+    role_id_map = {}
+    for row in (roles_result.data or []):
+        role_id_map[row["name"].lower()] = row["id"]
+    
+    role_ids = []
+    for role_name in role_names:
+        role_lower = role_name.lower()
+        if role_lower in role_id_map:
+            role_ids.append(role_id_map[role_lower])
+    
+    return role_ids
+
+
+# ============================================================
+# Helper — Get roles for a contractor
+# ============================================================
+def get_contractor_roles(contractor_id: str) -> List[str]:
+    """Get list of role names for a contractor."""
+    client = get_supabase_client()
+    
+    # Join contractor_role_assignments → contractor_roles
+    result = (
+        client.table("contractor_role_assignments")
+        .select("role_id, contractor_roles(name)")
+        .eq("contractor_id", contractor_id)
+        .execute()
+    )
+    
+    roles = []
+    if result.data:
+        for row in result.data:
+            if row.get("contractor_roles") and row["contractor_roles"].get("name"):
+                roles.append(row["contractor_roles"]["name"])
+    
+    return roles
+
+
+# ============================================================
+# Helper — Create role assignments
+# ============================================================
+def create_role_assignments(contractor_id: str, role_names: List[str]):
+    """Create role assignments for a contractor."""
+    if not role_names:
+        return
+    
+    validated_roles = validate_role_names(role_names)
+    role_ids = get_role_ids(validated_roles)
+    
+    if not role_ids:
+        return
+    
+    client = get_supabase_client()
+    
+    # Insert role assignments
+    for role_id in role_ids:
+        try:
+            client.table("contractor_role_assignments").insert({
+                "contractor_id": contractor_id,
+                "role_id": role_id
+            }).execute()
+        except Exception as e:
+            # Ignore duplicate key errors (unique constraint)
+            if "duplicate" not in str(e).lower():
+                raise HTTPException(500, f"Failed to create role assignment: {e}")
+
+
+# ============================================================
+# Helper — Update role assignments (delete old, create new)
+# ============================================================
+def update_role_assignments(contractor_id: str, role_names: List[str]):
+    """Update role assignments by deleting old ones and creating new ones."""
+    client = get_supabase_client()
+    
+    # Delete existing role assignments
+    client.table("contractor_role_assignments").delete().eq("contractor_id", contractor_id).execute()
+    
+    # Create new role assignments
+    create_role_assignments(contractor_id, role_names)
+
+
+# ============================================================
+# Helper — Enrich contractor with roles
+# ============================================================
+def enrich_contractor_with_roles(contractor: dict) -> dict:
+    """Add roles array to contractor dict."""
+    contractor_id = contractor.get("id")
+    if not contractor_id:
+        contractor["roles"] = []
+        return contractor
+    
+    contractor["roles"] = get_contractor_roles(contractor_id)
+    return contractor
+
+
+# ============================================================
 # Pydantic Models
 # ============================================================
 class ContractorBase(BaseModel):
@@ -67,35 +217,17 @@ class ContractorBase(BaseModel):
     insurance_info: Optional[str] = None
     address: Optional[str] = None
     logo_url: Optional[str] = None
-    role: ContractorRole
-
-    @field_validator("role", mode="before")
-    def validate_role(cls, v):
-        if v is None:
-            return None
-        if isinstance(v, ContractorRole):
-            return v
-        if isinstance(v, str):
-            # Try to match the string value to an enum value
-            try:
-                return ContractorRole(v.lower())
-            except ValueError:
-                # Check if it's a valid enum value (case-insensitive)
-                valid_values = [e.value for e in ContractorRole]
-                if v.lower() in [val.lower() for val in valid_values]:
-                    return ContractorRole(v.lower())
-                raise ValueError(f"Invalid contractor role: {v}. Must be one of: {', '.join(valid_values)}")
-        raise ValueError(f"Invalid contractor role type: {type(v)}")
 
 
 class ContractorCreate(ContractorBase):
-    """Role is required when creating a contractor."""
-    pass
+    """Roles are required when creating a contractor."""
+    roles: List[str] = Field(..., description="List of role names (e.g., ['plumber', 'electrician'])", example=["plumber"])
 
 
 class ContractorRead(ContractorBase):
     id: str
     created_at: Optional[str] = None
+    roles: List[str] = Field(default_factory=list, description="List of role names assigned to this contractor", example=["plumber"])
 
 
 class ContractorUpdate(BaseModel):
@@ -107,25 +239,7 @@ class ContractorUpdate(BaseModel):
     insurance_info: Optional[str] = None
     address: Optional[str] = None
     logo_url: Optional[str] = None
-    role: Optional[ContractorRole] = None
-
-    @field_validator("role", mode="before")
-    def validate_role(cls, v):
-        if v is None:
-            return None
-        if isinstance(v, ContractorRole):
-            return v
-        if isinstance(v, str):
-            # Try to match the string value to an enum value
-            try:
-                return ContractorRole(v.lower())
-            except ValueError:
-                # Check if it's a valid enum value (case-insensitive)
-                valid_values = [e.value for e in ContractorRole]
-                if v.lower() in [val.lower() for val in valid_values]:
-                    return ContractorRole(v.lower())
-                raise ValueError(f"Invalid contractor role: {v}. Must be one of: {', '.join(valid_values)}")
-        raise ValueError(f"Invalid contractor role type: {type(v)}")
+    roles: Optional[List[str]] = Field(None, description="List of role names to assign (replaces existing roles)", example=["plumber", "electrician"])
 
 
 # ============================================================
@@ -140,21 +254,59 @@ def list_contractors(
         raise HTTPException(403, "Only admin roles can list all contractors.")
 
     client = get_supabase_client()
-    query = client.table("contractors").select("*")
-
-    # Filter by role if provided
+    
+    # If filtering by role, use junction table join
     if role:
-        # Validate role is a valid enum value
-        try:
-            role_enum = ContractorRole(role.lower())
-            query = query.eq("role", role_enum.value)
-        except ValueError:
-            valid_roles = [e.value for e in ContractorRole]
-            raise HTTPException(400, f"Invalid role: {role}. Must be one of: {', '.join(valid_roles)}")
+        # Validate role exists in contractor_roles table
+        role_result = (
+            client.table("contractor_roles")
+            .select("id, name")
+            .ilike("name", role)
+            .limit(1)
+            .execute()
+        )
+        
+        if not role_result.data:
+            raise HTTPException(400, f"Invalid role: {role}. Role does not exist in contractor_roles table.")
+        
+        role_id = role_result.data[0]["id"]
+        
+        # Get contractor IDs that have this role
+        assignments_result = (
+            client.table("contractor_role_assignments")
+            .select("contractor_id")
+            .eq("role_id", role_id)
+            .execute()
+        )
+        
+        contractor_ids = [row["contractor_id"] for row in (assignments_result.data or [])]
+        
+        if not contractor_ids:
+            return []
+        
+        # Fetch contractors with these IDs
+        result = (
+            client.table("contractors")
+            .select("*")
+            .in_("id", contractor_ids)
+            .order("company_name")
+            .execute()
+        )
+    else:
+        # No filter - get all contractors
+        result = (
+            client.table("contractors")
+            .select("*")
+            .order("company_name")
+            .execute()
+        )
 
-    result = query.order("company_name").execute()
-
-    return result.data or []
+    contractors = result.data or []
+    
+    # Enrich each contractor with roles
+    enriched_contractors = [enrich_contractor_with_roles(c) for c in contractors]
+    
+    return enriched_contractors
 
 
 # ============================================================
@@ -176,7 +328,12 @@ def get_contractor(contractor_id: str, current_user: CurrentUser = Depends(get_c
     if not rows:
         raise HTTPException(404, "Contractor not found")
 
-    return rows[0]
+    contractor = rows[0]
+    
+    # Enrich with roles
+    contractor = enrich_contractor_with_roles(contractor)
+
+    return contractor
 
 
 # ============================================================
@@ -189,9 +346,20 @@ def get_contractor(contractor_id: str, current_user: CurrentUser = Depends(get_c
 )
 def create_contractor(payload: ContractorCreate):
     client = get_supabase_client()
-    data = sanitize(payload.model_dump())
+    
+    # Extract roles before sanitizing (roles don't go to contractors table)
+    roles = payload.roles or []
+    
+    # Validate roles exist
+    if not roles:
+        raise HTTPException(400, "At least one role is required when creating a contractor.")
+    
+    validated_roles = validate_role_names(roles)
+    
+    # Prepare contractor data (exclude roles - they go to junction table)
+    data = sanitize(payload.model_dump(exclude={"roles"}))
 
-    # Step 1 — Insert
+    # Step 1 — Insert contractor
     try:
         insert_res = client.table("contractors").insert(data).execute()
     except Exception as e:
@@ -202,7 +370,10 @@ def create_contractor(payload: ContractorCreate):
 
     contractor_id = insert_res.data[0]["id"]
 
-    # Step 2 — Fetch created contractor
+    # Step 2 — Create role assignments
+    create_role_assignments(contractor_id, validated_roles)
+
+    # Step 3 — Fetch created contractor with roles
     fetch_res = (
         client.table("contractors")
         .select("*")
@@ -213,7 +384,12 @@ def create_contractor(payload: ContractorCreate):
     if not fetch_res.data:
         raise HTTPException(500, "Created contractor not found")
 
-    return fetch_res.data[0]
+    contractor = fetch_res.data[0]
+    
+    # Enrich with roles
+    contractor = enrich_contractor_with_roles(contractor)
+
+    return contractor
 
 
 # ============================================================
@@ -226,23 +402,36 @@ def create_contractor(payload: ContractorCreate):
 )
 def update_contractor(contractor_id: str, payload: ContractorUpdate):
     client = get_supabase_client()
-    update_data = sanitize(payload.model_dump(exclude_unset=True))
+    
+    # Extract roles if provided (roles don't go to contractors table)
+    roles = payload.roles
+    update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"roles"}))
 
-    # Step 1 — update
-    try:
-        update_res = (
-            client.table("contractors")
-            .update(update_data)
-            .eq("id", contractor_id)
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Supabase update error: {e}")
+    # Step 1 — Update contractor (if any fields changed)
+    if update_data:
+        try:
+            update_res = (
+                client.table("contractors")
+                .update(update_data)
+                .eq("id", contractor_id)
+                .execute()
+            )
+        except Exception as e:
+            raise HTTPException(500, f"Supabase update error: {e}")
 
-    if not update_res.data:
-        raise HTTPException(404, "Contractor not found")
+        if not update_res.data:
+            raise HTTPException(404, "Contractor not found")
 
-    # Step 2 — fetch updated contractor
+    # Step 2 — Update role assignments if roles were provided
+    if roles is not None:
+        if roles:
+            validated_roles = validate_role_names(roles)
+            update_role_assignments(contractor_id, validated_roles)
+        else:
+            # Empty list means remove all roles
+            client.table("contractor_role_assignments").delete().eq("contractor_id", contractor_id).execute()
+
+    # Step 3 — Fetch updated contractor with roles
     fetch_res = (
         client.table("contractors")
         .select("*")
@@ -253,7 +442,12 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
     if not fetch_res.data:
         raise HTTPException(500, "Updated contractor not found")
 
-    return fetch_res.data[0]
+    contractor = fetch_res.data[0]
+    
+    # Enrich with roles
+    contractor = enrich_contractor_with_roles(contractor)
+
+    return contractor
 
 
 # ============================================================
