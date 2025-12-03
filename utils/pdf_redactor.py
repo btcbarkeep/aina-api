@@ -346,6 +346,56 @@ def apply_redactions(input_path: str, output_path: str) -> None:
     total_redactions = 0
     pages_with_redactions = 0
     
+    # First pass: Collect all owner names found across all pages
+    # This allows us to redact names everywhere, even before they're first mentioned
+    all_owner_names = set()
+    all_owner_emails = set()
+    all_owner_phones = set()
+    
+    # First pass: Extract all owner information from all pages
+    logger.info("First pass: Extracting all owner information from document...")
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        
+        # Extract text
+        page_text = ""
+        if has_text(page):
+            blocks = page.get_text("blocks")
+            page_text = " ".join(b[4] for b in blocks if len(b) > 4)
+        else:
+            page_text = ocr_page_to_text(page)
+        
+        if page_text:
+            # Find all owner patterns
+            matches = find_sensitive_patterns(page_text)
+            
+            # Collect owner names, emails, phones
+            for pattern_type, matched_text in matches:
+                if pattern_type == "owner_name":
+                    # Extract just the name part
+                    name_only = matched_text
+                    name_only = re.sub(r'^(?:Owner\s+Name|Owner|The\s+owner|Unit\s+Owner|Homeowner|Tenant|Contact)[:\s,]+', '', name_only, flags=re.IGNORECASE).strip()
+                    # Check if it's a date
+                    is_date = False
+                    for date_pattern in DATE_PATTERNS:
+                        if re.search(date_pattern, name_only, re.IGNORECASE):
+                            is_date = True
+                            break
+                    if not is_date and len(name_only.split()) >= 2:
+                        all_owner_names.add(name_only)
+                elif pattern_type == "owner_email":
+                    # Extract just email
+                    email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", matched_text, re.IGNORECASE)
+                    if email_match:
+                        all_owner_emails.add(email_match.group(1))
+                elif pattern_type == "owner_phone":
+                    # Extract just phone
+                    phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", matched_text)
+                    if phone_match:
+                        all_owner_phones.add(phone_match.group(1))
+    
+    logger.info(f"Found {len(all_owner_names)} unique owner name(s), {len(all_owner_emails)} email(s), {len(all_owner_phones)} phone(s) across document")
+    
     # Process each page
     for page_num in range(len(doc)):
         page = doc[page_num]
@@ -367,6 +417,30 @@ def apply_redactions(input_path: str, output_path: str) -> None:
         
         # Find sensitive patterns
         matches = find_sensitive_patterns(page_text)
+        
+        # Add all owner names/emails/phones found in first pass to matches for this page
+        # This ensures we redact them everywhere, even if they appear before the label
+        for owner_name in all_owner_names:
+            matches.append(("owner_name", owner_name))
+            logger.debug(f"Page {page_num + 1}: Added owner name from first pass: '{owner_name}'")
+        for owner_email in all_owner_emails:
+            matches.append(("owner_email", owner_email))
+            logger.debug(f"Page {page_num + 1}: Added owner email from first pass: '{owner_email}'")
+        for owner_phone in all_owner_phones:
+            matches.append(("owner_phone", owner_phone))
+            logger.debug(f"Page {page_num + 1}: Added owner phone from first pass: '{owner_phone}'")
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_matches = []
+        for pattern_type, matched_text in matches:
+            key = (pattern_type, matched_text.lower())
+            if key not in seen:
+                seen.add(key)
+                unique_matches.append((pattern_type, matched_text))
+        matches = unique_matches
+        
+        logger.debug(f"Page {page_num + 1}: Total matches after first pass merge: {len(matches)}")
         
         # Only filter matches if we used OCR (OCR should only be used for owner patterns)
         # If we have extractable text, process ALL patterns including SSN, credit card, address
@@ -481,9 +555,20 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 
                 # For email, phone, address, credit card, and SSN patterns, always allow redaction if the pattern matched
                 # (since the pattern itself requires context like "Email:", "Phone:", "Home Address:", "Credit Card:", "Social Security:")
+                # ALSO: If this owner info was found in first pass, always allow redaction (it was already validated)
                 if pattern_type in ["owner_email", "owner_phone", "address", "credit_card", "ssn"]:
                     allow_redaction = True
                     logger.debug(f"Page {page_num + 1}: Pattern '{pattern_type}' matched with context, allowing redaction")
+                # Check if this is owner info from first pass (already validated, so always allow)
+                elif pattern_type == "owner_name" and search_text in all_owner_names:
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Owner name '{search_text}' from first pass, allowing redaction")
+                elif pattern_type == "owner_email" and search_text in all_owner_emails:
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Owner email '{search_text}' from first pass, allowing redaction")
+                elif pattern_type == "owner_phone" and search_text in all_owner_phones:
+                    allow_redaction = True
+                    logger.debug(f"Page {page_num + 1}: Owner phone '{search_text}' from first pass, allowing redaction")
                 # FIRST: Check sensitive keywords (MUST come before owner-context check)
                 elif any(kw in context_lower for kw in SENSITIVE_KEYWORDS):
                     allow_redaction = True
@@ -495,6 +580,7 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 # ELSE: No context found
                 else:
                     allow_redaction = False
+                    logger.warning(f"Page {page_num + 1}: No context found for '{search_text}' (pattern_type: {pattern_type}) - will NOT redact")
                 
                 # Check if matched text is purely numeric (allowing commas and periods)
                 # Remove commas, periods, and spaces, then check if remaining is all digits
@@ -520,7 +606,18 @@ def apply_redactions(input_path: str, output_path: str) -> None:
                 
                 # Strategy 1: Exact match
                 text_instances = page.search_for(search_text)
-                logger.debug(f"Page {page_num + 1}: Exact search for '{search_text}' found {len(text_instances)} instance(s)")
+                logger.info(f"Page {page_num + 1}: Exact search for '{search_text}' (pattern: {pattern_type}) found {len(text_instances)} instance(s)")
+                
+                # If no instances found, try debugging why
+                if not text_instances:
+                    # Try to find the text in page_text to see if it exists
+                    if search_text.lower() in page_text.lower():
+                        pos = page_text.lower().find(search_text.lower())
+                        context = page_text[max(0, pos-50):min(len(page_text), pos+len(search_text)+50)]
+                        logger.warning(f"Page {page_num + 1}: '{search_text}' found in page_text but NOT found by search_for(). Context: '...{context}...'")
+                        logger.warning(f"Page {page_num + 1}: This suggests a formatting/encoding issue. Will try alternative search strategies.")
+                    else:
+                        logger.warning(f"Page {page_num + 1}: '{search_text}' NOT found in page_text at all - may not exist on this page")
                 
                 # No longer filtering out labels - we want to redact everything including labels
                 
