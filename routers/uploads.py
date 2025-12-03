@@ -99,9 +99,10 @@ def verify_user_building_access(current_user: CurrentUser, building_id: str):
         raise HTTPException(403, "User does not have access to this building.")
 
 # -----------------------------------------------------
-# event_id → (building_id, unit_id)
+# event_id → building_id
 # -----------------------------------------------------
 def get_event_info(event_id: str | None):
+    """Get building_id for an event. Returns (building_id, None) for compatibility."""
     normalized = normalize_uuid_like(event_id)
     if not normalized:
         return None, None
@@ -109,7 +110,7 @@ def get_event_info(event_id: str | None):
     client = get_supabase_client()
     rows = (
         client.table("events")
-        .select("building_id, unit_id")
+        .select("building_id")
         .eq("id", normalized)
         .limit(1)
         .execute()
@@ -118,7 +119,7 @@ def get_event_info(event_id: str | None):
     if not rows:
         raise HTTPException(404, "Event not found")
 
-    return rows[0]["building_id"], rows[0].get("unit_id")
+    return rows[0]["building_id"], None
 
 # -----------------------------------------------------
 # unit_id → building_id
@@ -159,7 +160,6 @@ async def upload_document(
     # New full compatibility
     building_id: str | None = Form(None),
     event_id: str | None = Form(None),
-    unit_id: str | None = Form(None),
     
     # NEW — Multiple units and contractors support
     unit_ids: str | None = Form(None, description="JSON array of unit IDs: [\"uuid1\", \"uuid2\"]"),
@@ -174,14 +174,16 @@ async def upload_document(
 ):
     """
     Uploads a file to S3 AND creates a Supabase document record.
-    Supports: building_id, event_id, unit_id.
+    Supports: building_id, event_id, unit_ids (array).
     Requires: filename (custom filename for the uploaded file).
     """
 
     # Normalize values
     building_id = normalize_uuid_like(building_id)
     event_id = normalize_uuid_like(event_id)
-    unit_id = normalize_uuid_like(unit_id)
+    
+    # Validate building_id is not None (required by schema) - but allow it to be set later from event/unit
+    # We'll validate it's set before creating the document record
     
     # Parse unit_ids and contractor_ids from JSON strings
     parsed_unit_ids = []
@@ -204,33 +206,31 @@ async def upload_document(
         except Exception:
             parsed_contractor_ids = []
     
-    # Combine unit_id (legacy) with unit_ids (new)
-    if unit_id and unit_id not in parsed_unit_ids:
-        parsed_unit_ids.insert(0, unit_id)
-    elif not parsed_unit_ids and unit_id:
-        parsed_unit_ids = [unit_id]
+    # Remove duplicates
+    parsed_unit_ids = list(dict.fromkeys(parsed_unit_ids))
+    parsed_contractor_ids = list(dict.fromkeys(parsed_contractor_ids))
 
     # -----------------------------------------------------
-    # Resolve building + unit from ANY provided input
+    # Resolve building from ANY provided input
     # -----------------------------------------------------
 
-    # If event is provided → derive building + unit
+    # If event is provided → derive building
     if event_id:
-        event_building, event_unit = get_event_info(event_id)
+        event_building, _ = get_event_info(event_id)
         
         if building_id and building_id != event_building:
             raise HTTPException(400, "Event does not belong to building.")
         building_id = event_building
 
-        # Add event's unit to unit_ids if not already present
-        if event_unit and event_unit not in parsed_unit_ids:
-            parsed_unit_ids.append(event_unit)
-
     # If units provided → derive building from first unit and validate all belong to same building
     if parsed_unit_ids:
+        # Check for duplicates
+        if len(parsed_unit_ids) != len(set(parsed_unit_ids)):
+            raise HTTPException(400, "Duplicate unit IDs are not allowed")
+        
         unit_building = get_unit_building(parsed_unit_ids[0])
         if building_id and building_id != unit_building:
-            raise HTTPException(400, "Unit does not belong to building.")
+            raise HTTPException(400, "Unit does not belong to the specified building")
         building_id = unit_building
         
         # Validate all units belong to same building
@@ -239,12 +239,26 @@ async def upload_document(
             if uid_building != building_id:
                 raise HTTPException(400, f"All units must belong to the same building. Unit {uid} belongs to {uid_building}, expected {building_id}.")
     
-    # Set legacy unit_id for backward compatibility (first unit if any)
-    unit_id = parsed_unit_ids[0] if parsed_unit_ids else None
+    # Validate contractors exist
+    if parsed_contractor_ids:
+        # Check for duplicates
+        if len(parsed_contractor_ids) != len(set(parsed_contractor_ids)):
+            raise HTTPException(400, "Duplicate contractor IDs are not allowed")
+        
+        client = get_supabase_client()
+        for cid in parsed_contractor_ids:
+            contractor_rows = (
+                client.table("contractors")
+                .select("id")
+                .eq("id", cid)
+                .execute()
+            ).data
+            if not contractor_rows:
+                raise HTTPException(400, f"Contractor {cid} does not exist")
 
     # If building not provided → error
     if not building_id:
-        raise HTTPException(400, "Must provide either event_id, unit_id, or building_id.")
+        raise HTTPException(400, "Must provide either event_id, unit_ids, or building_id.")
 
     # -----------------------------------------------------
     # Permission check
@@ -268,13 +282,30 @@ async def upload_document(
 
     # NEW S3 path rules
     if event_id:
-        s3_key = f"events/{event_id}/units/{unit_id or 'none'}/documents/{safe_category}/{clean_filename}"
+        # Use first unit if available, otherwise 'none'
+        first_unit = parsed_unit_ids[0] if parsed_unit_ids else 'none'
+        s3_key = f"events/{event_id}/units/{first_unit}/documents/{safe_category}/{clean_filename}"
 
-    elif unit_id:
-        s3_key = f"units/{unit_id}/documents/{safe_category}/{clean_filename}"
+    elif parsed_unit_ids:
+        s3_key = f"units/{parsed_unit_ids[0]}/documents/{safe_category}/{clean_filename}"
 
     else:
         s3_key = f"buildings/{building_id}/documents/{safe_category}/{clean_filename}"
+    
+    # Final validation: building_id must be set at this point
+    if not building_id:
+        raise HTTPException(400, "building_id is required and cannot be null")
+    
+    # Validate building exists
+    client = get_supabase_client()
+    building_rows = (
+        client.table("buildings")
+        .select("id")
+        .eq("id", building_id)
+        .execute()
+    ).data
+    if not building_rows:
+        raise HTTPException(400, f"Building {building_id} does not exist")
 
     # -----------------------------------------------------
     # Save file temporarily and upload to S3
@@ -325,7 +356,6 @@ async def upload_document(
     payload = sanitize({
         "building_id": building_id,
         "event_id": event_id,
-        "unit_id": unit_id,  # Legacy field (first unit for backward compatibility)
         "category": category,
         "filename": clean_filename,
         "s3_key": s3_key,
