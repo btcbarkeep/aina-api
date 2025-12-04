@@ -1,6 +1,6 @@
 # routers/buildings.py
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional, List
 from datetime import datetime
 
@@ -19,33 +19,9 @@ from models.building import BuildingCreate, BuildingUpdate, BuildingRead
 
 
 # -----------------------------------------------------
-# Helper — Enrich contractor with roles
+# Helper — Enrich contractor with roles (centralized)
 # -----------------------------------------------------
-def enrich_contractor_with_roles(contractor: dict) -> dict:
-    """Add roles array to contractor dict."""
-    contractor_id = contractor.get("id")
-    if not contractor_id:
-        contractor["roles"] = []
-        return contractor
-    
-    client = get_supabase_client()
-    
-    # Get roles for this contractor
-    role_result = (
-        client.table("contractor_role_assignments")
-        .select("role_id, contractor_roles(name)")
-        .eq("contractor_id", contractor_id)
-        .execute()
-    )
-    
-    roles = []
-    if role_result.data:
-        for row in role_result.data:
-            if row.get("contractor_roles") and row["contractor_roles"].get("name"):
-                roles.append(row["contractor_roles"]["name"])
-    
-    contractor["roles"] = roles
-    return contractor
+from core.contractor_helpers import enrich_contractor_with_roles
 
 
 router = APIRouter(
@@ -63,7 +39,7 @@ router = APIRouter(
     dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def list_buildings(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of buildings to return (1-1000)"),
     name: Optional[str] = None,
     city: Optional[str] = None,
     state: Optional[str] = None,
