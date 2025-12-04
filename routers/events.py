@@ -255,33 +255,9 @@ def get_event_contractors(event_id: str) -> list:
 
 
 # -----------------------------------------------------
-# Helper — Enrich contractor with roles (shared with contractors router)
+# Helper — Enrich contractor with roles (centralized)
 # -----------------------------------------------------
-def enrich_contractor_with_roles(contractor: dict) -> dict:
-    """Add roles array to contractor dict."""
-    contractor_id = contractor.get("id")
-    if not contractor_id:
-        contractor["roles"] = []
-        return contractor
-    
-    client = get_supabase_client()
-    
-    # Get roles for this contractor
-    role_result = (
-        client.table("contractor_role_assignments")
-        .select("role_id, contractor_roles(name)")
-        .eq("contractor_id", contractor_id)
-        .execute()
-    )
-    
-    roles = []
-    if role_result.data:
-        for row in role_result.data:
-            if row.get("contractor_roles") and row["contractor_roles"].get("name"):
-                roles.append(row["contractor_roles"]["name"])
-    
-    contractor["roles"] = roles
-    return contractor
+from core.contractor_helpers import enrich_contractor_with_roles
 
 
 # -----------------------------------------------------
@@ -408,7 +384,7 @@ def apply_event_filters(query, params: dict):
 # -----------------------------------------------------
 @router.get("", summary="List Events", response_model=List[EventRead])
 def list_events(
-    limit: int = Query(200, description="Maximum number of events to return"),
+    limit: int = Query(200, ge=1, le=1000, description="Maximum number of events to return (1-1000)"),
     building_id: Optional[str] = Query(None, description="Filter by building ID"),
     unit_id: Optional[str] = Query(None, description="Filter by single unit ID"),
     unit_ids: Optional[List[str]] = Query([], description="Filter by list of unit IDs"),
