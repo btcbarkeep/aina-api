@@ -15,6 +15,7 @@ from core.permission_helpers import (
     require_building_access,
     get_user_accessible_unit_ids,
 )
+from models.unit import UnitCreate, UnitUpdate
 
 
 router = APIRouter(
@@ -79,11 +80,12 @@ def list_units(building_id: str, current_user: CurrentUser = Depends(get_current
 # CREATE Unit
 # -------------------------------------------------------------
 @router.post("")
-def create_unit(payload: dict, current_user: CurrentUser = Depends(get_current_user)):
+def create_unit(payload: UnitCreate, current_user: CurrentUser = Depends(get_current_user)):
     require_unit_access(current_user)
 
     client = get_supabase_client()
-    cleaned = {k: clean(v) for k, v in payload.items()}
+    # Convert Pydantic model to dict, cleaning None values
+    cleaned = {k: clean(v) for k, v in payload.model_dump().items() if v is not None}
 
     try:
         result = (
@@ -106,11 +108,12 @@ def create_unit(payload: dict, current_user: CurrentUser = Depends(get_current_u
 # UPDATE Unit
 # -------------------------------------------------------------
 @router.patch("/{unit_id}")
-def update_unit(unit_id: str, payload: dict, current_user: CurrentUser = Depends(get_current_user)):
+def update_unit(unit_id: str, payload: UnitUpdate, current_user: CurrentUser = Depends(get_current_user)):
     require_unit_access(current_user)
 
     client = get_supabase_client()
-    cleaned = {k: clean(v) for k, v in payload.items()}
+    # Convert Pydantic model to dict, excluding None values for partial updates
+    cleaned = {k: clean(v) for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
 
     try:
         result = (
