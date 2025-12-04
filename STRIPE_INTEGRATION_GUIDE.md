@@ -3,11 +3,13 @@
 ## Overview
 
 The document download endpoint now supports a hybrid access control model that allows:
-- **Free documents** (`is_public=True`): Accessible without authentication (rate limited)
-- **Private documents** (`is_public=False`): Require one of:
+- **Public documents** (`is_public=True`): 
+  * Free access without authentication (rate limited), OR
+  * Stripe payment verification (for paid public documents)
+- **Private documents** (`is_public=False`): Only accessible by:
   1. **Owner access** - User who uploaded the document (highest priority)
   2. **Permission-based access** - Authenticated user with document access permissions
-  3. **Stripe payment** - Valid Stripe payment verification
+  **NOTE:** Stripe payments are NOT allowed for private documents - they remain private to the owner and authorized users only
 
 ## Setup
 
@@ -30,15 +32,23 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Free Documents
+### Public Documents - Free Access
 
-Free documents can be accessed without authentication:
+Public documents can be accessed without authentication:
 
 ```bash
 curl "https://api.ainaprotocol.com/uploads/documents/{document_id}/download"
 ```
 
-**Rate Limiting:** Free documents are limited to 20 requests per minute per IP/user.
+**Rate Limiting:** Free public documents are limited to 20 requests per minute per IP/user.
+
+### Public Documents - Paid Access
+
+Public documents can also be sold via Stripe. Users who pay can access them:
+
+```bash
+curl "https://api.ainaprotocol.com/uploads/documents/{document_id}/download?stripe_session_id={session_id}"
+```
 
 ### Private Documents - Option 1: Owner Access
 
@@ -51,9 +61,17 @@ curl -H "Authorization: Bearer {jwt_token}" \
 
 The system automatically checks if the authenticated user is the document owner (`uploaded_by` field matches user ID).
 
-### Private Documents - Option 2: Stripe Checkout Session
+### Private Documents - Important Note
 
-When a user completes a Stripe Checkout, include the document ID in the session metadata:
+**Private documents (`is_public=False`) cannot be purchased via Stripe.** They are only accessible by:
+- The document owner (uploader)
+- Users with document access permissions
+
+If you attempt to use Stripe payment for a private document, you will receive a 403 Forbidden error.
+
+### Public Documents - Stripe Checkout Session
+
+For **public documents** that you want to sell, when a user completes a Stripe Checkout, include the document ID in the session metadata:
 
 ```python
 import stripe
@@ -87,7 +105,7 @@ Then the user can download with:
 curl "https://api.ainaprotocol.com/uploads/documents/{document_id}/download?stripe_session_id={session_id}"
 ```
 
-### Private Documents - Option 3: Payment Intent
+### Public Documents - Payment Intent
 
 Alternatively, use Payment Intent metadata:
 
@@ -134,10 +152,17 @@ curl -H "Authorization: Bearer {jwt_token}" \
 
 ### Error Responses
 
-**403 Forbidden** (for private documents without owner access, permissions, or payment):
+**403 Forbidden** (for private documents without owner access or permissions):
 ```json
 {
-  "detail": "Access denied. This document is private. Only the uploader, users with appropriate permissions, or users who have paid for access can download this document."
+  "detail": "Access denied. This document is private. Only the uploader or users with appropriate permissions can access this document."
+}
+```
+
+**403 Forbidden** (if Stripe payment attempted on private document):
+```json
+{
+  "detail": "Access denied. This document is private and cannot be purchased. Only the uploader or users with appropriate permissions can access this document."
 }
 ```
 
@@ -188,16 +213,17 @@ curl -H "Authorization: Bearer {jwt_token}" \
 Document Request
     ↓
 Is document public?
-    ├─ YES → Rate limit check → Allow access
-    └─ NO → Is user authenticated?
+    ├─ YES → Stripe payment provided?
+    │       ├─ YES → Verify payment → Allow if valid
+    │       └─ NO → Rate limit check → Allow free access
+    └─ NO (PRIVATE) → Is user authenticated?
             ├─ YES → Is user the owner (uploaded_by)?
             │       ├─ YES → Allow access (owner)
             │       └─ NO → Check permissions
             │               ├─ Has access → Allow (authenticated)
-            │               └─ No access → Check Stripe payment
-            └─ NO → Check Stripe payment
-                    ├─ Valid payment → Allow access
-                    └─ No payment → Deny (403 Forbidden)
+            │               └─ No access → Deny (403 Forbidden)
+            └─ NO → Deny (403 Forbidden)
+                    NOTE: Stripe payments NOT allowed for private docs
 ```
 
 ## Testing
