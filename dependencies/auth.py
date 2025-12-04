@@ -140,3 +140,24 @@ def requires_permission(permission: str):
     """
     from core.permission_helpers import requires_permission as new_checker
     return new_checker(permission)
+
+
+# ============================================================
+# OPTIONAL AUTHENTICATION (for hybrid endpoints)
+# ============================================================
+def get_optional_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+) -> Optional[CurrentUser]:
+    """
+    Optional authentication dependency.
+    Returns CurrentUser if valid token provided, None otherwise.
+    Does not raise exceptions if no token provided.
+    """
+    if not credentials:
+        return None
+    
+    try:
+        return get_current_user(credentials)
+    except HTTPException:
+        # Invalid token - return None instead of raising
+        return None
