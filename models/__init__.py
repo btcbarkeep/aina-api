@@ -9,6 +9,16 @@ from .building import (
 )
 
 # -------------------------
+# Unit Models
+# -------------------------
+from .unit import (
+    UnitBase,
+    UnitCreate,
+    UnitRead,
+    UnitUpdate,
+)
+
+# -------------------------
 # Event Models
 # -------------------------
 from .event import (
@@ -82,6 +92,12 @@ __all__ = [
     "BuildingCreate",
     "BuildingRead",
     "BuildingUpdate",
+
+    # units
+    "UnitBase",
+    "UnitCreate",
+    "UnitRead",
+    "UnitUpdate",
 
     # events
     "EventType",
