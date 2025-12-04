@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.supabase_client import get_supabase_client
+from core.utils import sanitize
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
@@ -12,19 +13,6 @@ router = APIRouter(
     prefix="/user-access",
     tags=["User Access"],
 )
-
-
-# ============================================================
-# Helper — sanitize blanks → None
-# ============================================================
-def sanitize(data: dict) -> dict:
-    clean = {}
-    for k, v in data.items():
-        if isinstance(v, str) and v.strip() == "":
-            clean[k] = None
-        else:
-            clean[k] = v
-    return clean
 
 
 # ============================================================
