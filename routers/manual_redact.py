@@ -33,6 +33,9 @@ from core.supabase_client import get_supabase_client
 from core.logging_config import logger
 from core.s3_client import get_s3
 
+# Constants
+REDACTED_PDF_PRESIGNED_URL_EXPIRY_SECONDS = 86400  # 1 day
+
 router = APIRouter(
     prefix="/documents",
     tags=["Manual Redaction"],
@@ -184,7 +187,7 @@ async def redact_manual(
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=86400,  # 1 day
+            ExpiresIn=REDACTED_PDF_PRESIGNED_URL_EXPIRY_SECONDS,
         )
         
         return {
