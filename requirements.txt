@@ -27,3 +27,6 @@ pandas
 openpyxl
 reportlab
 
+# Payment Processing
+stripe>=7.0.0
+
