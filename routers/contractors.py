@@ -181,16 +181,10 @@ def update_role_assignments(contractor_id: str, role_names: List[str]):
 
 # ============================================================
 # Helper — Enrich contractor with roles
+# Note: This router has its own get_contractor_roles function
+# but we use the centralized enrich_contractor_with_roles for consistency
 # ============================================================
-def enrich_contractor_with_roles(contractor: dict) -> dict:
-    """Add roles array to contractor dict."""
-    contractor_id = contractor.get("id")
-    if not contractor_id:
-        contractor["roles"] = []
-        return contractor
-    
-    contractor["roles"] = get_contractor_roles(contractor_id)
-    return contractor
+from core.contractor_helpers import enrich_contractor_with_roles
 
 
 # ============================================================
