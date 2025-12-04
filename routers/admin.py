@@ -13,6 +13,7 @@ from dependencies.auth import (
 from core.permission_helpers import requires_permission
 from core.permissions import ROLE_PERMISSIONS
 from core.supabase_client import get_supabase_client
+from models.user_create import AdminCreateUser
 
 
 router = APIRouter(
@@ -30,13 +31,8 @@ ALLOWED_ROLES = list(ROLE_PERMISSIONS.keys())
 # -----------------------------------------------------
 # Payloads
 # -----------------------------------------------------
-class AdminCreateUser(BaseModel):
-    full_name: Optional[str] = None
-    email: EmailStr
-    organization_name: Optional[str] = None
-    phone: Optional[str] = None
-    role: str = "aoao"
-    permissions: Optional[List[str]] = None
+# Note: AdminCreateUser is imported from models.user_create (see imports above)
+# If you need to modify it, update models/user_create.py instead
 
 
 class AdminUpdateUser(BaseModel):
@@ -151,9 +147,13 @@ def admin_create_account(
         "organization_name": payload.organization_name,
         "phone": payload.phone,
         "role": payload.role,
-        "contractor_id": None,
+        "contractor_id": payload.contractor_id,
         "permissions": payload.permissions or [],
     }
+    
+    # Merge any additional metadata if provided
+    if payload.metadata:
+        metadata.update(payload.metadata)
 
     create_payload = {
         "email": payload.email,
