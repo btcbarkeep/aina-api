@@ -379,8 +379,9 @@ def list_contractors(
     result = query.execute()
     contractors = result.data or []
     
-    # Enrich each contractor with roles
-    enriched_contractors = [enrich_contractor_with_roles(c) for c in contractors]
+    # Batch enrich all contractors with roles (prevents N+1 queries)
+    from core.contractor_helpers import batch_enrich_contractors_with_roles
+    enriched_contractors = batch_enrich_contractors_with_roles(contractors)
     
     return enriched_contractors
 
