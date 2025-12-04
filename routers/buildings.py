@@ -322,9 +322,9 @@ def get_building_contractors(
             .execute()
         ).data or []
 
-        # Enrich contractors with roles
-        for i, contractor in enumerate(contractors):
-            contractors[i] = enrich_contractor_with_roles(contractor)
+        # Batch enrich contractors with roles (prevents N+1 queries)
+        from core.contractor_helpers import batch_enrich_contractors_with_roles
+        contractors = batch_enrich_contractors_with_roles(contractors)
 
         contractor_map = {c["id"]: c for c in contractors}
 
