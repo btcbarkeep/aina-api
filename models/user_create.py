@@ -12,8 +12,9 @@ class AdminCreateUser(BaseModel):
     - organization_name
     - phone
     - role (admin, super_admin, aoao, property_manager, contractor, contractor_staff)
-    - contractor_id (optional UUID string)
+    - contractor_id (optional UUID string) - Only used for contractor accounts
     - metadata (optional dict for any future expansion)
+    - permissions (optional list of permission strings)
 
     Password is handled by Supabase automatically via:
         supabase.auth.admin.create_user({"email": email, "password": auto_generated})
@@ -27,8 +28,12 @@ class AdminCreateUser(BaseModel):
     # Default role
     role: str = "aoao"     # admin can override this
 
-    # NEW — Only used for contractor accounts
+    # Only used for contractor accounts
     contractor_id: Optional[str] = None
 
-    # NEW — For optional overrides (permissions, access flags, etc.)
+    # For optional overrides (permissions, access flags, etc.)
     metadata: Optional[Dict[str, Any]] = None
+    
+    # Permissions list
+    permissions: Optional[list] = None
+
