@@ -2,6 +2,7 @@
 
 from supabase import create_client, Client
 from core.config import settings
+from core.logging_config import logger
 import traceback
 
 
@@ -23,9 +24,9 @@ def get_supabase_client() -> Client:
         supabase_key = settings.SUPABASE_SERVICE_ROLE_KEY  # MUST be service-role
 
         if not supabase_url or not supabase_key:
-            print("❌ Missing Supabase credentials")
-            print("   URL:", supabase_url)
-            print("   SERVICE ROLE KEY:", "SET" if supabase_key else "MISSING")
+            logger.error("Missing Supabase credentials")
+            logger.error(f"   URL: {supabase_url}")
+            logger.error(f"   SERVICE ROLE KEY: {'SET' if supabase_key else 'MISSING'}")
             return None
 
         # Create client
@@ -33,8 +34,7 @@ def get_supabase_client() -> Client:
         return client
 
     except Exception as e:
-        print("❌ [Supabase Init Error]", e)
-        traceback.print_exc()
+        logger.error(f"Supabase Init Error: {e}", exc_info=True)
         return None
 
 
@@ -81,6 +81,5 @@ def ping_supabase() -> dict:
         }
 
     except Exception as e:
-        print("❌ [Supabase Ping Error]", e)
-        traceback.print_exc()
+        logger.error(f"Supabase Ping Error: {e}", exc_info=True)
         return {"service": "Supabase", "status": "error", "detail": str(e)}
