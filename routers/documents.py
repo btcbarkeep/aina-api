@@ -11,6 +11,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.utils import sanitize
 from core.permission_helpers import (
     is_admin,
     require_building_access,
@@ -29,22 +30,6 @@ router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
-
-# -----------------------------------------------------
-# Helper — sanitize + UUID → string
-# -----------------------------------------------------
-def sanitize(data: dict) -> dict:
-    clean = {}
-    for k, v in data.items():
-        if v is None:
-            clean[k] = None
-        elif isinstance(v, bool):
-            clean[k] = v  # Preserve boolean values
-        elif isinstance(v, str):
-            clean[k] = v.strip() or None
-        else:
-            clean[k] = str(v)
-    return clean
 
 
 # -----------------------------------------------------
