@@ -518,9 +518,10 @@ async def get_document_download_url(
     
     Access Control (Hybrid Approach):
     - FREE documents (is_public=True): Accessible without authentication (rate limited)
-    - PAID documents (is_public=False): Requires either:
-      * Authenticated user with document access permissions, OR
-      * Valid Stripe payment verification (session_id or payment_intent_id)
+    - PRIVATE documents (is_public=False): Requires one of:
+      1. User is the document owner (uploader) - highest priority
+      2. Authenticated user with document access permissions
+      3. Valid Stripe payment verification (session_id or payment_intent_id)
     
     Use this endpoint when download_url has expired or doesn't exist.
     """
@@ -529,7 +530,7 @@ async def get_document_download_url(
     # Fetch document with access information
     rows = (
         client.table("documents")
-        .select("s3_key, is_public, building_id")
+        .select("s3_key, is_public, building_id, uploaded_by")
         .eq("id", document_id)
         .limit(1)
         .execute()
@@ -544,6 +545,7 @@ async def get_document_download_url(
         raise HTTPException(400, "Document has no S3 key")
 
     is_public = doc.get("is_public", False)
+    uploaded_by = doc.get("uploaded_by")
     
     # ============================================================
     # ACCESS CONTROL LOGIC
@@ -563,10 +565,21 @@ async def get_document_download_url(
         # More lenient rate limit for free documents: 20 requests per minute
         require_rate_limit(request, identifier, max_requests=20, window_seconds=60)
     
-    # PAID DOCUMENTS: Require authentication OR Stripe payment
+    # PRIVATE DOCUMENTS: Require owner, permissions, OR Stripe payment
     else:
-        # Option 1: Authenticated user with document access
-        if current_user:
+        # Option 1: Check if user is the document owner (uploader)
+        if current_user and uploaded_by:
+            # Compare using auth_user_id for consistency
+            user_id_to_check = getattr(current_user, "auth_user_id", None) or str(current_user.id)
+            uploaded_by_str = str(uploaded_by)
+            
+            if user_id_to_check == uploaded_by_str:
+                access_granted = True
+                access_method = "owner"
+                logger.info(f"Document {document_id} accessed by owner {user_id_to_check}")
+        
+        # Option 2: Authenticated user with document access permissions
+        if not access_granted and current_user:
             try:
                 # Check if user has access via permissions
                 require_document_access(current_user, document_id)
@@ -576,7 +589,7 @@ async def get_document_download_url(
                 # User doesn't have access - continue to check Stripe
                 pass
         
-        # Option 2: Stripe payment verification
+        # Option 3: Stripe payment verification
         if not access_granted:
             if stripe_session_id:
                 # Verify Stripe Checkout Session
@@ -601,10 +614,10 @@ async def get_document_download_url(
                         detail="Payment verification failed. Please ensure your payment was completed successfully."
                     )
             else:
-                # No authentication and no payment - deny access
+                # No owner match, no permissions, and no payment - deny access
                 raise HTTPException(
-                    status_code=402,
-                    detail="This document requires payment or authentication. Please provide a valid Stripe session ID or authenticate with appropriate permissions."
+                    status_code=403,
+                    detail="Access denied. This document is private. Only the uploader, users with appropriate permissions, or users who have paid for access can download this document."
                 )
     
     # ============================================================
