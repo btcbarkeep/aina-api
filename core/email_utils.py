@@ -1,6 +1,7 @@
 # core/email_utils.py
 
 from core.notifications import send_email
+from core.logging_config import logger
 
 
 def send_password_setup_email(email: str, token: str):
@@ -27,6 +28,6 @@ Aina Protocol Team
     # Call the real SMTP email sender
     send_email(subject=subject, body=body, to=email)
 
-    print(f"[EMAIL] Password setup email sent to {email}")
+    logger.info(f"Password setup email sent to {email}")
 
     return True
