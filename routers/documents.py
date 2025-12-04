@@ -1,7 +1,7 @@
 # routers/documents.py
 
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 from dependencies.auth import (
@@ -395,8 +395,28 @@ def list_documents(
         accessible_unit_ids = get_user_accessible_unit_ids(current_user)
         accessible_building_ids = get_user_accessible_building_ids(current_user)
         
+        # Batch fetch all document_units for all documents (prevents N+1 queries)
+        document_ids = [d.get("id") for d in documents if d.get("id")]
+        document_units_map: Dict[str, List[str]] = {}
+        if document_ids:
+            document_units_result = (
+                client.table("document_units")
+                .select("document_id, unit_id")
+                .in_("document_id", document_ids)
+                .execute()
+            )
+            if document_units_result.data:
+                for row in document_units_result.data:
+                    doc_id = row.get("document_id")
+                    unit_id = row.get("unit_id")
+                    if doc_id and unit_id:
+                        if doc_id not in document_units_map:
+                            document_units_map[doc_id] = []
+                        document_units_map[doc_id].append(unit_id)
+        
         filtered_documents = []
         for document in documents:
+            document_id = document.get("id")
             document_building_id = document.get("building_id")
             
             # AOAO roles: filter by building access
@@ -406,14 +426,8 @@ def list_documents(
                 continue
             
             # Other roles: filter by unit access
-            # Get units for this document
-            document_units_result = (
-                client.table("document_units")
-                .select("unit_id")
-                .eq("document_id", document.get("id"))
-                .execute()
-            )
-            document_unit_ids = [row["unit_id"] for row in (document_units_result.data or [])]
+            # Get units for this document from pre-fetched map
+            document_unit_ids = document_units_map.get(document_id, [])
             
             if not document_unit_ids:
                 # Document has no units, check building access
@@ -426,8 +440,9 @@ def list_documents(
         
         documents = filtered_documents
     
-    # Enrich each document with units and contractors
-    enriched_documents = [enrich_document_with_relations(doc) for doc in documents]
+    # Batch enrich all documents with units and contractors (prevents N+1 queries)
+    from core.batch_helpers import batch_enrich_documents_with_relations
+    enriched_documents = batch_enrich_documents_with_relations(documents)
     
     return enriched_documents
 
