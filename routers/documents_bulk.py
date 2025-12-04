@@ -12,26 +12,12 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.utils import sanitize
 
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
 )
-
-
-# ----------------------------------------
-# Helper — sanitize dict
-# ----------------------------------------
-def sanitize(data: dict) -> dict:
-    clean = {}
-    for k, v in data.items():
-        if v is None:
-            clean[k] = None
-        elif isinstance(v, str):
-            clean[k] = v.strip() or None
-        else:
-            clean[k] = v
-    return clean
 
 
 # ----------------------------------------
