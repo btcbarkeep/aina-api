@@ -188,6 +188,11 @@ def sanitize_document_for_role(document: Dict[str, Any], role: str) -> Dict[str,
 # ============================================================
 from core.s3_client import get_s3
 
+# ============================================================
+# Constants
+# ============================================================
+REPORT_PRESIGNED_URL_EXPIRY_SECONDS = 604800  # 7 days
+
 
 # ============================================================
 # Helper — Upload report to S3
@@ -219,7 +224,7 @@ async def upload_report_to_s3(file_bytes: bytes, filename: str) -> UploadResult:
         download_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=604800,  # 7 days
+            ExpiresIn=REPORT_PRESIGNED_URL_EXPIRY_SECONDS,
         )
         
         return UploadResult(s3_key=s3_key, download_url=download_url)
@@ -228,33 +233,9 @@ async def upload_report_to_s3(file_bytes: bytes, filename: str) -> UploadResult:
 
 
 # ============================================================
-# Helper — Enrich contractor with roles
+# Helper — Enrich contractor with roles (centralized)
 # ============================================================
-def enrich_contractor_with_roles(contractor: Dict[str, Any]) -> Dict[str, Any]:
-    """Add roles array to contractor dict."""
-    contractor_id = contractor.get("id")
-    if not contractor_id:
-        contractor["roles"] = []
-        return contractor
-    
-    client = get_supabase_client()
-    
-    # Get roles for this contractor
-    role_result = (
-        client.table("contractor_role_assignments")
-        .select("role_id, contractor_roles(name)")
-        .eq("contractor_id", contractor_id)
-        .execute()
-    )
-    
-    roles = []
-    if role_result.data:
-        for row in role_result.data:
-            if row.get("contractor_roles") and row["contractor_roles"].get("name"):
-                roles.append(row["contractor_roles"]["name"])
-    
-    contractor["roles"] = roles
-    return contractor
+from core.contractor_helpers import enrich_contractor_with_roles
 
 
 # ============================================================
