@@ -458,8 +458,9 @@ def list_events(
         
         events = filtered_events
     
-    # Enrich each event with units and contractors
-    enriched_events = [enrich_event_with_relations(event) for event in events]
+    # Batch enrich all events with units and contractors (prevents N+1 queries)
+    from core.batch_helpers import batch_enrich_events_with_relations
+    enriched_events = batch_enrich_events_with_relations(events)
     
     return enriched_events
 
