@@ -31,20 +31,9 @@ router = APIRouter(
 )
 
 # -----------------------------------------------------
-# Sanitize helper
+# Sanitize helper (using centralized utility)
 # -----------------------------------------------------
-def sanitize(data: dict) -> dict:
-    clean = {}
-    for k, v in data.items():
-        if v is None:
-            clean[k] = None
-        elif isinstance(v, bool):
-            clean[k] = v  # Preserve boolean values
-        elif isinstance(v, str):
-            clean[k] = v.strip() or None
-        else:
-            clean[k] = str(v)
-    return clean
+from core.utils import sanitize
 
 # -----------------------------------------------------
 # Filename sanitizer
@@ -64,25 +53,9 @@ def normalize_uuid_like(value: str | None) -> str | None:
     return v
 
 # -----------------------------------------------------
-# AWS S3
+# AWS S3 (using centralized utility)
 # -----------------------------------------------------
-def get_s3():
-    key = os.getenv("AWS_ACCESS_KEY_ID")
-    secret = os.getenv("AWS_SECRET_ACCESS_KEY")
-    bucket = os.getenv("AWS_BUCKET_NAME")
-    region = os.getenv("AWS_REGION", "us-east-2")
-
-    if not all([key, secret, bucket]):
-        raise RuntimeError("Missing AWS credentials")
-
-    client = boto3.client(
-        "s3",
-        aws_access_key_id=key,
-        aws_secret_access_key=secret,
-        region_name=region,
-    )
-
-    return client, bucket, region
+from core.s3_client import get_s3
 
 # -----------------------------------------------------
 # Building access check
