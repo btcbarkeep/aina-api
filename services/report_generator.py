@@ -464,8 +464,28 @@ async def generate_building_report(
         accessible_unit_ids = get_user_accessible_unit_ids(user)
         accessible_building_ids = get_user_accessible_building_ids(user)
         
+        # Batch fetch all document_units for all documents (prevents N+1 queries)
+        document_ids = [d.get("id") for d in documents if d.get("id")]
+        document_units_map = {}
+        if document_ids:
+            document_units_result = (
+                client.table("document_units")
+                .select("document_id, unit_id")
+                .in_("document_id", document_ids)
+                .execute()
+            )
+            if document_units_result.data:
+                for row in document_units_result.data:
+                    doc_id = row.get("document_id")
+                    unit_id = row.get("unit_id")
+                    if doc_id and unit_id:
+                        if doc_id not in document_units_map:
+                            document_units_map[doc_id] = []
+                        document_units_map[doc_id].append(unit_id)
+        
         filtered_documents = []
         for document in documents:
+            doc_id = document.get("id")
             doc_building_id = document.get("building_id")
             
             if context_role in ["aoao", "aoao_staff"]:
@@ -473,14 +493,8 @@ async def generate_building_report(
                     filtered_documents.append(document)
                 continue
             
-            # Check unit access
-            document_units_result = (
-                client.table("document_units")
-                .select("unit_id")
-                .eq("document_id", document.get("id"))
-                .execute()
-            )
-            doc_unit_ids = [row["unit_id"] for row in (document_units_result.data or [])]
+            # Check unit access using pre-fetched map
+            doc_unit_ids = document_units_map.get(doc_id, [])
             
             if not doc_unit_ids:
                 if accessible_building_ids is None or doc_building_id in accessible_building_ids:
@@ -518,9 +532,9 @@ async def generate_building_report(
         )
         contractors = contractors_result.data or []
         
-        # Enrich contractors with roles
-        for i, contractor in enumerate(contractors):
-            contractors[i] = enrich_contractor_with_roles(contractor)
+        # Batch enrich contractors with roles (prevents N+1 queries)
+        from core.contractor_helpers import batch_enrich_contractors_with_roles
+        contractors = batch_enrich_contractors_with_roles(contractors)
     
     # Calculate statistics
     stats = {
