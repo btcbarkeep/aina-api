@@ -13,6 +13,8 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
+from core.permission_helpers import require_building_access, is_admin
+from core.logging_config import logger
 
 router = APIRouter(
     prefix="/documents",
@@ -78,18 +80,89 @@ async def bulk_upload_documents(
     created_docs = []
 
     # ------------------------------
-    # Loop through all rows and insert
+    # Loop through all rows and insert with validation
     # ------------------------------
-    for _, row in df.iterrows():
+    errors = []
+    for idx, row in df.iterrows():
+        row_num = idx + 2  # +2 because Excel/CSV is 1-indexed and has header
         row = row.to_dict()
+        
+        building_id = row.get("building_id")
+        unit_id = row.get("unit_id")
+        event_id = row.get("event_id")
+        
+        # Validate building_id exists
+        if building_id:
+            building_id_str = str(building_id)
+            try:
+                building_check = (
+                    client.table("buildings")
+                    .select("id")
+                    .eq("id", building_id_str)
+                    .limit(1)
+                    .execute()
+                )
+                if not building_check.data:
+                    errors.append(f"Row {row_num}: Building {building_id_str} does not exist")
+                    continue
+                
+                # Check user has access to building
+                if not is_admin(current_user):
+                    try:
+                        require_building_access(current_user, building_id_str)
+                    except HTTPException:
+                        errors.append(f"Row {row_num}: You do not have access to building {building_id_str}")
+                        continue
+            except Exception as e:
+                errors.append(f"Row {row_num}: Error validating building: {e}")
+                continue
+        
+        # Validate unit_id exists and belongs to building
+        if unit_id and building_id:
+            unit_id_str = str(unit_id)
+            try:
+                unit_check = (
+                    client.table("units")
+                    .select("id, building_id")
+                    .eq("id", unit_id_str)
+                    .limit(1)
+                    .execute()
+                )
+                if not unit_check.data:
+                    errors.append(f"Row {row_num}: Unit {unit_id_str} does not exist")
+                    continue
+                if unit_check.data[0].get("building_id") != building_id_str:
+                    errors.append(f"Row {row_num}: Unit {unit_id_str} does not belong to building {building_id_str}")
+                    continue
+            except Exception as e:
+                errors.append(f"Row {row_num}: Error validating unit: {e}")
+                continue
+        
+        # Validate event_id exists
+        if event_id:
+            event_id_str = str(event_id)
+            try:
+                event_check = (
+                    client.table("events")
+                    .select("id")
+                    .eq("id", event_id_str)
+                    .limit(1)
+                    .execute()
+                )
+                if not event_check.data:
+                    errors.append(f"Row {row_num}: Event {event_id_str} does not exist")
+                    continue
+            except Exception as e:
+                errors.append(f"Row {row_num}: Error validating event: {e}")
+                continue
 
         doc_data = {
             "id": str(uuid.uuid4()),
             "title": row.get("title"),
             "document_url": row.get("document_url"),
-            "building_id": str(row.get("building_id")),
-            "unit_id": str(row["unit_id"]) if row.get("unit_id") else None,
-            "event_id": str(row["event_id"]) if row.get("event_id") else None,
+            "building_id": str(building_id) if building_id else None,
+            "unit_id": str(unit_id) if unit_id else None,
+            "event_id": str(event_id) if event_id else None,
             "category": row.get("category"),
             "permit_number": row.get("permit_number"),
             "permit_type": row.get("permit_type"),
@@ -103,10 +176,27 @@ async def bulk_upload_documents(
 
         try:
             res = client.table("documents").insert(sanitized).execute()
+            if res.data:
+                created_docs.append(res.data[0])
+            else:
+                errors.append(f"Row {row_num}: Insert returned no data")
         except Exception as e:
-            raise HTTPException(500, f"Insert failed: {e}")
+            error_msg = str(e)
+            if "foreign key" in error_msg.lower() or "violates foreign key" in error_msg.lower():
+                errors.append(f"Row {row_num}: Invalid reference (building_id, unit_id, or event_id)")
+            elif "duplicate" in error_msg.lower():
+                errors.append(f"Row {row_num}: Duplicate entry")
+            else:
+                errors.append(f"Row {row_num}: Insert failed: {error_msg}")
+            logger.warning(f"Bulk upload error on row {row_num}: {e}")
 
-        created_docs.append(res.data[0])
+    if errors:
+        return {
+            "status": "partial_success",
+            "count": len(created_docs),
+            "errors": errors,
+            "documents": created_docs,
+        }
 
     return {
         "status": "success",
