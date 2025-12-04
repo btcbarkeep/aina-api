@@ -285,10 +285,12 @@ async def get_dashboard_contractor_report(
     
     # Permission check: contractors can only view their own report
     if not is_admin(current_user) and current_user.role == "contractor":
-        # TODO: Check if current_user.id matches contractor user_id
-        # For now, we'll allow contractors to view any contractor report
-        # This should be enhanced with a contractor-user mapping
-        pass
+        user_contractor_id = getattr(current_user, "contractor_id", None)
+        if not user_contractor_id or str(user_contractor_id) != contractor_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only view your own contractor report"
+            )
     
     try:
         # Validate format
@@ -351,9 +353,20 @@ async def post_dashboard_custom_report(
         
         # Contractors can only filter by their own contractor_id
         if request.contractor_ids and current_user.role == "contractor":
-            # TODO: Verify contractor_id matches current_user's contractor
-            # For now, we'll allow it but sanitize the report
-            pass
+            user_contractor_id = getattr(current_user, "contractor_id", None)
+            if not user_contractor_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Contractor account missing contractor_id"
+                )
+            # Verify all requested contractor_ids match the user's contractor_id
+            user_contractor_id_str = str(user_contractor_id)
+            for cid in request.contractor_ids:
+                if str(cid) != user_contractor_id_str:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You can only filter by your own contractor_id"
+                    )
     
     try:
         context_role = get_effective_role(current_user)
