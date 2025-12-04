@@ -4,7 +4,10 @@
 
 The document download endpoint now supports a hybrid access control model that allows:
 - **Free documents** (`is_public=True`): Accessible without authentication (rate limited)
-- **Paid documents** (`is_public=False`): Require either authentication with permissions OR Stripe payment verification
+- **Private documents** (`is_public=False`): Require one of:
+  1. **Owner access** - User who uploaded the document (highest priority)
+  2. **Permission-based access** - Authenticated user with document access permissions
+  3. **Stripe payment** - Valid Stripe payment verification
 
 ## Setup
 
@@ -37,7 +40,18 @@ curl "https://api.ainaprotocol.com/uploads/documents/{document_id}/download"
 
 **Rate Limiting:** Free documents are limited to 20 requests per minute per IP/user.
 
-### Paid Documents - Option 1: Stripe Checkout Session
+### Private Documents - Option 1: Owner Access
+
+If you uploaded the document, you can access it directly with authentication:
+
+```bash
+curl -H "Authorization: Bearer {jwt_token}" \
+  "https://api.ainaprotocol.com/uploads/documents/{document_id}/download"
+```
+
+The system automatically checks if the authenticated user is the document owner (`uploaded_by` field matches user ID).
+
+### Private Documents - Option 2: Stripe Checkout Session
 
 When a user completes a Stripe Checkout, include the document ID in the session metadata:
 
@@ -73,7 +87,7 @@ Then the user can download with:
 curl "https://api.ainaprotocol.com/uploads/documents/{document_id}/download?stripe_session_id={session_id}"
 ```
 
-### Paid Documents - Option 2: Payment Intent
+### Private Documents - Option 3: Payment Intent
 
 Alternatively, use Payment Intent metadata:
 
@@ -93,14 +107,16 @@ Download with:
 curl "https://api.ainaprotocol.com/uploads/documents/{document_id}/download?stripe_payment_intent_id={payment_intent_id}"
 ```
 
-### Paid Documents - Option 3: Authenticated User
+### Private Documents - Option 4: Permission-Based Access
 
-If a user is authenticated and has document access permissions, they can bypass payment:
+If a user is authenticated and has document access permissions (via role-based access control), they can access the document:
 
 ```bash
 curl -H "Authorization: Bearer {jwt_token}" \
   "https://api.ainaprotocol.com/uploads/documents/{document_id}/download"
 ```
+
+**Note:** Owner access takes priority over permission-based access. If you're the owner, you'll always have access regardless of permissions.
 
 ## API Response
 
@@ -118,10 +134,17 @@ curl -H "Authorization: Bearer {jwt_token}" \
 
 ### Error Responses
 
-**402 Payment Required** (for paid documents without payment/auth):
+**403 Forbidden** (for private documents without owner access, permissions, or payment):
 ```json
 {
-  "detail": "This document requires payment or authentication. Please provide a valid Stripe session ID or authenticate with appropriate permissions."
+  "detail": "Access denied. This document is private. Only the uploader, users with appropriate permissions, or users who have paid for access can download this document."
+}
+```
+
+**402 Payment Required** (for private documents with invalid payment):
+```json
+{
+  "detail": "Payment verification failed. Please ensure your payment was completed successfully."
 }
 ```
 
@@ -167,10 +190,14 @@ Document Request
 Is document public?
     ├─ YES → Rate limit check → Allow access
     └─ NO → Is user authenticated?
-            ├─ YES → Check permissions → Allow if has access
+            ├─ YES → Is user the owner (uploaded_by)?
+            │       ├─ YES → Allow access (owner)
+            │       └─ NO → Check permissions
+            │               ├─ Has access → Allow (authenticated)
+            │               └─ No access → Check Stripe payment
             └─ NO → Check Stripe payment
                     ├─ Valid payment → Allow access
-                    └─ No payment → Deny (402 Payment Required)
+                    └─ No payment → Deny (403 Forbidden)
 ```
 
 ## Testing
@@ -182,7 +209,16 @@ Is document public?
 curl "http://localhost:8000/uploads/documents/{free_doc_id}/download"
 ```
 
-### Test Paid Document with Stripe
+### Test Private Document as Owner
+
+```bash
+# Upload a document first (sets you as owner)
+# Then download with your auth token
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/uploads/documents/{doc_id}/download"
+```
+
+### Test Private Document with Stripe
 
 1. Create a test Stripe Checkout Session with document ID in metadata
 2. Complete the payment
