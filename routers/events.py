@@ -11,6 +11,7 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.logging_config import logger
+from core.utils import sanitize
 from core.permission_helpers import (
     is_admin,
     require_building_access,
@@ -26,19 +27,6 @@ router = APIRouter(
     prefix="/events",
     tags=["Events"],
 )
-
-
-# -----------------------------------------------------
-# Helper — sanitize blanks → None
-# -----------------------------------------------------
-def sanitize(data: dict) -> dict:
-    clean = {}
-    for k, v in data.items():
-        if isinstance(v, str) and v.strip() == "":
-            clean[k] = None
-        else:
-            clean[k] = v
-    return clean
 
 
 # -----------------------------------------------------
