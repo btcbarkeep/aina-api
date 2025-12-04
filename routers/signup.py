@@ -2,7 +2,7 @@
 
 from core.config import settings
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from datetime import datetime
 
 from dependencies.auth import (
@@ -13,6 +13,7 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.notifications import send_email
+from core.rate_limiter import require_rate_limit, get_rate_limit_identifier
 from models.signup import SignupRequestCreate
 
 
@@ -48,7 +49,11 @@ def get_signup_request_by_id(request_id: str):
 # 1️⃣ PUBLIC — Submit Request
 # =====================================================
 @router.post("/request", summary="Public: Submit signup request")
-def request_access(payload: SignupRequestCreate):
+def request_access(payload: SignupRequestCreate, request: Request):
+    # Rate limiting to prevent spam
+    identifier = get_rate_limit_identifier(request)
+    require_rate_limit(request, identifier, max_requests=3, window_seconds=3600)  # 3 requests per hour
+    
     client = get_supabase_client()
     email = payload.email.strip().lower()
 
@@ -69,7 +74,17 @@ def request_access(payload: SignupRequestCreate):
             .execute()
         )
     except Exception as e:
-        raise HTTPException(500, f"Supabase insert error: {e}")
+        from core.logging_config import logger
+        error_msg = str(e)
+        logger.error(f"Failed to create signup request for {email}: {error_msg}")
+        
+        # Provide more specific error messages
+        if "duplicate" in error_msg.lower() or "unique" in error_msg.lower():
+            raise HTTPException(400, "A signup request with this email already exists")
+        elif "foreign key" in error_msg.lower():
+            raise HTTPException(400, "Invalid reference in signup request data")
+        else:
+            raise HTTPException(500, "Failed to create signup request. Please try again later.")
 
     signup = result.data[0]
 
@@ -140,7 +155,17 @@ def create_supabase_user(email: str, metadata: dict):
         resp = client.auth.admin.create_user(payload)
         return resp
     except Exception as e:
-        raise HTTPException(500, f"Supabase user creation error: {e}")
+        from core.logging_config import logger
+        error_msg = str(e)
+        logger.error(f"Failed to create Supabase user for {email}: {error_msg}")
+        
+        # Provide more specific error messages
+        if "already registered" in error_msg.lower() or "already exists" in error_msg.lower():
+            raise HTTPException(400, "A user with this email already exists")
+        elif "invalid" in error_msg.lower():
+            raise HTTPException(400, f"Invalid user data: {error_msg}")
+        else:
+            raise HTTPException(500, "Failed to create user account. Please try again later.")
 
 
 # =====================================================
