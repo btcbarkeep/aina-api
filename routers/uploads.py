@@ -2,8 +2,9 @@
 
 from fastapi import (
     APIRouter, UploadFile, File, Form,
-    Depends, HTTPException, Path
+    Depends, HTTPException, Path, Request, Query
 )
+from typing import Optional
 from datetime import datetime
 import boto3
 import os
@@ -16,6 +17,7 @@ from dependencies.auth import (
     get_current_user,
     CurrentUser,
     requires_permission,
+    get_optional_auth,
 )
 
 from core.supabase_client import get_supabase_client
@@ -23,7 +25,11 @@ from core.permission_helpers import (
     is_admin,
     require_building_access,
     require_units_access,
+    require_document_access,
 )
+from core.stripe_helpers import verify_stripe_session, verify_stripe_payment_intent
+from core.rate_limiter import require_rate_limit, get_rate_limit_identifier
+from core.logging_config import logger
 
 router = APIRouter(
     prefix="/uploads",
@@ -494,26 +500,36 @@ def enrich_contractor_with_roles(contractor: dict) -> dict:
 
 
 # -----------------------------------------------------
-# GET PRESIGNED URL FOR DOCUMENT (on-demand) - PUBLIC
+# GET PRESIGNED URL FOR DOCUMENT (on-demand) - HYBRID ACCESS
 # -----------------------------------------------------
 @router.get(
     "/documents/{document_id}/download",
-    summary="Get a presigned URL for downloading a document (public)",
+    summary="Get a presigned URL for downloading a document (hybrid: free/paid/auth)",
 )
 async def get_document_download_url(
+    request: Request,
     document_id: str = Path(..., description="Document ID"),
+    stripe_session_id: Optional[str] = Query(None, description="Stripe Checkout Session ID (for paid documents)"),
+    stripe_payment_intent_id: Optional[str] = Query(None, description="Stripe Payment Intent ID (alternative to session)"),
+    current_user: Optional[CurrentUser] = Depends(get_optional_auth),
 ):
     """
     Generates a fresh presigned URL for a document.
-    Public endpoint - no authentication required.
+    
+    Access Control (Hybrid Approach):
+    - FREE documents (is_public=True): Accessible without authentication (rate limited)
+    - PAID documents (is_public=False): Requires either:
+      * Authenticated user with document access permissions, OR
+      * Valid Stripe payment verification (session_id or payment_intent_id)
+    
     Use this endpoint when download_url has expired or doesn't exist.
     """
     client = get_supabase_client()
 
-    # Fetch document
+    # Fetch document with access information
     rows = (
         client.table("documents")
-        .select("s3_key")
+        .select("s3_key, is_public, building_id")
         .eq("id", document_id)
         .limit(1)
         .execute()
@@ -527,7 +543,76 @@ async def get_document_download_url(
     if not doc.get("s3_key"):
         raise HTTPException(400, "Document has no S3 key")
 
-    # Generate presigned URL
+    is_public = doc.get("is_public", False)
+    
+    # ============================================================
+    # ACCESS CONTROL LOGIC
+    # ============================================================
+    access_granted = False
+    access_method = None
+    
+    # FREE DOCUMENTS: Check is_public flag
+    if is_public:
+        # Free documents are accessible, but still rate limit
+        access_granted = True
+        access_method = "free"
+        
+        # Apply rate limiting for free documents (prevent abuse)
+        user_id = current_user.id if current_user else None
+        identifier = get_rate_limit_identifier(request, user_id)
+        # More lenient rate limit for free documents: 20 requests per minute
+        require_rate_limit(request, identifier, max_requests=20, window_seconds=60)
+    
+    # PAID DOCUMENTS: Require authentication OR Stripe payment
+    else:
+        # Option 1: Authenticated user with document access
+        if current_user:
+            try:
+                # Check if user has access via permissions
+                require_document_access(current_user, document_id)
+                access_granted = True
+                access_method = "authenticated"
+            except HTTPException:
+                # User doesn't have access - continue to check Stripe
+                pass
+        
+        # Option 2: Stripe payment verification
+        if not access_granted:
+            if stripe_session_id:
+                # Verify Stripe Checkout Session
+                if verify_stripe_session(stripe_session_id, document_id):
+                    access_granted = True
+                    access_method = "stripe_session"
+                    logger.info(f"Document {document_id} accessed via Stripe session {stripe_session_id}")
+                else:
+                    raise HTTPException(
+                        status_code=402,
+                        detail="Payment verification failed. Please ensure your payment was completed successfully."
+                    )
+            elif stripe_payment_intent_id:
+                # Verify Stripe Payment Intent
+                if verify_stripe_payment_intent(stripe_payment_intent_id, document_id):
+                    access_granted = True
+                    access_method = "stripe_payment_intent"
+                    logger.info(f"Document {document_id} accessed via Stripe payment intent {stripe_payment_intent_id}")
+                else:
+                    raise HTTPException(
+                        status_code=402,
+                        detail="Payment verification failed. Please ensure your payment was completed successfully."
+                    )
+            else:
+                # No authentication and no payment - deny access
+                raise HTTPException(
+                    status_code=402,
+                    detail="This document requires payment or authentication. Please provide a valid Stripe session ID or authenticate with appropriate permissions."
+                )
+    
+    # ============================================================
+    # GENERATE PRESIGNED URL
+    # ============================================================
+    if not access_granted:
+        raise HTTPException(403, "Access denied")
+    
     s3, bucket, region = get_s3()
 
     try:
@@ -536,12 +621,18 @@ async def get_document_download_url(
             Params={"Bucket": bucket, "Key": doc["s3_key"]},
             ExpiresIn=3600,  # 1 hour
         )
+        
+        logger.info(f"Generated presigned URL for document {document_id} via {access_method}")
+        
     except Exception as e:
+        logger.error(f"Failed to generate presigned URL for document {document_id}: {e}")
         raise HTTPException(500, f"Failed to generate presigned URL: {e}")
 
     return {
         "document_id": document_id,
         "download_url": presigned_url,
         "expires_in": 3600,
+        "access_method": access_method,
+        "is_public": is_public,
     }
 
