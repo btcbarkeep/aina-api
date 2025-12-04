@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from core.supabase_client import get_supabase_client
+from core.rate_limiter import require_rate_limit, get_rate_limit_identifier
 from dependencies.auth import get_current_user, CurrentUser
 
 
@@ -31,7 +32,7 @@ class PasswordSetupRequest(BaseModel):
 # LOGIN (SUPABASE AUTH)
 # ============================================================
 @router.post("/login", response_model=TokenResponse, summary="Authenticate user")
-def login(payload: LoginRequest):
+def login(payload: LoginRequest, request: Request):
 
     email = payload.email.strip().lower()
 
@@ -44,6 +45,9 @@ def login(payload: LoginRequest):
             {"email": email, "password": payload.password}
         )
     except Exception as e:
+        # Log the error for debugging but don't expose details to user
+        from core.logging_config import logger
+        logger.warning(f"Login attempt failed for {email}: {type(e).__name__}")
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password"
@@ -85,7 +89,9 @@ def initiate_password_setup(payload: PasswordSetupRequest):
             "message": "Password setup/reset email sent."
         }
     except Exception as e:
+        from core.logging_config import logger
+        logger.error(f"Failed to send password reset email to {email}: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Supabase error sending password setup/reset link"
+            detail="Failed to send password setup/reset email. Please try again later."
         )
