@@ -69,7 +69,7 @@ def validate_user_and_building(client, user_id: str, building_id: str):
         client.table("buildings")
         .select("id")
         .eq("id", building_id)
-        .single()
+        .limit(1)
         .execute()
     )
     if not building.data:
