@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(__file__))
 # Core
 from core.config import settings
 from core.logging_config import logger
+from core.config_validator import validate_config_on_startup
 
 # -------------------------------------------------
 # Routers — Updated (NO _supabase, NO /api/v1)
@@ -60,16 +61,23 @@ def create_app() -> FastAPI:
     )
 
     # -------------------------------------------------
-    # Startup logging
+    # Startup validation and logging
     # -------------------------------------------------
     @app.on_event("startup")
     async def on_startup():
+        # Validate configuration first
+        try:
+            validate_config_on_startup()
+        except RuntimeError as e:
+            logger.critical(f"Startup failed: {e}")
+            raise
+        
         logger.info("🚀 Starting Aina Protocol API")
-        print("\n📍 Registered Routes:\n")
+        logger.info("📍 Registered Routes:")
         for route in app.routes:
             methods = ",".join(route.methods or [])
-            print(f"➡️ {methods:10s} {route.path}")
-        print("\n✅ Route log complete.\n")
+            logger.info(f"➡️ {methods:10s} {route.path}")
+        logger.info("✅ Route log complete")
 
     # -------------------------------------------------
     # Error handling
