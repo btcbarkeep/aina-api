@@ -517,11 +517,13 @@ async def get_document_download_url(
     Generates a fresh presigned URL for a document.
     
     Access Control (Hybrid Approach):
-    - FREE documents (is_public=True): Accessible without authentication (rate limited)
-    - PRIVATE documents (is_public=False): Requires one of:
+    - PUBLIC documents (is_public=True): 
+      * Free access without authentication (rate limited), OR
+      * Valid Stripe payment verification (for paid public documents)
+    - PRIVATE documents (is_public=False): Only accessible by:
       1. User is the document owner (uploader) - highest priority
       2. Authenticated user with document access permissions
-      3. Valid Stripe payment verification (session_id or payment_intent_id)
+      NOTE: Stripe payments are NOT allowed for private documents
     
     Use this endpoint when download_url has expired or doesn't exist.
     """
@@ -553,19 +555,45 @@ async def get_document_download_url(
     access_granted = False
     access_method = None
     
-    # FREE DOCUMENTS: Check is_public flag
+    # PUBLIC DOCUMENTS: Check is_public flag
     if is_public:
-        # Free documents are accessible, but still rate limit
-        access_granted = True
-        access_method = "free"
+        # Public documents can be accessed via:
+        # 1. Free access (no auth/payment needed) - rate limited
+        # 2. Stripe payment (for paid public documents)
         
-        # Apply rate limiting for free documents (prevent abuse)
-        user_id = current_user.id if current_user else None
-        identifier = get_rate_limit_identifier(request, user_id)
-        # More lenient rate limit for free documents: 20 requests per minute
-        require_rate_limit(request, identifier, max_requests=20, window_seconds=60)
+        # Check if Stripe payment provided for paid public documents
+        if stripe_session_id:
+            if verify_stripe_session(stripe_session_id, document_id):
+                access_granted = True
+                access_method = "stripe_session"
+                logger.info(f"Public document {document_id} accessed via Stripe session {stripe_session_id}")
+            else:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Payment verification failed. Please ensure your payment was completed successfully."
+                )
+        elif stripe_payment_intent_id:
+            if verify_stripe_payment_intent(stripe_payment_intent_id, document_id):
+                access_granted = True
+                access_method = "stripe_payment_intent"
+                logger.info(f"Public document {document_id} accessed via Stripe payment intent {stripe_payment_intent_id}")
+            else:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Payment verification failed. Please ensure your payment was completed successfully."
+                )
+        else:
+            # Free public document - accessible without auth/payment, but rate limited
+            access_granted = True
+            access_method = "free"
+            
+            # Apply rate limiting for free public documents (prevent abuse)
+            user_id = current_user.id if current_user else None
+            identifier = get_rate_limit_identifier(request, user_id)
+            # More lenient rate limit for free documents: 20 requests per minute
+            require_rate_limit(request, identifier, max_requests=20, window_seconds=60)
     
-    # PRIVATE DOCUMENTS: Require owner, permissions, OR Stripe payment
+    # PRIVATE DOCUMENTS: Only owner or users with permissions (NO Stripe payments)
     else:
         # Option 1: Check if user is the document owner (uploader)
         if current_user and uploaded_by:
@@ -576,7 +604,7 @@ async def get_document_download_url(
             if user_id_to_check == uploaded_by_str:
                 access_granted = True
                 access_method = "owner"
-                logger.info(f"Document {document_id} accessed by owner {user_id_to_check}")
+                logger.info(f"Private document {document_id} accessed by owner {user_id_to_check}")
         
         # Option 2: Authenticated user with document access permissions
         if not access_granted and current_user:
@@ -586,38 +614,22 @@ async def get_document_download_url(
                 access_granted = True
                 access_method = "authenticated"
             except HTTPException:
-                # User doesn't have access - continue to check Stripe
+                # User doesn't have access
                 pass
         
-        # Option 3: Stripe payment verification
+        # Private documents do NOT allow Stripe payments
+        # If Stripe payment provided for private document, reject it
         if not access_granted:
-            if stripe_session_id:
-                # Verify Stripe Checkout Session
-                if verify_stripe_session(stripe_session_id, document_id):
-                    access_granted = True
-                    access_method = "stripe_session"
-                    logger.info(f"Document {document_id} accessed via Stripe session {stripe_session_id}")
-                else:
-                    raise HTTPException(
-                        status_code=402,
-                        detail="Payment verification failed. Please ensure your payment was completed successfully."
-                    )
-            elif stripe_payment_intent_id:
-                # Verify Stripe Payment Intent
-                if verify_stripe_payment_intent(stripe_payment_intent_id, document_id):
-                    access_granted = True
-                    access_method = "stripe_payment_intent"
-                    logger.info(f"Document {document_id} accessed via Stripe payment intent {stripe_payment_intent_id}")
-                else:
-                    raise HTTPException(
-                        status_code=402,
-                        detail="Payment verification failed. Please ensure your payment was completed successfully."
-                    )
-            else:
-                # No owner match, no permissions, and no payment - deny access
+            if stripe_session_id or stripe_payment_intent_id:
                 raise HTTPException(
                     status_code=403,
-                    detail="Access denied. This document is private. Only the uploader, users with appropriate permissions, or users who have paid for access can download this document."
+                    detail="Access denied. This document is private and cannot be purchased. Only the uploader or users with appropriate permissions can access this document."
+                )
+            else:
+                # No owner match, no permissions, and no payment attempted
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied. This document is private. Only the uploader or users with appropriate permissions can access this document."
                 )
     
     # ============================================================
