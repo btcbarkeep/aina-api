@@ -4,6 +4,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from core.config import settings
+from core.logging_config import logger
 
 # -----------------------------------------------------
 # 📨 Send webhook (Discord, Slack, etc.)
@@ -11,15 +12,15 @@ from core.config import settings
 def send_webhook_message(message: str):
     webhook_url = settings.SYNC_WEBHOOK_URL
     if not webhook_url:
-        print("[NOTIFY] Webhook URL not configured — skipping.")
+        logger.debug("Webhook URL not configured — skipping.")
         return
 
     try:
         payload = {"content": message}
         response = requests.post(webhook_url, json=payload)
-        print(f"[NOTIFY] Webhook sent (status {response.status_code})")
+        logger.info(f"Webhook sent (status {response.status_code})")
     except Exception as e:
-        print(f"[NOTIFY] Webhook failed: {e}")
+        logger.warning(f"Webhook failed: {e}")
 
 
 # -----------------------------------------------------
@@ -35,7 +36,7 @@ def send_email(subject: str, body: str, to: str = None):
     recipient = to or settings.SMTP_TO
 
     if not all([smtp_host, smtp_port, smtp_user, smtp_pass, recipient]):
-        print("[NOTIFY] Email credentials missing — skipping email.")
+        logger.warning("Email credentials missing — skipping email.")
         return
 
     try:
@@ -49,7 +50,7 @@ def send_email(subject: str, body: str, to: str = None):
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
-        print(f"[NOTIFY] Email sent to {recipient}")
+        logger.info(f"Email sent to {recipient}")
 
     except Exception as e:
-        print(f"[NOTIFY] Email failed: {e}")
+        logger.error(f"Email failed: {e}")
