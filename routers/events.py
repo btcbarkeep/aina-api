@@ -21,6 +21,7 @@ from core.permission_helpers import (
     get_user_accessible_building_ids,
 )
 from models.event import EventCreate, EventUpdate, EventRead
+from models.event_comment import EventCommentCreate, EventCommentUpdate
 
 
 router = APIRouter(
@@ -792,7 +793,7 @@ def list_event_comments(
 @router.post("/{event_id}/comments", summary="Add a comment to an event")
 def add_event_comment(
     event_id: str,
-    payload: dict,
+    payload: EventCommentCreate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
@@ -803,14 +804,12 @@ def add_event_comment(
     if not can_modify_comments(current_user, event_creator):
         raise HTTPException(403, "You cannot comment on this event.")
 
-    comment_text = payload.get("comment_text", "").strip()
-    if not comment_text:
-        raise HTTPException(400, "comment_text is required")
-
+    # Use event_id from URL (ignore payload.event_id if different)
+    # This allows flexibility while ensuring URL parameter takes precedence
     insert_data = {
         "event_id": event_id,
         "user_id": str(current_user.id),
-        "comment_text": comment_text,
+        "comment_text": payload.comment_text,
     }
 
     res = client.table("event_comments").insert(insert_data).execute()
@@ -827,7 +826,7 @@ def add_event_comment(
 def update_event_comment(
     event_id: str,
     comment_id: str,
-    payload: dict,
+    payload: EventCommentUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
     client = get_supabase_client()
@@ -856,13 +855,12 @@ def update_event_comment(
     ):
         raise HTTPException(403, "You cannot modify this comment.")
 
-    update_text = payload.get("comment_text", "").strip()
-    if not update_text:
-        raise HTTPException(400, "comment_text is required")
+    if payload.comment_text is None or not payload.comment_text.strip():
+        raise HTTPException(400, "comment_text is required and cannot be empty")
 
     update_res = (
         client.table("event_comments")
-        .update({"comment_text": update_text})
+        .update({"comment_text": payload.comment_text})
         .eq("id", comment_id)
         .execute()
     )
