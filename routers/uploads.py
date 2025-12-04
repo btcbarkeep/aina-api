@@ -30,6 +30,9 @@ from core.permission_helpers import (
 from core.stripe_helpers import verify_stripe_session, verify_stripe_payment_intent
 from core.rate_limiter import require_rate_limit, get_rate_limit_identifier
 from core.logging_config import logger
+from core.utils import sanitize
+from core.s3_client import get_s3
+from core.contractor_helpers import enrich_contractor_with_roles
 
 router = APIRouter(
     prefix="/uploads",
@@ -37,9 +40,15 @@ router = APIRouter(
 )
 
 # -----------------------------------------------------
-# Sanitize helper (using centralized utility)
+# Constants
 # -----------------------------------------------------
-from core.utils import sanitize
+# Rate limiting
+FREE_DOCUMENT_RATE_LIMIT = 20  # requests per window
+RATE_LIMIT_WINDOW_SECONDS = 60  # 1 minute
+
+# Presigned URL expiration
+PRESIGNED_URL_EXPIRY_SECONDS = 3600  # 1 hour
+UPLOAD_PRESIGNED_URL_EXPIRY_SECONDS = 86400  # 1 day (for upload responses)
 
 # -----------------------------------------------------
 # Filename sanitizer
@@ -57,11 +66,6 @@ def normalize_uuid_like(value: str | None) -> str | None:
     if not v or v.lower() in {"string", "null", "undefined"}:
         return None
     return v
-
-# -----------------------------------------------------
-# AWS S3 (using centralized utility)
-# -----------------------------------------------------
-from core.s3_client import get_s3
 
 # -----------------------------------------------------
 # Building access check
@@ -170,25 +174,30 @@ async def upload_document(
     # We'll validate it's set before creating the document record
     
     # Parse unit_ids and contractor_ids from JSON strings
+    import json
     parsed_unit_ids = []
     if unit_ids:
         try:
-            import json
             parsed_unit_ids = json.loads(unit_ids)
             if not isinstance(parsed_unit_ids, list):
-                parsed_unit_ids = []
-        except Exception:
-            parsed_unit_ids = []
+                raise HTTPException(400, "unit_ids must be a JSON array")
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in unit_ids parameter")
+        except Exception as e:
+            logger.warning(f"Error parsing unit_ids: {e}")
+            raise HTTPException(400, "Invalid unit_ids format")
     
     parsed_contractor_ids = []
     if contractor_ids:
         try:
-            import json
             parsed_contractor_ids = json.loads(contractor_ids)
             if not isinstance(parsed_contractor_ids, list):
-                parsed_contractor_ids = []
-        except Exception:
-            parsed_contractor_ids = []
+                raise HTTPException(400, "contractor_ids must be a JSON array")
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON in contractor_ids parameter")
+        except Exception as e:
+            logger.warning(f"Error parsing contractor_ids: {e}")
+            raise HTTPException(400, "Invalid contractor_ids format")
     
     # Remove duplicates
     parsed_unit_ids = list(dict.fromkeys(parsed_unit_ids))
@@ -330,14 +339,14 @@ async def upload_document(
             try:
                 os.unlink(temp_file_path)
             except Exception as e:
-                print(f"Warning: Failed to delete temp file {temp_file_path}: {e}")
+                logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
 
     # Generate presigned URL for immediate use (expires in 1 day)
     # Note: For long-term access, use the /documents/{id}/download endpoint
     presigned_url = s3.generate_presigned_url(
         "get_object",
         Params={"Bucket": bucket, "Key": s3_key},
-        ExpiresIn=86400,  # 1 day
+        ExpiresIn=UPLOAD_PRESIGNED_URL_EXPIRY_SECONDS,
     )
 
     # -----------------------------------------------------
@@ -381,7 +390,7 @@ async def upload_document(
             except Exception as e:
                 # Ignore duplicate key errors (unique constraint)
                 if "duplicate" not in str(e).lower():
-                    print(f"Warning: Failed to create document_unit relationship: {e}")
+                    logger.warning(f"Failed to create document_unit relationship: {e}")
     
     # Step 3 — Create junction table entries for contractors
     if parsed_contractor_ids:
@@ -394,7 +403,7 @@ async def upload_document(
             except Exception as e:
                 # Ignore duplicate key errors (unique constraint)
                 if "duplicate" not in str(e).lower():
-                    print(f"Warning: Failed to create document_contractor relationship: {e}")
+                    logger.warning(f"Failed to create document_contractor relationship: {e}")
 
     # Step 4 — Fetch with relations
     fetch_res = (
@@ -443,36 +452,6 @@ async def upload_document(
     document["unit_ids"] = [u["id"] for u in units]
     document["contractor_ids"] = [c["id"] for c in contractors]
 
-
-# -----------------------------------------------------
-# Helper — Enrich contractor with roles
-# -----------------------------------------------------
-def enrich_contractor_with_roles(contractor: dict) -> dict:
-    """Add roles array to contractor dict."""
-    contractor_id = contractor.get("id")
-    if not contractor_id:
-        contractor["roles"] = []
-        return contractor
-    
-    client = get_supabase_client()
-    
-    # Get roles for this contractor
-    role_result = (
-        client.table("contractor_role_assignments")
-        .select("role_id, contractor_roles(name)")
-        .eq("contractor_id", contractor_id)
-        .execute()
-    )
-    
-    roles = []
-    if role_result.data:
-        for row in role_result.data:
-            if row.get("contractor_roles") and row["contractor_roles"].get("name"):
-                roles.append(row["contractor_roles"]["name"])
-    
-    contractor["roles"] = roles
-    return contractor
-
     # -----------------------------------------------------
     # Update event with s3_key if event_id is provided
     # -----------------------------------------------------
@@ -483,7 +462,7 @@ def enrich_contractor_with_roles(contractor: dict) -> dict:
             }).eq("id", event_id).execute()
         except Exception as e:
             # Log error but don't fail the upload
-            print(f"Warning: Failed to update event {event_id} with s3_key: {e}")
+            logger.warning(f"Failed to update event {event_id} with s3_key: {e}")
 
     # -----------------------------------------------------
     # Response
@@ -644,7 +623,7 @@ async def get_document_download_url(
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": doc["s3_key"]},
-            ExpiresIn=3600,  # 1 hour
+            ExpiresIn=PRESIGNED_URL_EXPIRY_SECONDS,
         )
         
         logger.info(f"Generated presigned URL for document {document_id} via {access_method}")
@@ -656,7 +635,7 @@ async def get_document_download_url(
     return {
         "document_id": document_id,
         "download_url": presigned_url,
-        "expires_in": 3600,
+        "expires_in": PRESIGNED_URL_EXPIRY_SECONDS,
         "access_method": access_method,
         "is_public": is_public,
     }
