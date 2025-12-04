@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     SYNC_WEBHOOK_URL: Optional[str] = Field(None, env="SYNC_WEBHOOK_URL")
 
     # -------------------------------------------------
+    # Stripe Payment Processing
+    # -------------------------------------------------
+    STRIPE_SECRET_KEY: Optional[str] = Field(None, env="STRIPE_SECRET_KEY")
+    STRIPE_WEBHOOK_SECRET: Optional[str] = Field(None, env="STRIPE_WEBHOOK_SECRET")
+
+    # -------------------------------------------------
     # Model Config
     # -------------------------------------------------
     class Config:
