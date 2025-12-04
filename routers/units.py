@@ -90,10 +90,14 @@ def create_unit(payload: dict, current_user: CurrentUser = Depends(get_current_u
             client.table("units")
             .insert(cleaned)
             .select("*")
-            .single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        if not result.data:
+            raise HTTPException(500, "Unit creation failed - no data returned")
+        return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Unit creation failed: {e}")
 
@@ -114,10 +118,14 @@ def update_unit(unit_id: str, payload: dict, current_user: CurrentUser = Depends
             .update(cleaned)
             .eq("id", unit_id)
             .select("*")
-            .single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        if not result.data:
+            raise HTTPException(404, f"Unit {unit_id} not found")
+        return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Unit update failed: {e}")
 
@@ -153,10 +161,14 @@ def get_unit(unit_id: str, current_user: CurrentUser = Depends(get_current_user)
             client.table("units")
             .select("*")
             .eq("id", unit_id)
-            .single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        if not result.data:
+            raise HTTPException(404, f"Unit {unit_id} not found")
+        return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Unable to fetch unit: {e}")
 
