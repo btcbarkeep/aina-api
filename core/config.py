@@ -10,9 +10,6 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Aina Protocol API"
     ENV: str = "development"
 
-    # API versioning
-    API_V1_PREFIX: str = "/api/v1"
-
     # -------------------------------------------------
     # Cloudflare + Frontend Domains
     # -------------------------------------------------
