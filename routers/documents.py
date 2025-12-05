@@ -536,9 +536,9 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
                 require_units_access(current_user, unit_ids)
 
     # -------------------------------------------------
-    # Prepare record (exclude unit_ids and contractor_ids - they go to junction tables)
+    # Prepare record (exclude unit_ids, contractor_ids, and document_url - they go to junction tables or are bulk-only)
     # -------------------------------------------------
-    doc_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids"}))
+    doc_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids", "document_url"}))
     
     doc_data["building_id"] = str(building_id)
     doc_data["event_id"] = str(event_id) if event_id else None
@@ -643,7 +643,7 @@ def update_document(document_id: str, payload: DocumentUpdate, current_user: Cur
                     raise HTTPException(400, f"Contractor {cid} does not exist")
 
     # Prepare update data (exclude junction table fields)
-    update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids"}))
+    update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids", "document_url"}))
 
     # event_id changed → derive new building
     if "event_id" in update_data and update_data["event_id"]:
