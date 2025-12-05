@@ -238,16 +238,18 @@ async def upload_document(
         if len(parsed_contractor_ids) != len(set(parsed_contractor_ids)):
             raise HTTPException(400, "Duplicate contractor IDs are not allowed")
         
+        # Batch validate contractors exist (prevents N+1 queries)
         client = get_supabase_client()
-        for cid in parsed_contractor_ids:
-            contractor_rows = (
-                client.table("contractors")
-                .select("id")
-                .eq("id", cid)
-                .execute()
-            ).data
-            if not contractor_rows:
-                raise HTTPException(400, f"Contractor {cid} does not exist")
+        contractors_result = (
+            client.table("contractors")
+            .select("id")
+            .in_("id", parsed_contractor_ids)
+            .execute()
+        )
+        existing_contractor_ids = {row["id"] for row in (contractors_result.data or [])}
+        missing_contractors = [cid for cid in parsed_contractor_ids if cid not in existing_contractor_ids]
+        if missing_contractors:
+            raise HTTPException(400, f"Contractors do not exist: {', '.join(missing_contractors)}")
 
     # If building not provided → error
     if not building_id:
