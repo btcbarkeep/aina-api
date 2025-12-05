@@ -48,6 +48,44 @@ def create_app() -> FastAPI:
         version="1.0.0",
         description="Aina Protocol API — Supabase-powered Real Estate Reporting",
     )
+    
+    # Customize OpenAPI schema to remove auto-generated UUID examples
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        
+        from fastapi.openapi.utils import get_openapi
+        
+        openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        
+        # Remove example UUIDs from schema
+        def remove_uuid_examples(schema):
+            if isinstance(schema, dict):
+                # Remove example from UUID format fields
+                if schema.get("format") == "uuid" and "example" in schema:
+                    schema.pop("example", None)
+                # Recursively process nested schemas
+                for key, value in schema.items():
+                    if isinstance(value, (dict, list)):
+                        remove_uuid_examples(value)
+            elif isinstance(schema, list):
+                for item in schema:
+                    remove_uuid_examples(item)
+        
+        # Process all components
+        if "components" in openapi_schema and "schemas" in openapi_schema["components"]:
+            for schema_name, schema_def in openapi_schema["components"]["schemas"].items():
+                remove_uuid_examples(schema_def)
+        
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+    
+    app.openapi = custom_openapi
 
     # -------------------------------------------------
     # CORS
