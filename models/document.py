@@ -188,10 +188,19 @@ class DocumentUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "event_id": "REPLACE_WITH_ACTUAL_EVENT_ID_OR_NULL",
+                "building_id": "REPLACE_WITH_ACTUAL_BUILDING_ID_OR_NULL",
+                "unit_ids": ["REPLACE_WITH_ACTUAL_UNIT_ID"],
+                "contractor_ids": ["REPLACE_WITH_ACTUAL_CONTRACTOR_ID"],
+                "category_id": "REPLACE_WITH_ACTUAL_CATEGORY_ID_OR_NULL",
+                "s3_key": "REPLACE_WITH_ACTUAL_S3_KEY_OR_NULL",
                 "filename": "updated_filename.pdf",
-                "is_public": False
+                "content_type": "application/pdf",
+                "size_bytes": 1024,
+                "is_redacted": False,
+                "is_public": True
             },
-            "description": "Partial update - only include fields you want to change. Get current values from GET /documents/{id} first."
+            "description": "Partial update - only include fields you want to change. Get current values from GET /documents/{id} first. All fields are optional."
         }
     )
 
