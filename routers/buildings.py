@@ -299,26 +299,39 @@ def get_building_contractors(
     client = get_supabase_client()
 
     try:
-        # Fetch all events first
+        # Step 1: Get all events for this building
         event_rows = (
             client.table("events")
-            .select("contractor_id, event_type, created_at")
+            .select("id, event_type, created_at")
             .eq("building_id", building_id)
             .execute()
         ).data or []
 
-        # Only events with contractor_id
-        contractor_events = [e for e in event_rows if e.get("contractor_id")]
-
-        if not contractor_events:
+        if not event_rows:
             return {"success": True, "data": []}
 
-        ids = list({e["contractor_id"] for e in contractor_events})
+        event_ids = [e["id"] for e in event_rows]
+        event_map = {e["id"]: e for e in event_rows}
 
+        # Step 2: Get contractor associations via event_contractors junction table
+        event_contractors_result = (
+            client.table("event_contractors")
+            .select("event_id, contractor_id")
+            .in_("event_id", event_ids)
+            .execute()
+        ).data or []
+
+        if not event_contractors_result:
+            return {"success": True, "data": []}
+
+        # Step 3: Get unique contractor IDs
+        contractor_ids = list({row["contractor_id"] for row in event_contractors_result})
+
+        # Step 4: Fetch contractors
         contractors = (
             client.table("contractors")
             .select("*")
-            .in_("id", ids)
+            .in_("id", contractor_ids)
             .execute()
         ).data or []
 
@@ -328,28 +341,35 @@ def get_building_contractors(
 
         contractor_map = {c["id"]: c for c in contractors}
 
+        # Step 5: Build summary with event counts and types per contractor
         summary = {}
 
-        for e in contractor_events:
-            cid = e["contractor_id"]
+        for row in event_contractors_result:
+            event_id = row["event_id"]
+            contractor_id = row["contractor_id"]
+            event = event_map.get(event_id)
 
-            if cid not in summary:
-                summary[cid] = {
-                    "contractor": contractor_map.get(cid),
+            if not event:
+                continue
+
+            if contractor_id not in summary:
+                summary[contractor_id] = {
+                    "contractor": contractor_map.get(contractor_id),
                     "event_count": 0,
                     "event_types": set(),
-                    "first_seen": e["created_at"],
-                    "last_seen": e["created_at"],
+                    "first_seen": event["created_at"],
+                    "last_seen": event["created_at"],
                 }
 
-            summary[cid]["event_count"] += 1
-            summary[cid]["event_types"].add(e["event_type"])
+            summary[contractor_id]["event_count"] += 1
+            summary[contractor_id]["event_types"].add(event["event_type"])
 
-            if e["created_at"] < summary[cid]["first_seen"]:
-                summary[cid]["first_seen"] = e["created_at"]
-            if e["created_at"] > summary[cid]["last_seen"]:
-                summary[cid]["last_seen"] = e["created_at"]
+            if event["created_at"] < summary[contractor_id]["first_seen"]:
+                summary[contractor_id]["first_seen"] = event["created_at"]
+            if event["created_at"] > summary[contractor_id]["last_seen"]:
+                summary[contractor_id]["last_seen"] = event["created_at"]
 
+        # Step 6: Format output
         output = []
         for cid, data in summary.items():
             out = data["contractor"].copy() if data["contractor"] else {"id": cid}
