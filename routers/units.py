@@ -47,6 +47,26 @@ def clean(value):
 
 
 # -------------------------------------------------------------
+# Convert string to int (for numeric fields that might come as strings)
+# -------------------------------------------------------------
+def to_int_or_none(value):
+    """Convert value to int if possible, otherwise return None."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "":
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
+# -------------------------------------------------------------
 # LIST Units for a Building
 # -------------------------------------------------------------
 @router.get("/building/{building_id}")
@@ -84,8 +104,18 @@ def create_unit(payload: UnitCreate, current_user: CurrentUser = Depends(get_cur
     require_unit_access(current_user)
 
     client = get_supabase_client()
-    # Convert Pydantic model to dict, cleaning None values
-    cleaned = {k: clean(v) for k, v in payload.model_dump().items() if v is not None}
+    # Convert Pydantic model to dict, cleaning and converting types
+    data = payload.model_dump()
+    cleaned = {}
+    
+    for k, v in data.items():
+        if v is None:
+            continue
+        # Convert numeric fields that might come as strings
+        if k in ["floor", "bedrooms", "bathrooms", "square_feet"]:
+            cleaned[k] = to_int_or_none(v)
+        else:
+            cleaned[k] = clean(v)
 
     try:
         result = (
@@ -111,7 +141,17 @@ def update_unit(unit_id: str, payload: UnitUpdate, current_user: CurrentUser = D
 
     client = get_supabase_client()
     # Convert Pydantic model to dict, excluding None values for partial updates
-    cleaned = {k: clean(v) for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    data = payload.model_dump(exclude_unset=True)
+    cleaned = {}
+    
+    for k, v in data.items():
+        if v is None:
+            continue
+        # Convert numeric fields that might come as strings
+        if k in ["floor", "bedrooms", "bathrooms", "square_feet"]:
+            cleaned[k] = to_int_or_none(v)
+        else:
+            cleaned[k] = clean(v)
 
     try:
         result = (
