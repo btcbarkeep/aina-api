@@ -90,9 +90,7 @@ def create_unit(payload: UnitCreate, current_user: CurrentUser = Depends(get_cur
     try:
         result = (
             client.table("units")
-            .insert(cleaned)
-            .select("*")
-            .limit(1)
+            .insert(cleaned, returning="representation")
             .execute()
         )
         if not result.data:
@@ -118,10 +116,8 @@ def update_unit(unit_id: str, payload: UnitUpdate, current_user: CurrentUser = D
     try:
         result = (
             client.table("units")
-            .update(cleaned)
+            .update(cleaned, returning="representation")
             .eq("id", unit_id)
-            .select("*")
-            .limit(1)
             .execute()
         )
         if not result.data:
