@@ -161,21 +161,39 @@ class DocumentCreate(DocumentBase):
 # ======================================================
 
 class DocumentUpdate(BaseModel):
-    event_id: Optional[UUID] = None
-    building_id: Optional[UUID] = None
-    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs associated with this document")
-    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs associated with this document")
-    category_id: Optional[UUID] = Field(None, description="Category ID for this document")
+    """
+    Used for partial updates to documents. Only include fields you want to change.
+    
+    Note: To see current values, first GET the document using GET /documents/{document_id},
+    then modify only the fields you want to update.
+    
+    All fields are optional - only include fields you want to change.
+    """
+    event_id: Optional[UUID] = Field(None, description="Optional event ID. Get current value from GET /documents/{id}")
+    building_id: Optional[UUID] = Field(None, description="Optional building ID. Get current value from GET /documents/{id}")
+    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs. Get current values from GET /documents/{id}")
+    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs. Get current values from GET /documents/{id}")
+    category_id: Optional[UUID] = Field(None, description="Category ID. Get current value from GET /documents/{id}")
 
-    s3_key: Optional[str] = None
-    filename: Optional[str] = None
-    content_type: Optional[str] = None
-    size_bytes: Optional[int] = None
-    document_url: Optional[str] = None
+    s3_key: Optional[str] = Field(None, description="S3 key. Get current value from GET /documents/{id}")
+    filename: Optional[str] = Field(None, description="Filename. Get current value from GET /documents/{id}")
+    content_type: Optional[str] = Field(None, description="Content type. Get current value from GET /documents/{id}")
+    size_bytes: Optional[int] = Field(None, description="File size in bytes. Get current value from GET /documents/{id}")
+    document_url: Optional[str] = None  # Excluded from DB operations, bulk-only
 
     # Redaction and visibility controls
-    is_redacted: Optional[bool] = None
-    is_public: Optional[bool] = None
+    is_redacted: Optional[bool] = Field(None, description="Redaction status. Get current value from GET /documents/{id}")
+    is_public: Optional[bool] = Field(None, description="Public visibility. Get current value from GET /documents/{id}")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "filename": "updated_filename.pdf",
+                "is_public": False
+            },
+            "description": "Partial update - only include fields you want to change. Get current values from GET /documents/{id} first."
+        }
+    )
 
     @field_validator("event_id", mode="before")
     def validate_event_id(cls, v):
