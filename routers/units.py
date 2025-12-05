@@ -9,6 +9,7 @@ import io
 
 from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
+from core.logging_config import logger
 from core.permission_helpers import (
     is_admin,
     require_unit_access as require_unit_access_helper,
@@ -58,11 +59,33 @@ def to_int_or_none(value):
         if value == "":
             return None
         try:
-            return int(value)
-        except ValueError:
+            # Try to convert to int (handles "6", "6.0", etc.)
+            return int(float(value))
+        except (ValueError, TypeError):
             return None
     if isinstance(value, (int, float)):
         return int(value)
+    return None
+
+
+# -------------------------------------------------------------
+# Convert string to numeric/decimal (for numeric fields that might come as strings)
+# -------------------------------------------------------------
+def to_numeric_or_none(value):
+    """Convert value to numeric (decimal) if possible, otherwise return None."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "" or value.lower() == "string":  # Skip placeholder values
+            return None
+        try:
+            # Convert to float (numeric type in database)
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    if isinstance(value, (int, float)):
+        return float(value)
     return None
 
 
@@ -111,11 +134,33 @@ def create_unit(payload: UnitCreate, current_user: CurrentUser = Depends(get_cur
     for k, v in data.items():
         if v is None:
             continue
-        # Convert numeric fields that might come as strings
-        if k in ["floor", "bedrooms", "bathrooms", "square_feet"]:
-            cleaned[k] = to_int_or_none(v)
+        # Convert integer fields that might come as strings
+        if k in ["bedrooms", "bathrooms", "square_feet"]:
+            converted = to_int_or_none(v)
+            if converted is not None:
+                cleaned[k] = converted
+            else:
+                # Log if conversion failed for debugging
+                logger.warning(f"Failed to convert {k}={v} (type: {type(v)}) to integer, skipping field")
+        # Convert numeric (decimal) fields that might come as strings
+        elif k == "parcel_number":
+            converted = to_numeric_or_none(v)
+            if converted is not None:
+                cleaned[k] = converted
+            else:
+                logger.warning(f"Failed to convert {k}={v} (type: {type(v)}) to numeric, skipping field")
+        # floor is text type, so keep as string (but clean it)
         else:
-            cleaned[k] = clean(v)
+            cleaned_value = clean(v)
+            # Skip placeholder "string" values (common in API testing)
+            if cleaned_value == "string":
+                logger.warning(f"Skipping placeholder value 'string' for field {k}")
+                continue
+            if cleaned_value is not None:
+                cleaned[k] = cleaned_value
+    
+    logger.info(f"Creating unit - original data: {data}")
+    logger.info(f"Creating unit with cleaned data: {cleaned}")
 
     try:
         result = (
@@ -147,11 +192,25 @@ def update_unit(unit_id: str, payload: UnitUpdate, current_user: CurrentUser = D
     for k, v in data.items():
         if v is None:
             continue
-        # Convert numeric fields that might come as strings
-        if k in ["floor", "bedrooms", "bathrooms", "square_feet"]:
-            cleaned[k] = to_int_or_none(v)
+        # Convert integer fields that might come as strings
+        if k in ["bedrooms", "bathrooms", "square_feet"]:
+            converted = to_int_or_none(v)
+            if converted is not None:
+                cleaned[k] = converted
+        # Convert numeric (decimal) fields that might come as strings
+        elif k == "parcel_number":
+            converted = to_numeric_or_none(v)
+            if converted is not None:
+                cleaned[k] = converted
+        # floor is text type, so keep as string (but clean it)
         else:
-            cleaned[k] = clean(v)
+            cleaned_value = clean(v)
+            # Skip placeholder "string" values (common in API testing)
+            if cleaned_value == "string":
+                logger.warning(f"Skipping placeholder value 'string' for field {k}")
+                continue
+            if cleaned_value is not None:
+                cleaned[k] = cleaned_value
 
     try:
         result = (
