@@ -145,6 +145,8 @@ class DocumentCreate(DocumentBase):
         json_schema_extra={
             "example": {
                 "building_id": "REPLACE_WITH_ACTUAL_BUILDING_ID",
+                "unit_ids": ["REPLACE_WITH_ACTUAL_UNIT_ID"],
+                "contractor_ids": ["REPLACE_WITH_ACTUAL_CONTRACTOR_ID"],
                 "filename": "example.pdf",
                 "content_type": "application/pdf",
                 "is_public": True,
