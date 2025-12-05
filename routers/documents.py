@@ -587,6 +587,14 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
 @router.put(
     "/{document_id}",
     summary="Update Document",
+    description="""
+    Partially update a document. Only include fields you want to change.
+    
+    **To see current values:** First call GET /documents/{document_id} to retrieve the current document,
+    then modify only the fields you want to update and send them in this request.
+    
+    **Note:** All fields are optional. Omit fields you don't want to change.
+    """,
     dependencies=[Depends(requires_permission("documents:write"))],
 )
 def update_document(document_id: str, payload: DocumentUpdate, current_user: CurrentUser = Depends(get_current_user)):
