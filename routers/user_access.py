@@ -320,29 +320,6 @@ def delete_unit_access(user_id: str, unit_id: str):
 
 
 # ============================================================
-# Legacy endpoints — Backward compatibility
-# ============================================================
-@router.post(
-    "/",
-    summary="Grant a user building access (legacy endpoint)",
-    dependencies=[Depends(requires_permission("user_access:write"))],
-)
-def add_user_access(payload: UserBuildingAccessCreate):
-    """Legacy endpoint for backward compatibility. Use POST /buildings instead."""
-    return add_building_access(payload)
-
-
-@router.delete(
-    "/{user_id}/{building_id}",
-    summary="Remove building access for a user (legacy endpoint)",
-    dependencies=[Depends(requires_permission("user_access:write"))],
-)
-def delete_user_access(user_id: str, building_id: str):
-    """Legacy endpoint for backward compatibility. Use DELETE /buildings/{user_id}/{building_id} instead."""
-    return delete_building_access(user_id, building_id)
-
-
-# ============================================================
 # User — View their own access (buildings and units)
 # ============================================================
 @router.get("/me", summary="Get building and unit access for the authenticated user")
