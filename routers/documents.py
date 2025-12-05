@@ -487,18 +487,19 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     if len(contractor_ids) != len(set(contractor_ids)):
         raise HTTPException(400, "Duplicate contractor IDs are not allowed")
     
-    # Validate contractors exist
+    # Batch validate contractors exist (prevents N+1 queries)
     if contractor_ids:
         client = get_supabase_client()
-        for cid in contractor_ids:
-            contractor_rows = (
-                client.table("contractors")
-                .select("id")
-                .eq("id", cid)
-                .execute()
-            ).data
-            if not contractor_rows:
-                raise HTTPException(400, f"Contractor {cid} does not exist")
+        contractors_result = (
+            client.table("contractors")
+            .select("id")
+            .in_("id", contractor_ids)
+            .execute()
+        )
+        existing_contractor_ids = {row["id"] for row in (contractors_result.data or [])}
+        missing_contractors = [cid for cid in contractor_ids if cid not in existing_contractor_ids]
+        if missing_contractors:
+            raise HTTPException(400, f"Contractors do not exist: {', '.join(missing_contractors)}")
 
     # -------------------------------------------------
     # Determine building based on payload
