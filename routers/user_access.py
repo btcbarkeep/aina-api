@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
+from core.logging_config import logger
 from dependencies.auth import (
     get_current_user,
     CurrentUser,
@@ -48,6 +49,8 @@ class UserUnitAccessRead(BaseModel):
 )
 def list_building_access():
     client = get_supabase_client()
+    if not client:
+        raise HTTPException(500, "Supabase client not configured")
 
     try:
         result = (
@@ -263,26 +266,47 @@ def add_unit_access(payload: UserUnitAccessCreate):
 )
 def delete_building_access(user_id: str, building_id: str):
     client = get_supabase_client()
+    if not client:
+        logger.error("Supabase client not configured in delete_building_access")
+        raise HTTPException(500, "Supabase client not configured")
 
     try:
-        result = (
+        logger.info(f"Attempting to delete building access: user_id={user_id}, building_id={building_id}")
+        
+        # First check if record exists (faster than delete with returning)
+        check_result = (
             client.table("user_building_access")
-            .delete(returning="representation")
+            .select("user_id")
+            .eq("user_id", user_id)
+            .eq("building_id", building_id)
+            .limit(1)
+            .execute()
+        )
+        
+        if not check_result.data:
+            logger.warning(f"Building access record not found: user_id={user_id}, building_id={building_id}")
+            raise HTTPException(404, "Access record not found")
+        
+        # Delete without returning (faster)
+        (
+            client.table("user_building_access")
+            .delete()
             .eq("user_id", user_id)
             .eq("building_id", building_id)
             .execute()
         )
 
-        if not result.data:
-            raise HTTPException(404, "Access record not found")
-
+        logger.info(f"Successfully deleted building access: user_id={user_id}, building_id={building_id}")
         return {
             "status": "deleted",
             "user_id": user_id,
             "building_id": building_id,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error deleting building access: user_id={user_id}, building_id={building_id}, error={e}", exc_info=True)
         raise HTTPException(500, f"Supabase error: {e}")
 
 
@@ -296,26 +320,47 @@ def delete_building_access(user_id: str, building_id: str):
 )
 def delete_unit_access(user_id: str, unit_id: str):
     client = get_supabase_client()
+    if not client:
+        logger.error("Supabase client not configured in delete_unit_access")
+        raise HTTPException(500, "Supabase client not configured")
 
     try:
-        result = (
+        logger.info(f"Attempting to delete unit access: user_id={user_id}, unit_id={unit_id}")
+        
+        # First check if record exists (faster than delete with returning)
+        check_result = (
             client.table("user_units_access")
-            .delete(returning="representation")
+            .select("user_id")
+            .eq("user_id", user_id)
+            .eq("unit_id", unit_id)
+            .limit(1)
+            .execute()
+        )
+        
+        if not check_result.data:
+            logger.warning(f"Unit access record not found: user_id={user_id}, unit_id={unit_id}")
+            raise HTTPException(404, "Access record not found")
+        
+        # Delete without returning (faster)
+        (
+            client.table("user_units_access")
+            .delete()
             .eq("user_id", user_id)
             .eq("unit_id", unit_id)
             .execute()
         )
 
-        if not result.data:
-            raise HTTPException(404, "Access record not found")
-
+        logger.info(f"Successfully deleted unit access: user_id={user_id}, unit_id={unit_id}")
         return {
             "status": "deleted",
             "user_id": user_id,
             "unit_id": unit_id,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error deleting unit access: user_id={user_id}, unit_id={unit_id}, error={e}", exc_info=True)
         raise HTTPException(500, f"Supabase error: {e}")
 
 
