@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, field_validator, Field, ConfigDict
 
 
 # ======================================================
@@ -36,17 +36,37 @@ class DocumentBase(BaseModel):
     event_id is optional.
     """
 
-    event_id: Optional[UUID] = Field(None, description="Optional event ID. Get from GET /events endpoint.")
-    building_id: UUID = Field(..., description="Building ID. Get from GET /buildings endpoint.")
+    event_id: Optional[UUID] = Field(
+        None, 
+        description="Optional event ID. Get from GET /events endpoint.",
+        json_schema_extra={"example": None}
+    )
+    building_id: UUID = Field(
+        ..., 
+        description="Building ID. Get from GET /buildings endpoint.",
+        json_schema_extra={"example": None}
+    )
     
     # Multiple units support (many-to-many via document_units junction table)
-    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs. Get from GET /buildings/{building_id}/units endpoint.")
+    unit_ids: Optional[List[UUID]] = Field(
+        None, 
+        description="List of unit IDs. Get from GET /buildings/{building_id}/units endpoint.",
+        json_schema_extra={"example": None}
+    )
 
     # Multiple contractors support (many-to-many via document_contractors junction table)
-    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs. Get from GET /contractors endpoint.")
+    contractor_ids: Optional[List[UUID]] = Field(
+        None, 
+        description="List of contractor IDs. Get from GET /contractors endpoint.",
+        json_schema_extra={"example": None}
+    )
 
     # Category support
-    category_id: Optional[UUID] = Field(None, description="Optional category ID. Get from categories endpoint.")
+    category_id: Optional[UUID] = Field(
+        None, 
+        description="Optional category ID. Get from categories endpoint.",
+        json_schema_extra={"example": None}
+    )
 
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
@@ -114,14 +134,24 @@ class DocumentCreate(DocumentBase):
     """
     Used when creating documents from uploads or bulk imports.
     
-    Note: UUID fields in Swagger UI show example values. Replace them with actual IDs from:
+    Note: Get actual IDs from:
     - building_id: GET /buildings
     - event_id: GET /events (optional)
     - unit_ids: GET /buildings/{building_id}/units (optional)
     - contractor_ids: GET /contractors (optional)
     - category_id: Categories endpoint (optional)
     """
-    pass
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "building_id": "REPLACE_WITH_ACTUAL_BUILDING_ID",
+                "filename": "example.pdf",
+                "content_type": "application/pdf",
+                "is_public": True,
+                "is_redacted": False
+            }
+        }
+    )
 
 
 # ======================================================
