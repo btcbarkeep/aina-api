@@ -331,20 +331,43 @@ def bulk_upload_units(
 # -------------------------------------------------------------
 @router.get("/{unit_id}/events")
 def list_unit_events(unit_id: str, current_user: CurrentUser = Depends(get_current_user)):
-    require_unit_access(current_user)
+    # Permission check: ensure user has access to this unit
+    if not is_admin(current_user):
+        require_unit_access_helper(current_user, unit_id)
 
     client = get_supabase_client()
 
     try:
+        # Step 1: Get event IDs from event_units junction table
+        event_units_result = (
+            client.table("event_units")
+            .select("event_id")
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        
+        if not event_units_result.data:
+            return []
+        
+        event_ids = [row["event_id"] for row in event_units_result.data]
+        
+        # Step 2: Fetch events by IDs
         result = (
             client.table("events")
             .select("*")
-            .eq("unit_id", unit_id)
+            .in_("id", event_ids)
             .order("created_at", desc=True)
             .execute()
         )
-        return result.data or []
+        
+        # Step 3: Enrich events with units and contractors (batch to prevent N+1)
+        from core.batch_helpers import batch_enrich_events_with_relations
+        events = result.data or []
+        enriched_events = batch_enrich_events_with_relations(events)
+        
+        return enriched_events
     except Exception as e:
+        logger.error(f"Error fetching unit events for unit {unit_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Unable to fetch unit events: {e}")
 
 
@@ -353,18 +376,41 @@ def list_unit_events(unit_id: str, current_user: CurrentUser = Depends(get_curre
 # -------------------------------------------------------------
 @router.get("/{unit_id}/documents")
 def list_unit_documents(unit_id: str, current_user: CurrentUser = Depends(get_current_user)):
-    require_unit_access(current_user)
+    # Permission check: ensure user has access to this unit
+    if not is_admin(current_user):
+        require_unit_access_helper(current_user, unit_id)
 
     client = get_supabase_client()
 
     try:
+        # Step 1: Get document IDs from document_units junction table
+        document_units_result = (
+            client.table("document_units")
+            .select("document_id")
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        
+        if not document_units_result.data:
+            return []
+        
+        document_ids = [row["document_id"] for row in document_units_result.data]
+        
+        # Step 2: Fetch documents by IDs
         result = (
             client.table("documents")
             .select("*")
-            .eq("unit_id", unit_id)
+            .in_("id", document_ids)
             .order("created_at", desc=True)
             .execute()
         )
-        return result.data or []
+        
+        # Step 3: Enrich documents with units and contractors (batch to prevent N+1)
+        from core.batch_helpers import batch_enrich_documents_with_relations
+        documents = result.data or []
+        enriched_documents = batch_enrich_documents_with_relations(documents)
+        
+        return enriched_documents
     except Exception as e:
+        logger.error(f"Error fetching unit documents for unit {unit_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Unable to fetch unit documents: {e}")
