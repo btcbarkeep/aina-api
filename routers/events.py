@@ -516,17 +516,19 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
             else:
                 raise HTTPException(400, f"Contractor {cid} does not exist or is invalid")
         
-        # Verify contractors exist in database
+        # Batch verify contractors exist in database (prevents N+1 queries)
         client = get_supabase_client()
-        for cid in normalized_contractor_ids:
-            contractor_rows = (
+        if normalized_contractor_ids:
+            contractors_result = (
                 client.table("contractors")
                 .select("id")
-                .eq("id", cid)
+                .in_("id", normalized_contractor_ids)
                 .execute()
-            ).data
-            if not contractor_rows:
-                raise HTTPException(400, f"Contractor {cid} does not exist")
+            )
+            existing_contractor_ids = {row["id"] for row in (contractors_result.data or [])}
+            missing_contractors = [cid for cid in normalized_contractor_ids if cid not in existing_contractor_ids]
+            if missing_contractors:
+                raise HTTPException(400, f"Contractors do not exist: {', '.join(missing_contractors)}")
         
         contractor_ids = normalized_contractor_ids
     
@@ -649,17 +651,19 @@ def update_event(event_id: str, payload: EventUpdate, current_user: CurrentUser 
                 else:
                     raise HTTPException(400, f"Contractor {cid} does not exist or is invalid")
             
-            # Verify contractors exist in database
+            # Batch verify contractors exist in database (prevents N+1 queries)
             client = get_supabase_client()
-            for cid in normalized:
-                contractor_rows = (
+            if normalized:
+                contractors_result = (
                     client.table("contractors")
                     .select("id")
-                    .eq("id", cid)
+                    .in_("id", normalized)
                     .execute()
-                ).data
-                if not contractor_rows:
-                    raise HTTPException(400, f"Contractor {cid} does not exist")
+                )
+                existing_contractor_ids = {row["id"] for row in (contractors_result.data or [])}
+                missing_contractors = [cid for cid in normalized if cid not in existing_contractor_ids]
+                if missing_contractors:
+                    raise HTTPException(400, f"Contractors do not exist: {', '.join(missing_contractors)}")
             
             contractor_ids = normalized if normalized else None
 
