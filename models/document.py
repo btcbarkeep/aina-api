@@ -36,17 +36,17 @@ class DocumentBase(BaseModel):
     event_id is optional.
     """
 
-    event_id: Optional[UUID] = None
-    building_id: UUID
+    event_id: Optional[UUID] = Field(None, description="Optional event ID. Get from GET /events endpoint.")
+    building_id: UUID = Field(..., description="Building ID. Get from GET /buildings endpoint.")
     
     # Multiple units support (many-to-many via document_units junction table)
-    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs associated with this document")
+    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs. Get from GET /buildings/{building_id}/units endpoint.")
 
     # Multiple contractors support (many-to-many via document_contractors junction table)
-    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs associated with this document")
+    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs. Get from GET /contractors endpoint.")
 
     # Category support
-    category_id: Optional[UUID] = Field(None, description="Category ID for this document")
+    category_id: Optional[UUID] = Field(None, description="Optional category ID. Get from categories endpoint.")
 
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
@@ -113,6 +113,13 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     """
     Used when creating documents from uploads or bulk imports.
+    
+    Note: UUID fields in Swagger UI show example values. Replace them with actual IDs from:
+    - building_id: GET /buildings
+    - event_id: GET /events (optional)
+    - unit_ids: GET /buildings/{building_id}/units (optional)
+    - contractor_ids: GET /contractors (optional)
+    - category_id: Categories endpoint (optional)
     """
     pass
 
