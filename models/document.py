@@ -36,37 +36,17 @@ class DocumentBase(BaseModel):
     event_id is optional.
     """
 
-    event_id: Optional[UUID] = Field(
-        None, 
-        description="Optional event ID. Get from GET /events endpoint.",
-        json_schema_extra={"example": None}
-    )
-    building_id: UUID = Field(
-        ..., 
-        description="Building ID. Get from GET /buildings endpoint.",
-        json_schema_extra={"example": None}
-    )
+    event_id: Optional[UUID] = Field(None, description="Optional event ID. Get from GET /events endpoint.")
+    building_id: UUID = Field(..., description="Building ID. Get from GET /buildings endpoint.")
     
     # Multiple units support (many-to-many via document_units junction table)
-    unit_ids: Optional[List[UUID]] = Field(
-        None, 
-        description="List of unit IDs. Get from GET /buildings/{building_id}/units endpoint.",
-        json_schema_extra={"example": None}
-    )
+    unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs. Get from GET /buildings/{building_id}/units endpoint.")
 
     # Multiple contractors support (many-to-many via document_contractors junction table)
-    contractor_ids: Optional[List[UUID]] = Field(
-        None, 
-        description="List of contractor IDs. Get from GET /contractors endpoint.",
-        json_schema_extra={"example": None}
-    )
+    contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs. Get from GET /contractors endpoint.")
 
     # Category support
-    category_id: Optional[UUID] = Field(
-        None, 
-        description="Optional category ID. Get from categories endpoint.",
-        json_schema_extra={"example": None}
-    )
+    category_id: Optional[UUID] = Field(None, description="Optional category ID. Get from categories endpoint.")
 
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
@@ -188,19 +168,18 @@ class DocumentUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "event_id": "REPLACE_WITH_ACTUAL_EVENT_ID_OR_NULL",
-                "building_id": "REPLACE_WITH_ACTUAL_BUILDING_ID_OR_NULL",
-                "unit_ids": ["REPLACE_WITH_ACTUAL_UNIT_ID"],
-                "contractor_ids": ["REPLACE_WITH_ACTUAL_CONTRACTOR_ID"],
-                "category_id": "REPLACE_WITH_ACTUAL_CATEGORY_ID_OR_NULL",
-                "s3_key": "REPLACE_WITH_ACTUAL_S3_KEY_OR_NULL",
+                "event_id": None,
+                "building_id": None,
+                "unit_ids": None,
+                "contractor_ids": None,
+                "category_id": None,
+                "s3_key": None,
                 "filename": "updated_filename.pdf",
                 "content_type": "application/pdf",
                 "size_bytes": 1024,
                 "is_redacted": False,
                 "is_public": True
-            },
-            "description": "Partial update - only include fields you want to change. Get current values from GET /documents/{id} first. All fields are optional."
+            }
         }
     )
 
