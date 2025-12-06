@@ -877,16 +877,24 @@ async def generate_contractor_report(
             if row.get("units"):
                 units_map[row["unit_id"]] = row["units"]
         
-        # Get buildings from events
-        events_with_buildings = (
-            client.table("events")
-            .select("id, building_id, buildings(*)")
-            .in_("id", event_ids)
-            .execute()
-        )
-        for event in (events_with_buildings.data or []):
-            if event.get("buildings"):
-                buildings_map[event["building_id"]] = event["buildings"]
+        # Get buildings from events (query separately to avoid relationship issues)
+        # First, get unique building IDs from events
+        building_ids = set()
+        for event in events:
+            if event.get("building_id"):
+                building_ids.add(event["building_id"])
+        
+        # Then query buildings separately
+        if building_ids:
+            buildings_result = (
+                client.table("buildings")
+                .select("*")
+                .in_("id", list(building_ids))
+                .execute()
+            )
+            for building in (buildings_result.data or []):
+                if building.get("id"):
+                    buildings_map[building["id"]] = building
     
     # Calculate statistics
     stats = {
