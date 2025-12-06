@@ -123,8 +123,12 @@ def create_document_units(document_id: str, unit_ids: list):
                 "unit_id": str(unit_id)
             }).execute()
         except Exception as e:
-            # Ignore duplicate key errors (unique constraint)
-            if "duplicate" not in str(e).lower():
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "unique" in error_msg:
+                # Expected: duplicate key errors are okay (idempotent operation)
+                logger.debug(f"Duplicate document_unit relationship ignored: document_id={document_id}, unit_id={unit_id}")
+            else:
+                logger.warning(f"Failed to create document_unit relationship: {e}")
                 raise HTTPException(500, f"Failed to create document_unit relationship: {e}")
 
 
@@ -143,8 +147,12 @@ def create_document_contractors(document_id: str, contractor_ids: list):
                 "contractor_id": str(contractor_id)
             }).execute()
         except Exception as e:
-            # Ignore duplicate key errors (unique constraint)
-            if "duplicate" not in str(e).lower():
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "unique" in error_msg:
+                # Expected: duplicate key errors are okay (idempotent operation)
+                logger.debug(f"Duplicate document_contractor relationship ignored: document_id={document_id}, contractor_id={contractor_id}")
+            else:
+                logger.warning(f"Failed to create document_contractor relationship: {e}")
                 raise HTTPException(500, f"Failed to create document_contractor relationship: {e}")
 
 
