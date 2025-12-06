@@ -198,21 +198,34 @@ from core.contractor_helpers import enrich_contractor_with_roles
 # Pydantic Models
 # ============================================================
 class ContractorBase(BaseModel):
-    company_name: str
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    website: Optional[str] = None
-    license_number: Optional[str] = None
-    insurance_info: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    zip_code: Optional[str] = None
+    """
+    Base contractor model matching the database schema.
+    
+    Required fields:
+    - company_name
+    
+    Optional fields:
+    - phone, email, website, license_number, insurance_info, address
+    - city, state, zip_code (location details)
+    - contact_person, contact_phone, contact_email (primary contact info)
+    - notes (additional information)
+    - logo_url (use POST /contractors/{id}/logo to upload)
+    """
+    company_name: str = Field(..., description="Company name (required)")
+    phone: Optional[str] = Field(None, description="Company phone number")
+    email: Optional[str] = Field(None, description="Company email address")
+    website: Optional[str] = Field(None, description="Company website URL")
+    license_number: Optional[str] = Field(None, description="Business license number")
+    insurance_info: Optional[str] = Field(None, description="Insurance information")
+    address: Optional[str] = Field(None, description="Street address")
+    city: Optional[str] = Field(None, description="City")
+    state: Optional[str] = Field(None, description="State/Province")
+    zip_code: Optional[str] = Field(None, description="ZIP/Postal code")
     contact_person: Optional[str] = Field(None, description="Primary contact person name")
     contact_phone: Optional[str] = Field(None, description="Primary contact phone number")
-    contact_email: Optional[str] = Field(None, description="Primary contact email")
+    contact_email: Optional[str] = Field(None, description="Primary contact email address")
     notes: Optional[str] = Field(None, description="Additional notes about the contractor")
-    logo_url: Optional[str] = None
+    logo_url: Optional[str] = Field(None, description="URL to contractor logo (use POST /contractors/{id}/logo to upload)")
 
 
 class ContractorCreate(ContractorBase):
@@ -223,6 +236,19 @@ class ContractorCreate(ContractorBase):
         json_schema_extra = {
             "example": {
                 "company_name": "Burger's Plumbing",
+                "phone": "(808) 555-1234",
+                "email": "info@burgersplumbing.com",
+                "website": "https://burgersplumbing.com",
+                "license_number": "PL-12345",
+                "insurance_info": "General Liability: $1M",
+                "address": "123 Main St",
+                "city": "Honolulu",
+                "state": "HI",
+                "zip_code": "96815",
+                "contact_person": "John Burger",
+                "contact_phone": "(808) 555-1234",
+                "contact_email": "john@burgersplumbing.com",
+                "notes": "Specializes in commercial plumbing",
                 "roles": ["plumber"]
             }
         }
@@ -244,21 +270,25 @@ class ContractorRead(ContractorBase):
 
 
 class ContractorUpdate(BaseModel):
-    company_name: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    website: Optional[str] = None
-    license_number: Optional[str] = None
-    insurance_info: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    zip_code: Optional[str] = None
-    contact_person: Optional[str] = None
-    contact_phone: Optional[str] = None
-    contact_email: Optional[str] = None
-    notes: Optional[str] = None
-    logo_url: Optional[str] = None
+    """
+    Update contractor model - all fields optional.
+    Update only the fields you want to change.
+    """
+    company_name: Optional[str] = Field(None, description="Company name")
+    phone: Optional[str] = Field(None, description="Company phone number")
+    email: Optional[str] = Field(None, description="Company email address")
+    website: Optional[str] = Field(None, description="Company website URL")
+    license_number: Optional[str] = Field(None, description="Business license number")
+    insurance_info: Optional[str] = Field(None, description="Insurance information")
+    address: Optional[str] = Field(None, description="Street address")
+    city: Optional[str] = Field(None, description="City")
+    state: Optional[str] = Field(None, description="State/Province")
+    zip_code: Optional[str] = Field(None, description="ZIP/Postal code")
+    contact_person: Optional[str] = Field(None, description="Primary contact person name")
+    contact_phone: Optional[str] = Field(None, description="Primary contact phone number")
+    contact_email: Optional[str] = Field(None, description="Primary contact email address")
+    notes: Optional[str] = Field(None, description="Additional notes about the contractor")
+    logo_url: Optional[str] = Field(None, description="URL to contractor logo (use POST /contractors/{id}/logo to upload)")
     roles: Optional[List[str]] = Field(None, description="List of role names to assign (replaces existing roles)", example=["plumber", "electrician"])
 
 
@@ -448,6 +478,50 @@ def get_contractor(contractor_id: str, current_user: CurrentUser = Depends(get_c
 @router.post(
     "",
     response_model=ContractorRead,
+    summary="Create Contractor",
+    description="""
+    Create a new contractor.
+    
+    **Required Fields:**
+    - `company_name`: Company name (required)
+    - `roles`: List of role names (required, at least one)
+    
+    **Optional Fields:**
+    - Contact info: `phone`, `email`, `website`
+    - Business info: `license_number`, `insurance_info`
+    - Location: `address`, `city`, `state`, `zip_code`
+    - Contact person: `contact_person`, `contact_phone`, `contact_email`
+    - Additional: `notes`, `logo_url` (use POST /contractors/{id}/logo to upload logo)
+    
+    **Example Minimal Request:**
+    ```json
+    {
+      "company_name": "Burger's Plumbing",
+      "roles": ["plumber"]
+    }
+    ```
+    
+    **Example Complete Request:**
+    ```json
+    {
+      "company_name": "Burger's Plumbing",
+      "phone": "(808) 555-1234",
+      "email": "info@burgersplumbing.com",
+      "website": "https://burgersplumbing.com",
+      "license_number": "PL-12345",
+      "insurance_info": "General Liability: $1M",
+      "address": "123 Main St",
+      "city": "Honolulu",
+      "state": "HI",
+      "zip_code": "96815",
+      "contact_person": "John Burger",
+      "contact_phone": "(808) 555-1234",
+      "contact_email": "john@burgersplumbing.com",
+      "notes": "Specializes in commercial plumbing",
+      "roles": ["plumber"]
+    }
+    ```
+    """,
     dependencies=[Depends(requires_permission("contractors:write"))],
 )
 def create_contractor(payload: ContractorCreate):
@@ -504,6 +578,22 @@ def create_contractor(payload: ContractorCreate):
 @router.put(
     "/{contractor_id}",
     response_model=ContractorRead,
+    summary="Update Contractor",
+    description="""
+    Update an existing contractor.
+    
+    **All fields are optional** - only include the fields you want to update.
+    
+    **Available Fields:**
+    - Company info: `company_name`, `phone`, `email`, `website`
+    - Business info: `license_number`, `insurance_info`
+    - Location: `address`, `city`, `state`, `zip_code`
+    - Contact person: `contact_person`, `contact_phone`, `contact_email`
+    - Additional: `notes`, `logo_url` (use POST /contractors/{id}/logo to upload logo)
+    - Roles: `roles` (replaces all existing roles)
+    
+    **Note:** To update the logo, use the `POST /contractors/{contractor_id}/logo` endpoint.
+    """,
     dependencies=[Depends(requires_permission("contractors:write"))],
 )
 def update_contractor(contractor_id: str, payload: ContractorUpdate):
