@@ -576,6 +576,12 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     doc_data["building_id"] = str(building_id)
     doc_data["event_id"] = str(event_id) if event_id else None
     doc_data["uploaded_by"] = str(current_user.id)
+    
+    # Convert UUID objects to strings for Supabase
+    if doc_data.get("category_id"):
+        doc_data["category_id"] = str(doc_data["category_id"])
+    if doc_data.get("subcategory_id"):
+        doc_data["subcategory_id"] = str(doc_data["subcategory_id"])
 
     # -------------------------------------------------
     # Insert → Fetch
@@ -714,6 +720,12 @@ def update_document(document_id: str, payload: DocumentUpdate, current_user: Cur
     if "building_id" in update_data:
         update_data["building_id"] = str(update_data["building_id"])
         building_id = update_data["building_id"]
+    
+    # Convert UUID objects to strings for Supabase
+    if "category_id" in update_data and update_data["category_id"]:
+        update_data["category_id"] = str(update_data["category_id"])
+    if "subcategory_id" in update_data and update_data["subcategory_id"]:
+        update_data["subcategory_id"] = str(update_data["subcategory_id"])
 
     # Step 1 — Update
     try:
