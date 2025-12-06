@@ -224,45 +224,6 @@ class ContractorCreate(ContractorBase):
             "example": {
                 "company_name": "Burger's Plumbing",
                 "roles": ["plumber"]
-            },
-            "examples": {
-                "minimal": {
-                    "summary": "Minimal required fields only",
-                    "value": {
-                        "company_name": "Burger's Plumbing",
-                        "roles": ["plumber"]
-                    }
-                },
-                "with_contact": {
-                    "summary": "With contact information",
-                    "value": {
-                        "company_name": "Burger's Plumbing",
-                        "phone": "(808) 555-1234",
-                        "email": "info@burgersplumbing.com",
-                        "contact_person": "John Burger",
-                        "roles": ["plumber"]
-                    }
-                },
-                "complete": {
-                    "summary": "All fields (all optional except company_name and roles)",
-                    "value": {
-                        "company_name": "Burger's Plumbing",
-                        "phone": "(808) 555-1234",
-                        "email": "info@burgersplumbing.com",
-                        "website": "https://burgersplumbing.com",
-                        "license_number": "PL-12345",
-                        "insurance_info": "General Liability: $1M",
-                        "address": "123 Main St",
-                        "city": "Honolulu",
-                        "state": "HI",
-                        "zip_code": "96815",
-                        "contact_person": "John Burger",
-                        "contact_phone": "(808) 555-1234",
-                        "contact_email": "john@burgersplumbing.com",
-                        "notes": "Specializes in commercial plumbing",
-                        "roles": ["plumber"]
-                    }
-                }
             }
         }
 
