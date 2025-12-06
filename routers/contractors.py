@@ -483,8 +483,12 @@ def get_contractor(contractor_id: str, current_user: CurrentUser = Depends(get_c
     Create a new contractor.
     
     **Required Fields:**
-    - `company_name`: Company name (required)
+    - `company_name`: Company name (required, must be unique - case-insensitive)
     - `roles`: List of role names (required, at least one)
+    
+    **Validation:**
+    - Company names must be unique (case-insensitive, whitespace trimmed)
+    - If a contractor with the same company name exists, a 400 error will be returned
     
     **Optional Fields:**
     - Contact info: `phone`, `email`, `website`
@@ -536,6 +540,22 @@ def create_contractor(payload: ContractorCreate):
     
     validated_roles = validate_role_names(roles)
     
+    # Check for duplicate company name (case-insensitive)
+    company_name = payload.company_name.strip()
+    existing_contractor = (
+        client.table("contractors")
+        .select("id, company_name")
+        .ilike("company_name", company_name)
+        .limit(1)
+        .execute()
+    )
+    
+    if existing_contractor.data:
+        raise HTTPException(
+            400,
+            f"Contractor with company name '{company_name}' already exists. Company names must be unique."
+        )
+    
     # Prepare contractor data (exclude roles - they go to junction table)
     data = sanitize(payload.model_dump(exclude={"roles"}))
 
@@ -543,7 +563,11 @@ def create_contractor(payload: ContractorCreate):
     try:
         insert_res = client.table("contractors").insert(data).execute()
     except Exception as e:
-        raise HTTPException(500, f"Supabase insert error: {e}")
+        from core.errors import handle_supabase_error
+        error_detail = str(e).lower()
+        if "duplicate" in error_detail or "unique" in error_detail:
+            raise HTTPException(400, f"Contractor with company name '{company_name}' already exists.")
+        raise handle_supabase_error(e, "Failed to create contractor", 500)
 
     if not insert_res.data:
         raise HTTPException(500, "Insert returned no data")
@@ -585,12 +609,16 @@ def create_contractor(payload: ContractorCreate):
     **All fields are optional** - only include the fields you want to update.
     
     **Available Fields:**
-    - Company info: `company_name`, `phone`, `email`, `website`
+    - Company info: `company_name` (must be unique - case-insensitive), `phone`, `email`, `website`
     - Business info: `license_number`, `insurance_info`
     - Location: `address`, `city`, `state`, `zip_code`
     - Contact person: `contact_person`, `contact_phone`, `contact_email`
     - Additional: `notes`, `logo_url` (use POST /contractors/{id}/logo to upload logo)
     - Roles: `roles` (replaces all existing roles)
+    
+    **Validation:**
+    - If updating `company_name`, it must be unique (case-insensitive, whitespace trimmed)
+    - If another contractor with the same name exists, a 400 error will be returned
     
     **Note:** To update the logo, use the `POST /contractors/{contractor_id}/logo` endpoint.
     """,
@@ -602,6 +630,28 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
     # Extract roles if provided (roles don't go to contractors table)
     roles = payload.roles
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"roles"}))
+    
+    # Check for duplicate company name if company_name is being updated
+    if "company_name" in update_data:
+        company_name = update_data["company_name"].strip()
+        # Check if another contractor (excluding current one) has this name
+        existing_contractor = (
+            client.table("contractors")
+            .select("id, company_name")
+            .ilike("company_name", company_name)
+            .neq("id", contractor_id)  # Exclude the current contractor
+            .limit(1)
+            .execute()
+        )
+        
+        if existing_contractor.data:
+            raise HTTPException(
+                400,
+                f"Contractor with company name '{company_name}' already exists. Company names must be unique."
+            )
+        
+        # Update the sanitized data with trimmed name
+        update_data["company_name"] = company_name
 
     # Step 1 — Update contractor (if any fields changed)
     if update_data:
@@ -613,7 +663,11 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
                 .execute()
             )
         except Exception as e:
-            raise HTTPException(500, f"Supabase update error: {e}")
+            from core.errors import handle_supabase_error
+            error_detail = str(e).lower()
+            if "duplicate" in error_detail or "unique" in error_detail:
+                raise HTTPException(400, f"Contractor with company name '{update_data.get('company_name', 'this name')}' already exists.")
+            raise handle_supabase_error(e, "Failed to update contractor", 500)
 
         if not update_res.data:
             raise HTTPException(404, "Contractor not found")
