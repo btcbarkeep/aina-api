@@ -352,6 +352,7 @@ def apply_contractor_filters(query, params: dict):
 # ============================================================
 @router.get("", response_model=List[ContractorRead])
 def list_contractors(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of contractors to return (1-1000)"),
     role: Optional[str] = Query(None, description="Filter by contractor role name"),
     building_id: Optional[str] = Query(None, description="Filter by building ID (contractors who worked on events in this building)"),
     unit_id: Optional[str] = Query(None, description="Filter by unit ID (contractors who worked on events for this unit)"),
@@ -374,7 +375,7 @@ def list_contractors(
     }
     
     query = apply_contractor_filters(query, filter_params)
-    query = query.order("company_name")
+    query = query.order("company_name").limit(limit)
 
     result = query.execute()
     contractors = result.data or []
