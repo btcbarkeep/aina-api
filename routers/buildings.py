@@ -14,6 +14,7 @@ from core.permission_helpers import (
 
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
+from core.cache import cache_get, cache_set
 
 from models.building import BuildingCreate, BuildingUpdate, BuildingRead
 
@@ -36,6 +37,23 @@ router = APIRouter(
 @router.get(
     "",
     summary="List Buildings",
+    description="""
+    Retrieve a list of buildings with optional filtering.
+    
+    **Caching:** Results are cached for 5 minutes to improve performance.
+    **Permissions:** Requires `buildings:read` permission.
+    **Filtering:** Non-admin users only see buildings they have access to.
+    
+    **Query Parameters:**
+    - `limit`: Maximum number of buildings to return (1-1000, default: 100)
+    - `name`: Filter by building name (case-insensitive partial match)
+    - `city`: Filter by city (case-insensitive partial match)
+    - `state`: Filter by state (case-insensitive partial match)
+    
+    **Response:**
+    - `success`: Boolean indicating success
+    - `data`: Array of building objects
+    """,
     dependencies=[Depends(requires_permission("buildings:read"))],
 )
 def list_buildings(
@@ -45,6 +63,20 @@ def list_buildings(
     state: Optional[str] = None,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    """
+    List buildings with optional filtering.
+    
+    Results are cached for 5 minutes. Cache is keyed by user permissions and filter parameters.
+    """
+    # Generate cache key based on user and filters
+    cache_key = f"buildings:list:{current_user.id}:{limit}:{name}:{city}:{state}"
+    
+    # Try cache first (only for simple queries without filters to avoid cache complexity)
+    if not name and not city and not state:
+        cached_result = cache_get(cache_key)
+        if cached_result is not None:
+            return cached_result
+    
     client = get_supabase_client()
 
     try:
@@ -64,11 +96,17 @@ def list_buildings(
             query = query.ilike("state", f"%{state}%")
 
         res = query.execute()
-        return {"success": True, "data": res.data or []}
+        result = {"success": True, "data": res.data or []}
+        
+        # Cache result for 5 minutes (only for simple queries)
+        if not name and not city and not state:
+            cache_set(cache_key, result, ttl_seconds=300)
+        
+        return result
 
     except Exception as e:
         from core.errors import handle_supabase_error
-        raise handle_supabase_error(e, "Failed to fetch building events", 500)
+        raise handle_supabase_error(e, "Failed to fetch buildings", 500)
 
 
 # ============================================================
@@ -227,9 +265,18 @@ def get_building_events(
             query = query.eq("event_type", event_type)
         if contractor_id:
             query = query.eq("contractor_id", contractor_id)
+        # Validate enum values
         if severity:
+            from models.enums import EventSeverity
+            valid_severities = [s.value for s in EventSeverity]
+            if severity not in valid_severities:
+                raise HTTPException(400, f"Invalid severity. Must be one of: {', '.join(valid_severities)}")
             query = query.eq("severity", severity)
         if status:
+            from models.enums import EventStatus
+            valid_statuses = [s.value for s in EventStatus]
+            if status not in valid_statuses:
+                raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
             query = query.eq("status", status)
 
         res = query.execute()
