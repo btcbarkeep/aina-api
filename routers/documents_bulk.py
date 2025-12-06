@@ -155,7 +155,24 @@ async def bulk_upload_documents(
             except Exception as e:
                 errors.append(f"Row {row_num}: Error validating event: {e}")
                 continue
-
+        
+        # Public documents category UUID for bulk uploads - validate it exists
+        PUBLIC_DOCUMENTS_CATEGORY_ID = "f5ae850f-cc31-44ff-b5bc-ee7d708a0c31"
+        try:
+            category_check = (
+                client.table("document_categories")
+                .select("id")
+                .eq("id", PUBLIC_DOCUMENTS_CATEGORY_ID)
+                .limit(1)
+                .execute()
+            )
+            if not category_check.data:
+                errors.append(f"Row {row_num}: Public documents category {PUBLIC_DOCUMENTS_CATEGORY_ID} not found in document_categories table")
+                continue
+        except Exception as e:
+            errors.append(f"Row {row_num}: Error validating public documents category: {e}")
+            continue
+        
         doc_data = {
             "id": str(uuid.uuid4()),
             "title": row.get("title"),
@@ -163,7 +180,7 @@ async def bulk_upload_documents(
             "building_id": str(building_id) if building_id else None,
             "unit_id": str(unit_id) if unit_id else None,
             "event_id": str(event_id) if event_id else None,
-            "category": row.get("category"),
+            "category_id": PUBLIC_DOCUMENTS_CATEGORY_ID,  # All bulk uploads use public_documents category
             "permit_number": row.get("permit_number"),
             "permit_type": row.get("permit_type"),
             "folder": row.get("folder"),
