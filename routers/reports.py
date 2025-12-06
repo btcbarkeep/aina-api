@@ -27,7 +27,7 @@ from services.report_generator import (
 
 router = APIRouter(
     prefix="/reports",
-    tags=["Reports"],
+    # Tags are set per-endpoint to organize into "Reports" and "Reports - Public" sections
 )
 
 
@@ -125,7 +125,7 @@ async def get_public_unit_report(
 @router.get(
     "/dashboard/building/{building_id}",
     summary="Generate internal building report (Dashboard)",
-    tags=["Reports - Dashboard"],
+    tags=["Reports"],
 )
 async def get_dashboard_building_report(
     building_id: str,
@@ -167,7 +167,7 @@ async def get_dashboard_building_report(
 @router.get(
     "/dashboard/unit/{unit_id}",
     summary="Generate internal unit report (Dashboard)",
-    tags=["Reports - Dashboard"],
+    tags=["Reports"],
 )
 async def get_dashboard_unit_report(
     unit_id: str,
@@ -209,7 +209,7 @@ async def get_dashboard_unit_report(
 @router.get(
     "/dashboard/owner/unit/{unit_id}",
     summary="Generate owner-focused unit report (Dashboard)",
-    tags=["Reports - Dashboard"],
+    tags=["Reports"],
 )
 async def get_dashboard_owner_unit_report(
     unit_id: str,
@@ -255,7 +255,7 @@ async def get_dashboard_owner_unit_report(
 @router.get(
     "/dashboard/contractor/{contractor_id}",
     summary="Generate contractor activity report (Dashboard)",
-    tags=["Reports - Dashboard"],
+    tags=["Reports"],
 )
 async def get_dashboard_contractor_report(
     contractor_id: str,
@@ -322,7 +322,7 @@ async def get_dashboard_contractor_report(
 @router.post(
     "/dashboard/custom",
     summary="Generate custom report (Dashboard)",
-    tags=["Reports - Dashboard"],
+    tags=["Reports"],
 )
 async def post_dashboard_custom_report(
     request: CustomReportRequest = Body(...),
