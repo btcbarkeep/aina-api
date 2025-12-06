@@ -67,7 +67,8 @@ def list_buildings(
         return {"success": True, "data": res.data or []}
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase fetch error: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to fetch building events", 500)
 
 
 # ============================================================
@@ -104,10 +105,11 @@ def create_building(payload: BuildingCreate):
         return fetch_res.data[0]
 
     except Exception as e:
-        msg = str(e)
-        if "duplicate" in msg.lower():
-            raise HTTPException(400, f"Building '{payload.name}' already exists.")
-        raise HTTPException(500, f"Supabase insert error: {msg}")
+        from core.errors import handle_supabase_error
+        error_detail = str(e).lower()
+        if "duplicate" in error_detail or "unique" in error_detail:
+            raise HTTPException(400, f"Building '{payload.name}' already exists")
+        raise handle_supabase_error(e, "Failed to create building", 500)
 
 
 # ============================================================
@@ -151,7 +153,8 @@ def update_building(building_id: str, payload: BuildingUpdate, current_user: Cur
         return fetch_res.data[0]
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase update error: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to update building", 500)
 
 
 # ============================================================
@@ -183,7 +186,8 @@ def delete_building(building_id: str, current_user: CurrentUser = Depends(get_cu
         return {"success": True, "deleted_id": building_id}
 
     except Exception as e:
-        raise HTTPException(500, f"Delete failed: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to delete building", 500)
 
 
 # ============================================================
@@ -232,7 +236,8 @@ def get_building_events(
         return {"success": True, "data": res.data or []}
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase fetch error: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to fetch building events", 500)
 
 
 # ============================================================
@@ -278,7 +283,8 @@ def get_building_units(
         }
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Database operation failed", 500)
 
 
 # ============================================================
@@ -384,7 +390,8 @@ def get_building_contractors(
         return {"success": True, "data": output}
 
     except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Database operation failed", 500)
 
 
 # ============================================================
