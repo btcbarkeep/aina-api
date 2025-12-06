@@ -1,8 +1,13 @@
 # routers/contractors.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from typing import List, Optional
 from pydantic import BaseModel, Field
+import os
+import tempfile
+from pathlib import Path as PathLib
+from datetime import datetime
+import uuid
 
 from dependencies.auth import (
     get_current_user,
@@ -12,6 +17,8 @@ from dependencies.auth import (
 
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
+from core.s3_client import get_s3
+from core.logging_config import logger
 
 
 router = APIRouter(
@@ -198,6 +205,13 @@ class ContractorBase(BaseModel):
     license_number: Optional[str] = None
     insurance_info: Optional[str] = None
     address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    contact_person: Optional[str] = Field(None, description="Primary contact person name")
+    contact_phone: Optional[str] = Field(None, description="Primary contact phone number")
+    contact_email: Optional[str] = Field(None, description="Primary contact email")
+    notes: Optional[str] = Field(None, description="Additional notes about the contractor")
     logo_url: Optional[str] = None
 
 
@@ -209,6 +223,19 @@ class ContractorCreate(ContractorBase):
         json_schema_extra = {
             "example": {
                 "company_name": "Burger's Plumbing",
+                "phone": "(808) 555-1234",
+                "email": "info@burgersplumbing.com",
+                "website": "https://burgersplumbing.com",
+                "license_number": "PL-12345",
+                "insurance_info": "General Liability: $1M",
+                "address": "123 Main St",
+                "city": "Honolulu",
+                "state": "HI",
+                "zip_code": "96815",
+                "contact_person": "John Burger",
+                "contact_phone": "(808) 555-1234",
+                "contact_email": "john@burgersplumbing.com",
+                "notes": "Specializes in commercial plumbing",
                 "roles": ["plumber"]
             }
         }
@@ -237,6 +264,13 @@ class ContractorUpdate(BaseModel):
     license_number: Optional[str] = None
     insurance_info: Optional[str] = None
     address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    contact_person: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    notes: Optional[str] = None
     logo_url: Optional[str] = None
     roles: Optional[List[str]] = Field(None, description="List of role names to assign (replaces existing roles)", example=["plumber", "electrician"])
 
@@ -526,6 +560,136 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
     contractor = enrich_contractor_with_roles(contractor)
 
     return contractor
+
+
+# ============================================================
+# UPLOAD CONTRACTOR LOGO
+# ============================================================
+@router.post(
+    "/{contractor_id}/logo",
+    summary="Upload contractor logo",
+    description="""
+    Upload a logo image for a contractor.
+    
+    **Supported formats:** JPG, PNG, GIF, WebP
+    **Max file size:** 5MB
+    **Image will be uploaded to S3 and the logo_url will be updated automatically.**
+    
+    **Permissions:** Requires `contractors:write` permission.
+    """,
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
+async def upload_contractor_logo(
+    contractor_id: str,
+    file: UploadFile = File(...),
+    update_contractor: bool = Form(True, description="Automatically update contractor's logo_url field"),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Upload a logo image for a contractor.
+    
+    The image is uploaded to S3 and optionally updates the contractor's logo_url field.
+    """
+    # Validate contractor exists
+    client = get_supabase_client()
+    contractor_check = (
+        client.table("contractors")
+        .select("id, company_name")
+        .eq("id", contractor_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not contractor_check.data:
+        raise HTTPException(404, f"Contractor '{contractor_id}' not found")
+    
+    # Validate file type
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    file_extension = PathLib(file.filename or "").suffix.lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            400,
+            f"Invalid file type. Allowed formats: {', '.join(allowed_extensions)}"
+        )
+    
+    # Validate file size (5MB max)
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(400, f"File size exceeds maximum of {MAX_FILE_SIZE / 1024 / 1024}MB")
+    
+    # Get S3 client
+    try:
+        s3, bucket, region = get_s3()
+    except RuntimeError as e:
+        logger.error(f"S3 configuration error: {e}")
+        raise HTTPException(500, "File storage not configured")
+    
+    # Generate S3 key
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    safe_company_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in contractor_check.data[0]["company_name"])[:50]
+    s3_key = f"contractors/logos/{contractor_id}/{safe_company_name}_{timestamp}_{unique_id}{file_extension}"
+    
+    # Upload to S3
+    temp_file_path = None
+    try:
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(content)
+            temp_file.flush()
+        
+        # Upload to S3
+        try:
+            content_type = file.content_type or "image/jpeg"
+            s3.upload_file(
+                Filename=temp_file_path,
+                Bucket=bucket,
+                Key=s3_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+            logger.info(f"Uploaded contractor logo to S3: {s3_key}")
+        except Exception as e:
+            logger.error(f"S3 upload error: {e}")
+            raise HTTPException(500, f"Failed to upload logo: {e}")
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+    
+    # Generate presigned URL (valid for 1 year for logos)
+    try:
+        logo_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": s3_key},
+            ExpiresIn=31536000,  # 1 year
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate presigned URL: {e}")
+        raise HTTPException(500, "Failed to generate logo URL")
+    
+    # Optionally update contractor's logo_url field
+    if update_contractor:
+        try:
+            client.table("contractors").update({
+                "logo_url": logo_url
+            }).eq("id", contractor_id).execute()
+            logger.info(f"Updated contractor {contractor_id} logo_url")
+        except Exception as e:
+            logger.warning(f"Failed to update contractor logo_url: {e}")
+            # Don't fail the request if update fails - logo is still uploaded
+    
+    return {
+        "success": True,
+        "logo_url": logo_url,
+        "s3_key": s3_key,
+        "message": "Logo uploaded successfully" + (" and contractor updated" if update_contractor else "")
+    }
 
 
 # ============================================================
