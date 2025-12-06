@@ -263,9 +263,13 @@ def apply_document_filters(query, params: dict):
     if params.get("event_id"):
         query = query.eq("event_id", params["event_id"])
     
-    # category filter
-    if params.get("category"):
-        query = query.eq("category_id", params["category"])
+    # category_id filter
+    if params.get("category_id"):
+        query = query.eq("category_id", params["category_id"])
+    
+    # subcategory_id filter
+    if params.get("subcategory_id"):
+        query = query.eq("subcategory_id", params["subcategory_id"])
     
     # uploaded_by filter
     if params.get("uploaded_by"):
@@ -360,7 +364,8 @@ def list_documents(
     unit_ids: Optional[List[str]] = Query([], description="Filter by list of unit IDs"),
     contractor_id: Optional[str] = Query(None, description="Filter by single contractor ID"),
     contractor_ids: Optional[List[str]] = Query([], description="Filter by list of contractor IDs"),
-    category: Optional[str] = Query(None, description="Filter by category"),
+    category_id: Optional[str] = Query(None, description="Filter by category ID from document_categories table"),
+    subcategory_id: Optional[str] = Query(None, description="Filter by subcategory ID from document_subcategories table"),
     uploaded_by: Optional[str] = Query(None, description="Filter by user who uploaded"),
     start_date: Optional[datetime] = Query(None, description="Filter documents from this date (ISO datetime)"),
     end_date: Optional[datetime] = Query(None, description="Filter documents until this date (ISO datetime)"),
@@ -378,7 +383,8 @@ def list_documents(
         "unit_ids": unit_ids if unit_ids else None,
         "contractor_id": contractor_id,
         "contractor_ids": contractor_ids if contractor_ids else None,
-        "category": category,
+        "category_id": category_id,
+        "subcategory_id": subcategory_id,
         "uploaded_by": uploaded_by,
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
@@ -500,6 +506,33 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
         missing_contractors = [cid for cid in contractor_ids if cid not in existing_contractor_ids]
         if missing_contractors:
             raise HTTPException(400, f"Contractors do not exist: {', '.join(missing_contractors)}")
+    
+    # Validate category_id exists if provided
+    if payload.category_id:
+        category_result = (
+            client.table("document_categories")
+            .select("id")
+            .eq("id", str(payload.category_id))
+            .limit(1)
+            .execute()
+        )
+        if not category_result.data:
+            raise HTTPException(400, f"Category ID {payload.category_id} not found in document_categories table")
+    
+    # Validate subcategory_id exists if provided
+    if payload.subcategory_id:
+        subcategory_result = (
+            client.table("document_subcategories")
+            .select("id, category_id")
+            .eq("id", str(payload.subcategory_id))
+            .limit(1)
+            .execute()
+        )
+        if not subcategory_result.data:
+            raise HTTPException(400, f"Subcategory ID {payload.subcategory_id} not found in document_subcategories table")
+        # Validate that subcategory belongs to the provided category (if category_id is also provided)
+        if payload.category_id and subcategory_result.data[0]["category_id"] != str(payload.category_id):
+            raise HTTPException(400, f"Subcategory {payload.subcategory_id} does not belong to category {payload.category_id}")
 
     # -------------------------------------------------
     # Determine building based on payload
@@ -641,6 +674,33 @@ def update_document(document_id: str, payload: DocumentUpdate, current_user: Cur
                 ).data
                 if not contractor_rows:
                     raise HTTPException(400, f"Contractor {cid} does not exist")
+    
+    # Validate category_id exists if provided
+    if payload.category_id is not None:
+        category_result = (
+            client.table("document_categories")
+            .select("id")
+            .eq("id", str(payload.category_id))
+            .limit(1)
+            .execute()
+        )
+        if not category_result.data:
+            raise HTTPException(400, f"Category ID {payload.category_id} not found in document_categories table")
+    
+    # Validate subcategory_id exists if provided
+    if payload.subcategory_id is not None:
+        subcategory_result = (
+            client.table("document_subcategories")
+            .select("id, category_id")
+            .eq("id", str(payload.subcategory_id))
+            .limit(1)
+            .execute()
+        )
+        if not subcategory_result.data:
+            raise HTTPException(400, f"Subcategory ID {payload.subcategory_id} not found in document_subcategories table")
+        # Validate that subcategory belongs to the provided category (if category_id is also provided)
+        if payload.category_id is not None and subcategory_result.data[0]["category_id"] != str(payload.category_id):
+            raise HTTPException(400, f"Subcategory {payload.subcategory_id} does not belong to category {payload.category_id}")
 
     # Prepare update data (exclude junction table fields)
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids", "document_url"}))
