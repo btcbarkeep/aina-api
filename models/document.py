@@ -52,7 +52,6 @@ class DocumentBase(BaseModel):
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
     filename: Optional[str] = None
-    content_type: Optional[str] = None
     size_bytes: Optional[int] = None
 
     # Bulk-upload field
@@ -132,7 +131,6 @@ class DocumentCreate(DocumentBase):
                 "category_id": "REPLACE_WITH_ACTUAL_CATEGORY_ID",
                 "subcategory_id": "REPLACE_WITH_ACTUAL_SUBCATEGORY_ID",
                 "filename": "example.pdf",
-                "content_type": "application/pdf",
                 "is_public": True,
                 "is_redacted": False
             }
@@ -162,7 +160,6 @@ class DocumentUpdate(BaseModel):
 
     s3_key: Optional[str] = Field(None, description="S3 key. Get current value from GET /documents/{id}")
     filename: Optional[str] = Field(None, description="Filename. Get current value from GET /documents/{id}")
-    content_type: Optional[str] = Field(None, description="Content type. Get current value from GET /documents/{id}")
     size_bytes: Optional[int] = Field(None, description="File size in bytes. Get current value from GET /documents/{id}")
     document_url: Optional[str] = None  # Excluded from DB operations, bulk-only
 
@@ -181,7 +178,6 @@ class DocumentUpdate(BaseModel):
                 "subcategory_id": None,
                 "s3_key": None,
                 "filename": "updated_filename.pdf",
-                "content_type": "application/pdf",
                 "size_bytes": 1024,
                 "is_redacted": False,
                 "is_public": True
