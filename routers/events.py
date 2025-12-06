@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional, List
+from typing import Optional, List, Dict
 from uuid import UUID
 from datetime import datetime
 
@@ -427,8 +427,28 @@ def list_events(
         accessible_unit_ids = get_user_accessible_unit_ids(current_user)
         accessible_building_ids = get_user_accessible_building_ids(current_user)
         
+        # Batch fetch all event_units for all events (prevents N+1 queries)
+        event_ids = [e.get("id") for e in events if e.get("id")]
+        event_units_map: Dict[str, List[str]] = {}
+        if event_ids:
+            event_units_result = (
+                client.table("event_units")
+                .select("event_id, unit_id")
+                .in_("event_id", event_ids)
+                .execute()
+            )
+            if event_units_result.data:
+                for row in event_units_result.data:
+                    evt_id = row.get("event_id")
+                    unit_id = row.get("unit_id")
+                    if evt_id and unit_id:
+                        if evt_id not in event_units_map:
+                            event_units_map[evt_id] = []
+                        event_units_map[evt_id].append(unit_id)
+        
         filtered_events = []
         for event in events:
+            event_id = event.get("id")
             event_building_id = event.get("building_id")
             
             # AOAO roles: filter by building access
@@ -438,14 +458,8 @@ def list_events(
                 continue
             
             # Other roles: filter by unit access
-            # Get units for this event
-            event_units_result = (
-                client.table("event_units")
-                .select("unit_id")
-                .eq("event_id", event.get("id"))
-                .execute()
-            )
-            event_unit_ids = [row["unit_id"] for row in (event_units_result.data or [])]
+            # Get units for this event from pre-fetched map
+            event_unit_ids = event_units_map.get(event_id, [])
             
             if not event_unit_ids:
                 # Event has no units, check building access
