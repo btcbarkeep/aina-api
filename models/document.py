@@ -45,8 +45,9 @@ class DocumentBase(BaseModel):
     # Multiple contractors support (many-to-many via document_contractors junction table)
     contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs. Get from GET /contractors endpoint.")
 
-    # Category support
-    category_id: Optional[UUID] = Field(None, description="Optional category ID. Get from categories endpoint.")
+    # Category and subcategory support
+    category_id: Optional[UUID] = Field(None, description="Optional category ID from document_categories table. Get from GET /categories endpoint.")
+    subcategory_id: Optional[UUID] = Field(None, description="Optional subcategory ID from document_subcategories table. Get from GET /categories endpoint.")
 
     # File metadata (nullable because bulk docs may not be S3 files)
     s3_key: Optional[str] = None
@@ -119,7 +120,8 @@ class DocumentCreate(DocumentBase):
     - event_id: GET /events (optional)
     - unit_ids: GET /buildings/{building_id}/units (optional)
     - contractor_ids: GET /contractors (optional)
-    - category_id: Categories endpoint (optional)
+    - category_id: GET /categories endpoint (optional) - UUID from document_categories table
+    - subcategory_id: GET /categories endpoint (optional) - UUID from document_subcategories table
     """
     model_config = ConfigDict(
         json_schema_extra={
@@ -127,6 +129,8 @@ class DocumentCreate(DocumentBase):
                 "building_id": "REPLACE_WITH_ACTUAL_BUILDING_ID",
                 "unit_ids": ["REPLACE_WITH_ACTUAL_UNIT_ID"],
                 "contractor_ids": ["REPLACE_WITH_ACTUAL_CONTRACTOR_ID"],
+                "category_id": "REPLACE_WITH_ACTUAL_CATEGORY_ID",
+                "subcategory_id": "REPLACE_WITH_ACTUAL_SUBCATEGORY_ID",
                 "filename": "example.pdf",
                 "content_type": "application/pdf",
                 "is_public": True,
@@ -153,7 +157,8 @@ class DocumentUpdate(BaseModel):
     building_id: Optional[UUID] = Field(None, description="Optional building ID. Get current value from GET /documents/{id}")
     unit_ids: Optional[List[UUID]] = Field(None, description="List of unit IDs. Get current values from GET /documents/{id}")
     contractor_ids: Optional[List[UUID]] = Field(None, description="List of contractor IDs. Get current values from GET /documents/{id}")
-    category_id: Optional[UUID] = Field(None, description="Category ID. Get current value from GET /documents/{id}")
+    category_id: Optional[UUID] = Field(None, description="Category ID from document_categories table. Get current value from GET /documents/{id}")
+    subcategory_id: Optional[UUID] = Field(None, description="Subcategory ID from document_subcategories table. Get current value from GET /documents/{id}")
 
     s3_key: Optional[str] = Field(None, description="S3 key. Get current value from GET /documents/{id}")
     filename: Optional[str] = Field(None, description="Filename. Get current value from GET /documents/{id}")
@@ -173,6 +178,7 @@ class DocumentUpdate(BaseModel):
                 "unit_ids": None,
                 "contractor_ids": None,
                 "category_id": None,
+                "subcategory_id": None,
                 "s3_key": None,
                 "filename": "updated_filename.pdf",
                 "content_type": "application/pdf",
