@@ -153,7 +153,8 @@ async def upload_document(
     unit_ids: str | None = Form(None, description="JSON array of unit IDs: [\"uuid1\", \"uuid2\"]"),
     contractor_ids: str | None = Form(None, description="JSON array of contractor IDs: [\"uuid1\", \"uuid2\"]"),
 
-    category: str | None = Form(None),
+    category_id: str | None = Form(None, description="Category ID from document_categories table. Get from GET /categories endpoint."),
+    subcategory_id: str | None = Form(None, description="Subcategory ID from document_subcategories table. Get from GET /categories endpoint."),
 
     # Visibility toggle (redaction is now manual via separate endpoint)
     is_public: bool = Form(True, description="Whether the document should be public (true = public, false = private)"),
@@ -278,10 +279,47 @@ async def upload_document(
         raise HTTPException(400, "filename is required and cannot be empty")
     clean_filename = safe_filename(filename.strip())
 
-    safe_category = (
-        category.strip().replace(" ", "_").lower()
-        if category else "general"
-    )
+    # Look up category name from document_categories table if category_id is provided
+    safe_category = "general"  # default
+    if category_id:
+        try:
+            category_result = (
+                client.table("document_categories")
+                .select("name")
+                .eq("id", category_id)
+                .limit(1)
+                .execute()
+            )
+            if category_result.data:
+                safe_category = category_result.data[0]["name"].replace(" ", "_").lower()
+            else:
+                raise HTTPException(400, f"Category ID {category_id} not found in document_categories table")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Error looking up category: {e}")
+            raise HTTPException(400, f"Invalid category_id: {category_id}")
+    
+    # Validate subcategory_id exists if provided
+    if subcategory_id:
+        try:
+            subcategory_result = (
+                client.table("document_subcategories")
+                .select("id, category_id")
+                .eq("id", subcategory_id)
+                .limit(1)
+                .execute()
+            )
+            if not subcategory_result.data:
+                raise HTTPException(400, f"Subcategory ID {subcategory_id} not found in document_subcategories table")
+            # Validate that subcategory belongs to the provided category (if category_id is also provided)
+            if category_id and subcategory_result.data[0]["category_id"] != category_id:
+                raise HTTPException(400, f"Subcategory {subcategory_id} does not belong to category {category_id}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Error looking up subcategory: {e}")
+            raise HTTPException(400, f"Invalid subcategory_id: {subcategory_id}")
 
     # NEW S3 path rules
     if event_id:
@@ -359,7 +397,8 @@ async def upload_document(
     payload = sanitize({
         "building_id": building_id,
         "event_id": event_id,
-        "category": category,
+        "category_id": category_id,
+        "subcategory_id": subcategory_id,
         "filename": clean_filename,
         "s3_key": s3_key,
         "content_type": file.content_type,
