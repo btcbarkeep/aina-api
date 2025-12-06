@@ -401,7 +401,6 @@ async def upload_document(
         "subcategory_id": subcategory_id,
         "filename": clean_filename,
         "s3_key": s3_key,
-        "content_type": file.content_type,
         "uploaded_by": current_user.id,
         "is_redacted": False,  # Manual redaction is handled via separate endpoint
         "is_public": is_public,
