@@ -155,9 +155,13 @@ def create_event_units(event_id: str, unit_ids: List[str]):
                 "unit_id": unit_id
             }).execute()
         except Exception as e:
-            # Ignore duplicate key errors (unique constraint)
-            if "duplicate" not in str(e).lower():
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "unique" in error_msg:
+                # Expected: duplicate key errors are okay (idempotent operation)
+                logger.debug(f"Duplicate event_unit relationship ignored: event_id={event_id}, unit_id={unit_id}")
+            else:
                 logger.warning(f"Failed to create event_unit relationship: {e}")
+                raise HTTPException(500, f"Failed to create event_unit relationship: {e}")
 
 
 # -----------------------------------------------------
@@ -175,9 +179,13 @@ def create_event_contractors(event_id: str, contractor_ids: List[str]):
                 "contractor_id": contractor_id
             }).execute()
         except Exception as e:
-            # Ignore duplicate key errors (unique constraint)
-            if "duplicate" not in str(e).lower():
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "unique" in error_msg:
+                # Expected: duplicate key errors are okay (idempotent operation)
+                logger.debug(f"Duplicate event_contractor relationship ignored: event_id={event_id}, contractor_id={contractor_id}")
+            else:
                 logger.warning(f"Failed to create event_contractor relationship: {e}")
+                raise HTTPException(500, f"Failed to create event_contractor relationship: {e}")
 
 
 # -----------------------------------------------------
@@ -392,8 +400,8 @@ def list_events(
     contractor_id: Optional[str] = Query(None, description="Filter by single contractor ID"),
     contractor_ids: Optional[List[str]] = Query([], description="Filter by list of contractor IDs"),
     category: Optional[str] = Query(None, description="Filter by category"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    severity: Optional[str] = Query(None, description="Filter by severity"),
+    status: Optional[str] = Query(None, description="Filter by status (open, in_progress, resolved, closed)"),
+    severity: Optional[str] = Query(None, description="Filter by severity (low, medium, high, urgent)"),
     start_date: Optional[datetime] = Query(None, description="Filter events from this date (ISO datetime)"),
     end_date: Optional[datetime] = Query(None, description="Filter events until this date (ISO datetime)"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -415,6 +423,19 @@ def list_events(
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
     }
+    
+    # Validate enum values for status and severity
+    if status:
+        from models.enums import EventStatus
+        valid_statuses = [s.value for s in EventStatus]
+        if status not in valid_statuses:
+            raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+    
+    if severity:
+        from models.enums import EventSeverity
+        valid_severities = [s.value for s in EventSeverity]
+        if severity not in valid_severities:
+            raise HTTPException(400, f"Invalid severity. Must be one of: {', '.join(valid_severities)}")
     
     query = apply_event_filters(query, filter_params)
     query = query.order("created_at", desc=True).limit(limit)
