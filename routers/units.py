@@ -1,7 +1,7 @@
 # routers/units.py
 
 from fastapi import (
-    APIRouter, HTTPException, UploadFile, File, Form, Depends
+    APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 )
 from typing import Optional
 import csv
@@ -93,7 +93,11 @@ def to_numeric_or_none(value):
 # LIST Units for a Building
 # -------------------------------------------------------------
 @router.get("/building/{building_id}")
-def list_units(building_id: str, current_user: CurrentUser = Depends(get_current_user)):
+def list_units(
+    building_id: str,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of units to return (1-1000)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
     # Permission check: ensure user has access to this building
     if not is_admin(current_user):
         require_building_access(current_user, building_id)
@@ -113,10 +117,11 @@ def list_units(building_id: str, current_user: CurrentUser = Depends(get_current
             if accessible_unit_ids is not None:
                 query = query.in_("id", accessible_unit_ids)
         
-        result = query.order("unit_number").execute()
+        result = query.order("unit_number").limit(limit).execute()
         return result.data or []
     except Exception as e:
-        raise HTTPException(500, f"Unable to fetch units: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to fetch units", 500)
 
 
 # -------------------------------------------------------------
@@ -174,7 +179,8 @@ def create_unit(payload: UnitCreate, current_user: CurrentUser = Depends(get_cur
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Unit creation failed: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to create unit", 500)
 
 
 # -------------------------------------------------------------
@@ -225,7 +231,8 @@ def update_unit(unit_id: str, payload: UnitUpdate, current_user: CurrentUser = D
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Unit update failed: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to update unit", 500)
 
 
 # -------------------------------------------------------------
@@ -241,7 +248,8 @@ def delete_unit(unit_id: str, current_user: CurrentUser = Depends(get_current_us
         client.table("units").delete().eq("id", unit_id).execute()
         return {"success": True}
     except Exception as e:
-        raise HTTPException(500, f"Unit deletion failed: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to delete unit", 500)
 
 
 # -------------------------------------------------------------
@@ -268,7 +276,8 @@ def get_unit(unit_id: str, current_user: CurrentUser = Depends(get_current_user)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Unable to fetch unit: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to fetch unit", 500)
 
 
 # -------------------------------------------------------------
@@ -321,7 +330,8 @@ def bulk_upload_units(
     try:
         client.table("units").insert(rows_to_insert).execute()
     except Exception as e:
-        raise HTTPException(500, f"Bulk upload failed: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Bulk unit upload failed", 500)
 
     return {"success": True, "inserted": len(rows_to_insert)}
 
@@ -330,7 +340,11 @@ def bulk_upload_units(
 # LIST Unit Events
 # -------------------------------------------------------------
 @router.get("/{unit_id}/events")
-def list_unit_events(unit_id: str, current_user: CurrentUser = Depends(get_current_user)):
+def list_unit_events(
+    unit_id: str,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of events to return (1-1000)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
     # Permission check: ensure user has access to this unit
     if not is_admin(current_user):
         require_unit_access_helper(current_user, unit_id)
@@ -357,6 +371,7 @@ def list_unit_events(unit_id: str, current_user: CurrentUser = Depends(get_curre
             .select("*")
             .in_("id", event_ids)
             .order("created_at", desc=True)
+            .limit(limit)
             .execute()
         )
         
@@ -368,14 +383,19 @@ def list_unit_events(unit_id: str, current_user: CurrentUser = Depends(get_curre
         return enriched_events
     except Exception as e:
         logger.error(f"Error fetching unit events for unit {unit_id}: {e}", exc_info=True)
-        raise HTTPException(500, f"Unable to fetch unit events: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to fetch unit events", 500)
 
 
 # -------------------------------------------------------------
 # LIST Unit Documents
 # -------------------------------------------------------------
 @router.get("/{unit_id}/documents")
-def list_unit_documents(unit_id: str, current_user: CurrentUser = Depends(get_current_user)):
+def list_unit_documents(
+    unit_id: str,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of documents to return (1-1000)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
     # Permission check: ensure user has access to this unit
     if not is_admin(current_user):
         require_unit_access_helper(current_user, unit_id)
@@ -413,4 +433,5 @@ def list_unit_documents(unit_id: str, current_user: CurrentUser = Depends(get_cu
         return enriched_documents
     except Exception as e:
         logger.error(f"Error fetching unit documents for unit {unit_id}: {e}", exc_info=True)
-        raise HTTPException(500, f"Unable to fetch unit documents: {e}")
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to fetch unit documents", 500)
