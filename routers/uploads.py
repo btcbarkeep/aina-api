@@ -150,8 +150,8 @@ async def upload_document(
     event_id: str | None = Form(None),
     
     # NEW — Multiple units and contractors support
-    unit_ids: str | None = Form(None, description="JSON array of unit IDs: [\"uuid1\", \"uuid2\"]"),
-    contractor_ids: str | None = Form(None, description="JSON array of contractor IDs: [\"uuid1\", \"uuid2\"]"),
+    unit_ids: str | None = Form(None, description="Unit IDs: JSON array like [\"uuid1\", \"uuid2\"] OR a single UUID string (e.g., \"uuid1\")"),
+    contractor_ids: str | None = Form(None, description="Contractor IDs: JSON array like [\"uuid1\", \"uuid2\"] OR a single UUID string (e.g., \"uuid1\")"),
 
     category_id: str | None = Form(None, description="Category ID from document_categories table. Get from GET /categories endpoint."),
     subcategory_id: str | None = Form(None, description="Subcategory ID from document_subcategories table. Get from GET /categories endpoint."),
@@ -175,30 +175,53 @@ async def upload_document(
     # We'll validate it's set before creating the document record
     
     # Parse unit_ids and contractor_ids from JSON strings
+    # Accepts both JSON arrays and single UUID strings (converts single UUID to array)
     import json
     parsed_unit_ids = []
     if unit_ids:
         try:
-            parsed_unit_ids = json.loads(unit_ids)
-            if not isinstance(parsed_unit_ids, list):
-                raise HTTPException(400, "unit_ids must be a JSON array")
+            # Try parsing as JSON first
+            parsed = json.loads(unit_ids)
+            if isinstance(parsed, list):
+                parsed_unit_ids = parsed
+            elif isinstance(parsed, str):
+                # Single UUID string - convert to array
+                parsed_unit_ids = [parsed]
+            else:
+                raise HTTPException(400, "unit_ids must be a JSON array or a single UUID string")
         except json.JSONDecodeError:
-            raise HTTPException(400, "Invalid JSON in unit_ids parameter")
+            # Not valid JSON - try treating as a single UUID string
+            unit_ids_trimmed = unit_ids.strip()
+            if unit_ids_trimmed:
+                parsed_unit_ids = [unit_ids_trimmed]
+            else:
+                raise HTTPException(400, "Invalid JSON in unit_ids parameter. Expected JSON array like [\"uuid1\", \"uuid2\"] or a single UUID string.")
         except Exception as e:
             logger.warning(f"Error parsing unit_ids: {e}")
-            raise HTTPException(400, "Invalid unit_ids format")
+            raise HTTPException(400, f"Invalid unit_ids format: {str(e)}")
     
     parsed_contractor_ids = []
     if contractor_ids:
         try:
-            parsed_contractor_ids = json.loads(contractor_ids)
-            if not isinstance(parsed_contractor_ids, list):
-                raise HTTPException(400, "contractor_ids must be a JSON array")
+            # Try parsing as JSON first
+            parsed = json.loads(contractor_ids)
+            if isinstance(parsed, list):
+                parsed_contractor_ids = parsed
+            elif isinstance(parsed, str):
+                # Single UUID string - convert to array
+                parsed_contractor_ids = [parsed]
+            else:
+                raise HTTPException(400, "contractor_ids must be a JSON array or a single UUID string")
         except json.JSONDecodeError:
-            raise HTTPException(400, "Invalid JSON in contractor_ids parameter")
+            # Not valid JSON - try treating as a single UUID string
+            contractor_ids_trimmed = contractor_ids.strip()
+            if contractor_ids_trimmed:
+                parsed_contractor_ids = [contractor_ids_trimmed]
+            else:
+                raise HTTPException(400, "Invalid JSON in contractor_ids parameter. Expected JSON array like [\"uuid1\", \"uuid2\"] or a single UUID string.")
         except Exception as e:
             logger.warning(f"Error parsing contractor_ids: {e}")
-            raise HTTPException(400, "Invalid contractor_ids format")
+            raise HTTPException(400, f"Invalid contractor_ids format: {str(e)}")
     
     # Remove duplicates
     parsed_unit_ids = list(dict.fromkeys(parsed_unit_ids))
