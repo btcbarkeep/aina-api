@@ -262,6 +262,13 @@ class ContractorUpdate(BaseModel):
     roles: Optional[List[str]] = Field(None, description="List of role names to assign (replaces existing roles)", example=["plumber", "electrician"])
 
 
+class LogoUploadResponse(BaseModel):
+    success: bool
+    logo_url: str
+    s3_key: str
+    message: str
+
+
 # ============================================================
 # Helper — Apply contractor filters
 # ============================================================
@@ -555,15 +562,8 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
 @router.post(
     "/{contractor_id}/logo",
     summary="Upload contractor logo",
-    description="""
-    Upload a logo image for a contractor.
-    
-    **Supported formats:** JPG, PNG, GIF, WebP
-    **Max file size:** 5MB
-    **Image will be uploaded to S3 and the logo_url will be updated automatically.**
-    
-    **Permissions:** Requires `contractors:write` permission.
-    """,
+    description="Upload a logo image for a contractor. Supported formats: JPG, PNG, GIF, WebP. Max file size: 5MB.",
+    response_model=LogoUploadResponse,
     dependencies=[Depends(requires_permission("contractors:write"))],
 )
 async def upload_contractor_logo(
