@@ -63,13 +63,13 @@ POST /subscriptions/me/{role}/sync
 
 Manually syncs subscription status from Stripe.
 
-### Start Free Trial
+### Start Free Trial (Self-Service)
 
 ```bash
 POST /subscriptions/me/start-trial?trial_days=14
 ```
 
-**Starts a free trial for the CURRENT USER ONLY** (per-user subscription).
+**Users can start their own free trial** (per-user subscription).
 
 - Automatically uses the authenticated user's role from their token
 - Creates a subscription record **specifically for this user** in the `user_subscriptions` table
@@ -77,6 +77,28 @@ POST /subscriptions/me/start-trial?trial_days=14
 - Default trial duration is 14 days (1-180 days allowed)
 
 **Important:** This is a per-user subscription, not a per-role subscription. Each user must start their own trial.
+
+### Admin: Grant Free Trial to User
+
+```bash
+POST /subscriptions/users/{user_id}/start-trial?trial_days=14&role=property_manager
+```
+
+**Admin-only endpoint to grant a free trial to a specific user.**
+
+- **Admin/Super Admin only** - requires admin authentication
+- If `role` is not provided, automatically fetches the user's role from their metadata
+- Creates a subscription record for the specified user
+- Default trial duration is 14 days (1-180 days allowed)
+
+**Example:**
+```bash
+# Grant 30-day trial to a user (auto-detects their role)
+POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial_days=30
+
+# Grant trial for a specific role
+POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial_days=30&role=property_manager
+```
 
 **Requirements:**
 - Role must support trials
