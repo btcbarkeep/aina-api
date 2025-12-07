@@ -168,23 +168,55 @@ def check_user_has_active_subscription(
     subscription_tier: Optional[str] = None,
     subscription_status: Optional[str] = None,
     is_trial: Optional[bool] = None,
-    trial_ends_at: Optional[datetime] = None
+    trial_ends_at: Optional[datetime] = None,
+    contractor_id: Optional[str] = None
 ) -> bool:
     """
     Check if a user has an active subscription for their role.
+    
+    For contractor users, this checks BOTH:
+    1. Company subscription (from contractors table) - takes precedence
+    2. Individual user subscription (from user_subscriptions table) - fallback
     
     This is a convenience function that validates subscription status.
     
     Args:
         role: User role
-        subscription_tier: "free" or "paid"
-        subscription_status: Stripe subscription status
-        is_trial: Whether subscription is in trial
-        trial_ends_at: When trial ends
+        subscription_tier: "free" or "paid" (from user_subscriptions)
+        subscription_status: Stripe subscription status (from user_subscriptions)
+        is_trial: Whether subscription is in trial (from user_subscriptions)
+        trial_ends_at: When trial ends (from user_subscriptions)
+        contractor_id: Optional contractor ID to check company subscription
     
     Returns:
         True if user has active subscription, False otherwise
     """
+    # For contractor users, check company subscription first
+    if role == "contractor" and contractor_id:
+        from core.supabase_client import get_supabase_client
+        client = get_supabase_client()
+        
+        try:
+            contractor_res = (
+                client.table("contractors")
+                .select("subscription_tier, subscription_status")
+                .eq("id", contractor_id)
+                .limit(1)
+                .execute()
+            )
+            
+            if contractor_res.data:
+                contractor = contractor_res.data[0]
+                company_tier = contractor.get("subscription_tier", "free")
+                company_status = contractor.get("subscription_status")
+                
+                # If company has paid subscription, user inherits access
+                if company_tier == "paid" and company_status in ["active", "trialing"]:
+                    return True
+        except Exception:
+            # If we can't check company subscription, fall through to user subscription
+            pass
+    
     # Default to free tier if not specified
     if subscription_tier is None:
         subscription_tier = "free"
