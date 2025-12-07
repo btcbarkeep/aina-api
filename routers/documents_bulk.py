@@ -96,14 +96,6 @@ async def bulk_upload_documents(
     # Map alternative column names to standard names
     column_mapping = {}
     
-    # Map title alternatives (after normalization, "Project Name" becomes "project_name")
-    title_alternatives = ["title", "project_name"]
-    for col in normalized_columns:
-        if col in title_alternatives:
-            column_mapping[col] = "title"
-            logger.info(f"Bulk upload: Mapped column '{col}' to 'title'")
-            break
-    
     # Map document_url alternatives (after normalization, "document url" becomes "document_url", "document link" becomes "document_link", "download link" becomes "download_link")
     document_url_alternatives = ["document_url", "document_link", "download_link", "download_url"]
     for col in normalized_columns:
@@ -111,6 +103,9 @@ async def bulk_upload_documents(
             column_mapping[col] = "document_url"
             logger.info(f"Bulk upload: Mapped column '{col}' to 'document_url'")
             break
+    
+    # Note: We don't map title/project_name/description to filename here
+    # Instead, we check for them in priority order when reading each row
     
     # Rename columns using the mapping
     if column_mapping:
@@ -149,9 +144,22 @@ async def bulk_upload_documents(
             raise HTTPException(400, f"Error validating building_id parameter: {e}")
     
     # Determine required columns based on whether building_id is provided
-    required_columns = {"title", "document_url"}
+    # filename can come from "title", "project_name", or "description" columns
+    required_columns = {"document_url"}
     if not global_building_id:
         required_columns.add("building_id")
+    
+    # Check if at least one filename source column exists
+    filename_sources = ["title", "project_name", "description"]
+    has_filename_source = any(col in df.columns for col in filename_sources)
+    
+    if not has_filename_source:
+        found_columns = sorted(list(df.columns))
+        raise HTTPException(
+            400, 
+            f"Missing filename source column. Need one of: title, project_name (or 'Project Name'), or description. "
+            f"Found columns in spreadsheet: {', '.join(found_columns)}"
+        )
     
     missing = required_columns - set(df.columns)
     if missing:
@@ -159,9 +167,7 @@ async def bulk_upload_documents(
         error_msg = "Missing required columns: "
         missing_list = []
         for col in missing:
-            if col == "title":
-                missing_list.append("title (or 'Project Name')")
-            elif col == "document_url":
+            if col == "document_url":
                 missing_list.append("document_url (or 'document url', 'document link', 'document_link', 'download link', 'download_link', 'download url', 'download_url')")
             else:
                 missing_list.append(col)
@@ -331,51 +337,52 @@ async def bulk_upload_documents(
             except Exception:
                 return None
         
-        # Generate filename from document_url or title if not provided
-        document_url = clean_value(row.get("document_url"))
-        title = clean_value(row.get("title"))
-        
-        # Try to extract filename from URL, or generate from title
+        # Get filename from spreadsheet - check title, project_name, or description in that order
         filename = None
-        if document_url:
-            try:
-                parsed_url = urlparse(document_url)
-                # Try to get filename from URL path
-                path = unquote(parsed_url.path)
-                if path and '/' in path:
-                    filename = path.split('/')[-1]
-                    # Remove query parameters if any
-                    if '?' in filename:
-                        filename = filename.split('?')[0]
-                    # Clean up the filename
-                    if filename:
-                        filename = filename.strip()
-                # If no filename in path, try to get from query params (common in some systems)
-                if not filename or filename == '':
-                    query_params = parse_qs(parsed_url.query)
-                    # Check common filename parameters
-                    for param in ['f', 'file', 'filename', 'name']:
-                        if param in query_params and query_params[param]:
-                            filename = query_params[param][0].strip()
-                            break
-            except Exception as e:
-                logger.warning(f"Row {row_num}: Error extracting filename from URL: {e}")
+        filename_sources = ["title", "project_name", "description"]
+        for source_col in filename_sources:
+            value = clean_value(row.get(source_col))
+            if value:
+                filename = value
+                logger.debug(f"Row {row_num}: Using '{source_col}' column for filename: {filename}")
+                break
         
-        # If still no filename, generate from title
-        if not filename and title:
-            # Sanitize title for filename (remove invalid chars, limit length)
-            safe_title = re.sub(r'[^a-zA-Z0-9._-]', '_', title)[:100]
-            filename = f"{safe_title}.pdf"  # Default to .pdf extension
+        document_url = clean_value(row.get("document_url"))
         
-        # Final fallback
+        # If filename not provided from any source, try to extract from URL or use fallback
         if not filename:
-            filename = "bulk_upload_document.pdf"
+            if document_url:
+                try:
+                    parsed_url = urlparse(document_url)
+                    # Try to get filename from URL path
+                    path = unquote(parsed_url.path)
+                    if path and '/' in path:
+                        filename = path.split('/')[-1]
+                        # Remove query parameters if any
+                        if '?' in filename:
+                            filename = filename.split('?')[0]
+                        # Clean up the filename
+                        if filename:
+                            filename = filename.strip()
+                    # If no filename in path, try to get from query params (common in some systems)
+                    if not filename or filename == '':
+                        query_params = parse_qs(parsed_url.query)
+                        # Check common filename parameters
+                        for param in ['f', 'file', 'filename', 'name']:
+                            if param in query_params and query_params[param]:
+                                filename = query_params[param][0].strip()
+                                break
+                except Exception as e:
+                    logger.warning(f"Row {row_num}: Error extracting filename from URL: {e}")
+            
+            # Final fallback
+            if not filename:
+                filename = "bulk_upload_document.pdf"
         
         doc_data = {
             "id": str(uuid.uuid4()),
-            "title": title,
+            "filename": filename,  # From "title" column in spreadsheet
             "document_url": document_url,
-            "filename": filename,  # Required field - generate from URL or title
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
             "event_id": str(event_id) if event_id else None,
