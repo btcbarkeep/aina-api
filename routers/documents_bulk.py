@@ -2,6 +2,7 @@
 
 import uuid
 import tempfile
+import re
 import pandas as pd
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from typing import Optional
@@ -71,9 +72,24 @@ async def bulk_upload_documents(
     if df.empty:
         raise HTTPException(400, "Spreadsheet is empty.")
 
+    # Store original column names for debugging
+    original_columns = list(df.columns)
+    logger.info(f"Bulk upload: Original columns in spreadsheet: {original_columns}")
+
     # Normalize column names (lowercase, strip whitespace, replace spaces with underscores)
-    normalized_columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    # Also handle common variations and remove special characters
+    normalized_columns = []
+    for col in df.columns:
+        # Convert to string, strip, lowercase
+        col_str = str(col).strip().lower()
+        # Replace multiple spaces with single space, then replace spaces with underscores
+        col_str = re.sub(r'\s+', ' ', col_str).replace(" ", "_")
+        # Remove any remaining special characters except underscores and alphanumeric
+        col_str = re.sub(r'[^a-z0-9_]', '', col_str)
+        normalized_columns.append(col_str)
+    
     df.columns = normalized_columns
+    logger.info(f"Bulk upload: Normalized columns: {normalized_columns}")
     
     # Map alternative column names to standard names
     column_mapping = {}
@@ -83,6 +99,7 @@ async def bulk_upload_documents(
     for col in normalized_columns:
         if col in title_alternatives:
             column_mapping[col] = "title"
+            logger.info(f"Bulk upload: Mapped column '{col}' to 'title'")
             break
     
     # Map document_url alternatives (after normalization, "document url" becomes "document_url", "document link" becomes "document_link")
@@ -90,11 +107,13 @@ async def bulk_upload_documents(
     for col in normalized_columns:
         if col in document_url_alternatives:
             column_mapping[col] = "document_url"
+            logger.info(f"Bulk upload: Mapped column '{col}' to 'document_url'")
             break
     
     # Rename columns using the mapping
     if column_mapping:
         df = df.rename(columns=column_mapping)
+        logger.info(f"Bulk upload: Columns after mapping: {list(df.columns)}")
 
     client = get_supabase_client()
     
@@ -134,7 +153,7 @@ async def bulk_upload_documents(
     
     missing = required_columns - set(df.columns)
     if missing:
-        # Provide helpful error message with accepted alternatives
+        # Provide helpful error message with accepted alternatives and show found columns
         error_msg = "Missing required columns: "
         missing_list = []
         for col in missing:
@@ -144,7 +163,12 @@ async def bulk_upload_documents(
                 missing_list.append("document_url (or 'document url', 'document link', 'document_link')")
             else:
                 missing_list.append(col)
-        raise HTTPException(400, error_msg + ", ".join(missing_list))
+        
+        # Include found columns in error message for debugging
+        found_columns = sorted(list(df.columns))
+        error_msg += ", ".join(missing_list)
+        error_msg += f". Found columns in spreadsheet: {', '.join(found_columns)}"
+        raise HTTPException(400, error_msg)
 
     created_docs = []
 
