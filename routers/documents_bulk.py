@@ -403,11 +403,11 @@ async def bulk_upload_documents(
             "title": title,  # Generated from "County Archive - {permit_type} - {permit_number}" or fallback
             # filename is intentionally left blank for bulk uploads (they use document_url, not S3)
             "document_url": document_url,
-            "document_url": document_url,
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
             "event_id": str(event_id) if event_id else None,
             "category_id": PUBLIC_DOCUMENTS_CATEGORY_ID,  # All bulk uploads use public_documents category
+            "document_type": document_type,  # Include document_type from spreadsheet
             "permit_number": clean_value(row.get("permit_number")),
             "permit_type": clean_value(row.get("permit_type")),
             "folder": clean_value(row.get("folder")),
