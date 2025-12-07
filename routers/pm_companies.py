@@ -14,11 +14,31 @@ from models.pm_company import (
     PMCompanyRead
 )
 from models.enums import SubscriptionTier, SubscriptionStatus
+from core.stripe_helpers import verify_contractor_subscription
 
 router = APIRouter(
     prefix="/pm-companies",
     tags=["Property Management Companies"],
 )
+
+
+# ============================================================
+# Helper — role-based access rules
+# ============================================================
+def ensure_pm_company_access(current_user: CurrentUser, company_id: str):
+    """
+    Admin, super_admin → full access
+    Property manager → only access their own company
+    """
+    if current_user.role in ["admin", "super_admin"]:
+        return
+    
+    if current_user.role == "property_manager":
+        user_pm_id = getattr(current_user, "pm_company_id", None)
+        if user_pm_id == company_id:
+            return
+    
+    raise HTTPException(403, "Insufficient permissions")
 
 
 # ============================================================
@@ -65,12 +85,7 @@ def get_pm_company(
     """
     client = get_supabase_client()
     
-    # Check access
-    if current_user.role not in ["admin", "super_admin"]:
-        # Users can only access their own company
-        user_pm_id = getattr(current_user, "pm_company_id", None)
-        if user_pm_id != company_id:
-            raise HTTPException(403, "Insufficient permissions")
+    ensure_pm_company_access(current_user, company_id)
     
     rows = (
         client.table("property_management_companies")
@@ -237,6 +252,98 @@ def delete_pm_company(company_id: str):
         )
         
         return {"success": True, "message": "Property management company deleted"}
+
+
+# ============================================================
+# SYNC SUBSCRIPTION STATUS FROM STRIPE
+# ============================================================
+@router.post(
+    "/{company_id}/sync-subscription",
+    summary="Sync subscription status from Stripe",
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
+def sync_pm_company_subscription(
+    company_id: str,
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Manually sync a property management company's subscription status from Stripe.
+    
+    This endpoint:
+    - Verifies the subscription status with Stripe
+    - Updates the company's subscription record
+    - Returns the updated subscription data
+    
+    **Use cases:**
+    - Manual sync when subscription changes
+    - Troubleshooting subscription issues
+    - Verifying subscription status after webhook delays
+    """
+    ensure_pm_company_access(current_user, company_id)
+    
+    client = get_supabase_client()
+    
+    # Get company
+    company_res = (
+        client.table("property_management_companies")
+        .select("id, company_name, stripe_customer_id, stripe_subscription_id, subscription_tier, subscription_status")
+        .eq("id", company_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not company_res.data:
+        raise HTTPException(404, "Property management company not found")
+    
+    company = company_res.data[0]
+    stripe_customer_id = company.get("stripe_customer_id")
+    stripe_subscription_id = company.get("stripe_subscription_id")
+    
+    if not stripe_customer_id and not stripe_subscription_id:
+        raise HTTPException(
+            400,
+            "Property management company does not have a Stripe customer ID or subscription ID. Cannot sync subscription."
+        )
+    
+    # Verify subscription with Stripe
+    is_active, subscription_status, error_message = verify_contractor_subscription(
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_subscription_id
+    )
+    
+    if error_message:
+        logger.warning(f"Error syncing subscription for PM company {company_id}: {error_message}")
+        raise HTTPException(400, f"Failed to verify subscription: {error_message}")
+    
+    # Determine subscription tier
+    subscription_tier = "paid" if is_active else "free"
+    
+    # Update company
+    try:
+        update_res = (
+            client.table("property_management_companies")
+            .update({
+                "subscription_tier": subscription_tier,
+                "subscription_status": subscription_status
+            })
+            .eq("id", company_id)
+            .execute()
+        )
+        
+        if not update_res.data:
+            raise HTTPException(500, "Failed to update property management company subscription")
+        
+        logger.info(f"Synced subscription status for PM company {company_id}: tier={subscription_tier}, status={subscription_status}")
+        
+        return {
+            "success": True,
+            "company_id": company_id,
+            "company_name": company.get("company_name"),
+            "subscription_tier": subscription_tier,
+            "subscription_status": subscription_status
+        }
+    except Exception as e:
+        raise handle_supabase_error(e, "Failed to sync subscription status", 500)
     except Exception as e:
         handle_supabase_error(e, "Failed to delete property management company")
 
