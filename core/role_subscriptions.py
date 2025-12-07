@@ -169,13 +169,15 @@ def check_user_has_active_subscription(
     subscription_status: Optional[str] = None,
     is_trial: Optional[bool] = None,
     trial_ends_at: Optional[datetime] = None,
-    contractor_id: Optional[str] = None
+    contractor_id: Optional[str] = None,
+    aoao_organization_id: Optional[str] = None,
+    pm_company_id: Optional[str] = None
 ) -> bool:
     """
     Check if a user has an active subscription for their role.
     
-    For contractor users, this checks BOTH:
-    1. Company subscription (from contractors table) - takes precedence
+    For business users (contractor, aoao, property_manager), this checks BOTH:
+    1. Organization/company subscription (from business tables) - takes precedence
     2. Individual user subscription (from user_subscriptions table) - fallback
     
     This is a convenience function that validates subscription status.
@@ -187,15 +189,17 @@ def check_user_has_active_subscription(
         is_trial: Whether subscription is in trial (from user_subscriptions)
         trial_ends_at: When trial ends (from user_subscriptions)
         contractor_id: Optional contractor ID to check company subscription
+        aoao_organization_id: Optional AOAO organization ID to check organization subscription
+        pm_company_id: Optional PM company ID to check company subscription
     
     Returns:
         True if user has active subscription, False otherwise
     """
+    from core.supabase_client import get_supabase_client
+    client = get_supabase_client()
+    
     # For contractor users, check company subscription first
     if role == "contractor" and contractor_id:
-        from core.supabase_client import get_supabase_client
-        client = get_supabase_client()
-        
         try:
             contractor_res = (
                 client.table("contractors")
@@ -214,7 +218,50 @@ def check_user_has_active_subscription(
                 if company_tier == "paid" and company_status in ["active", "trialing"]:
                     return True
         except Exception:
-            # If we can't check company subscription, fall through to user subscription
+            pass
+    
+    # For AOAO users, check organization subscription first
+    if role == "aoao" and aoao_organization_id:
+        try:
+            org_res = (
+                client.table("aoao_organizations")
+                .select("subscription_tier, subscription_status")
+                .eq("id", aoao_organization_id)
+                .limit(1)
+                .execute()
+            )
+            
+            if org_res.data:
+                org = org_res.data[0]
+                org_tier = org.get("subscription_tier", "free")
+                org_status = org.get("subscription_status")
+                
+                # If organization has paid subscription, user inherits access
+                if org_tier == "paid" and org_status in ["active", "trialing"]:
+                    return True
+        except Exception:
+            pass
+    
+    # For property_manager users, check PM company subscription first
+    if role == "property_manager" and pm_company_id:
+        try:
+            pm_res = (
+                client.table("property_management_companies")
+                .select("subscription_tier, subscription_status")
+                .eq("id", pm_company_id)
+                .limit(1)
+                .execute()
+            )
+            
+            if pm_res.data:
+                pm_company = pm_res.data[0]
+                pm_tier = pm_company.get("subscription_tier", "free")
+                pm_status = pm_company.get("subscription_status")
+                
+                # If company has paid subscription, user inherits access
+                if pm_tier == "paid" and pm_status in ["active", "trialing"]:
+                    return True
+        except Exception:
             pass
     
     # Default to free tier if not specified
