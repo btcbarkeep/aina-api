@@ -252,6 +252,8 @@ def delete_aoao_organization(organization_id: str):
         )
         
         return {"success": True, "message": "AOAO organization deleted"}
+    except Exception as e:
+        handle_supabase_error(e, "Failed to delete AOAO organization")
 
 
 # ============================================================
@@ -345,20 +347,4 @@ def sync_aoao_org_subscription(
     except Exception as e:
         from core.errors import handle_supabase_error
         raise handle_supabase_error(e, "Failed to sync subscription status", 500)
-
-
-def ensure_aoao_org_access(current_user: CurrentUser, organization_id: str):
-    """
-    Admin, super_admin → full access
-    AOAO user → only access their own organization
-    """
-    if current_user.role in ["admin", "super_admin"]:
-        return
-    
-    if current_user.role == "aoao":
-        user_org_id = getattr(current_user, "aoao_organization_id", None)
-        if user_org_id == organization_id:
-            return
-    
-    raise HTTPException(403, "Insufficient permissions")
 
