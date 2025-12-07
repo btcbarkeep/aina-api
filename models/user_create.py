@@ -13,6 +13,8 @@ class AdminCreateUser(BaseModel):
     - phone
     - role (admin, super_admin, aoao, property_manager, contractor, contractor_staff)
     - contractor_id (optional UUID string) - Only used for contractor accounts
+    - aoao_organization_id (optional UUID string) - Only used for AOAO accounts
+    - pm_company_id (optional UUID string) - Only used for property_manager accounts
     - metadata (optional dict for any future expansion)
     - permissions (optional list of permission strings)
 
@@ -28,8 +30,10 @@ class AdminCreateUser(BaseModel):
     # Default role
     role: str = "aoao"     # admin can override this
 
-    # Only used for contractor accounts
-    contractor_id: Optional[str] = None
+    # Organization links (only used for business-linked accounts)
+    contractor_id: Optional[str] = None  # Only used for contractor accounts
+    aoao_organization_id: Optional[str] = None  # Only used for AOAO accounts
+    pm_company_id: Optional[str] = None  # Only used for property_manager accounts
 
     # For optional overrides (permissions, access flags, etc.)
     metadata: Optional[Dict[str, Any]] = None
