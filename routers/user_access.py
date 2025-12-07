@@ -43,6 +43,10 @@ class AOAOOrganizationBuildingAccessCreate(BaseModel):
     building_id: str
 
 
+class AOAOOrganizationUnitAccessCreate(BaseModel):
+    unit_id: str
+
+
 class PMCompanyBuildingAccessCreate(BaseModel):
     building_id: str
 
@@ -951,6 +955,184 @@ def delete_aoao_org_building_access(organization_id: str, building_id: str):
 
 
 # ============================================================
+# AOAO ORGANIZATION UNIT ACCESS
+# ============================================================
+
+@router.post(
+    "/aoao-organizations/{organization_id}/units",
+    summary="Grant unit access to an AOAO organization",
+    description="[Organization Access] Grant unit access to an AOAO organization. All users with aoao_organization_id matching this organization will inherit this access.",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def add_aoao_org_unit_access(
+    organization_id: str,
+    payload: AOAOOrganizationUnitAccessCreate
+):
+    """
+    Grant unit access to an AOAO organization.
+    All users with aoao_organization_id matching this organization will inherit this access.
+    """
+    client = get_supabase_client()
+    
+    # Validate organization exists
+    org_result = (
+        client.table("aoao_organizations")
+        .select("id, organization_name")
+        .eq("id", organization_id)
+        .limit(1)
+        .execute()
+    )
+    if not org_result.data:
+        raise HTTPException(404, f"AOAO organization {organization_id} not found")
+    
+    # Validate unit exists
+    unit_result = (
+        client.table("units")
+        .select("id")
+        .eq("id", payload.unit_id)
+        .limit(1)
+        .execute()
+    )
+    if not unit_result.data:
+        raise HTTPException(404, f"Unit {payload.unit_id} not found")
+    
+    # Check for duplicate
+    existing = (
+        client.table("aoao_organization_unit_access")
+        .select("id")
+        .eq("aoao_organization_id", organization_id)
+        .eq("unit_id", payload.unit_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(400, "Organization already has access to this unit")
+    
+    try:
+        result = (
+            client.table("aoao_organization_unit_access")
+            .insert({
+                "aoao_organization_id": organization_id,
+                "unit_id": payload.unit_id
+            }, returning="representation")
+            .execute()
+        )
+        
+        logger.info(f"Granted unit {payload.unit_id} access to AOAO organization {organization_id}")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to grant unit access: {e}")
+
+
+@router.get(
+    "/aoao-organizations/{organization_id}/units",
+    summary="List unit access for an AOAO organization",
+    description="[Organization Access] List all units an AOAO organization has access to (includes both direct unit access and units from buildings they have access to)",
+    dependencies=[Depends(requires_permission("user_access:read"))],
+)
+def list_aoao_org_unit_access(organization_id: str):
+    """
+    List all units an AOAO organization has access to.
+    Includes:
+    - Direct unit access (from aoao_organization_unit_access table)
+    - Units from buildings they have access to (from aoao_organization_building_access table)
+    """
+    client = get_supabase_client()
+    
+    unit_ids = set()
+    unit_access_list = []
+    
+    # 1. Get direct unit access
+    direct_result = (
+        client.table("aoao_organization_unit_access")
+        .select("unit_id")
+        .eq("aoao_organization_id", organization_id)
+        .execute()
+    )
+    
+    for entry in (direct_result.data or []):
+        unit_id = entry["unit_id"]
+        if unit_id not in unit_ids:
+            unit_ids.add(unit_id)
+            unit_access_list.append({
+                "unit_id": unit_id,
+                "access_type": "direct"
+            })
+    
+    # 2. Get building access and include all units from those buildings
+    building_result = (
+        client.table("aoao_organization_building_access")
+        .select("building_id")
+        .eq("aoao_organization_id", organization_id)
+        .execute()
+    )
+    
+    building_ids = [entry["building_id"] for entry in (building_result.data or [])]
+    
+    if building_ids:
+        # Get all units in these buildings
+        units_result = (
+            client.table("units")
+            .select("id")
+            .in_("building_id", building_ids)
+            .execute()
+        )
+        
+        for unit in (units_result.data or []):
+            unit_id = unit["id"]
+            if unit_id not in unit_ids:
+                unit_ids.add(unit_id)
+                unit_access_list.append({
+                    "unit_id": unit_id,
+                    "access_type": "inherited_building"
+                })
+    
+    return unit_access_list
+
+
+@router.delete(
+    "/aoao-organizations/{organization_id}/units/{unit_id}",
+    summary="Remove unit access from an AOAO organization",
+    description="[Organization Access] Remove unit access from an AOAO organization",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def delete_aoao_org_unit_access(organization_id: str, unit_id: str):
+    """Remove unit access from an AOAO organization."""
+    client = get_supabase_client()
+    
+    # Check if record exists
+    check_result = (
+        client.table("aoao_organization_unit_access")
+        .select("id")
+        .eq("aoao_organization_id", organization_id)
+        .eq("unit_id", unit_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not check_result.data:
+        raise HTTPException(404, "Access record not found")
+    
+    try:
+        (
+            client.table("aoao_organization_unit_access")
+            .delete()
+            .eq("aoao_organization_id", organization_id)
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        
+        logger.info(f"Removed unit {unit_id} access from AOAO organization {organization_id}")
+        return {
+            "status": "deleted",
+            "organization_id": organization_id,
+            "unit_id": unit_id
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to remove unit access: {e}")
+
+
+# ============================================================
 # PM COMPANY BUILDING ACCESS
 # ============================================================
 
@@ -1155,21 +1337,67 @@ def add_pm_company_unit_access(
 @router.get(
     "/pm-companies/{company_id}/units",
     summary="List unit access for a property management company",
-    description="[Organization Access] List all units a property management company has access to",
+    description="[Organization Access] List all units a property management company has access to (includes both direct unit access and units from buildings they have access to)",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_pm_company_unit_access(company_id: str):
-    """List all units a property management company has access to."""
+    """
+    List all units a property management company has access to.
+    Includes:
+    - Direct unit access (from pm_company_unit_access table)
+    - Units from buildings they have access to (from pm_company_building_access table)
+    """
     client = get_supabase_client()
     
-    result = (
+    unit_ids = set()
+    unit_access_list = []
+    
+    # 1. Get direct unit access
+    direct_result = (
         client.table("pm_company_unit_access")
         .select("unit_id")
         .eq("pm_company_id", company_id)
         .execute()
     )
     
-    return result.data or []
+    for entry in (direct_result.data or []):
+        unit_id = entry["unit_id"]
+        if unit_id not in unit_ids:
+            unit_ids.add(unit_id)
+            unit_access_list.append({
+                "unit_id": unit_id,
+                "access_type": "direct"
+            })
+    
+    # 2. Get building access and include all units from those buildings
+    building_result = (
+        client.table("pm_company_building_access")
+        .select("building_id")
+        .eq("pm_company_id", company_id)
+        .execute()
+    )
+    
+    building_ids = [entry["building_id"] for entry in (building_result.data or [])]
+    
+    if building_ids:
+        # Get all units in these buildings
+        units_result = (
+            client.table("units")
+            .select("id")
+            .in_("building_id", building_ids)
+            .execute()
+        )
+        
+        for unit in (units_result.data or []):
+            unit_id = unit["id"]
+            if unit_id not in unit_ids:
+                unit_ids.add(unit_id)
+                unit_access_list.append({
+                    "unit_id": unit_id,
+                    "access_type": "inherited_building"
+                })
+    
+    return unit_access_list
 
 
 @router.delete(
