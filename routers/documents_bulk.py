@@ -106,6 +106,30 @@ async def bulk_upload_documents(
             logger.info(f"Bulk upload: Mapped column '{col}' to 'document_url'")
             break
     
+    # Map permit_number alternatives (after normalization, "permit number" becomes "permit_number", "PERMITNUMBER" becomes "permitnumber")
+    permit_number_alternatives = ["permit_number", "permitnumber"]
+    for col in normalized_columns:
+        if col in permit_number_alternatives:
+            column_mapping[col] = "permit_number"
+            logger.info(f"Bulk upload: Mapped column '{col}' to 'permit_number'")
+            break
+    
+    # Map permit_type alternatives (after normalization, "permit type" becomes "permit_type", "PERMITTYPE" becomes "permittype")
+    permit_type_alternatives = ["permit_type", "permittype"]
+    for col in normalized_columns:
+        if col in permit_type_alternatives:
+            column_mapping[col] = "permit_type"
+            logger.info(f"Bulk upload: Mapped column '{col}' to 'permit_type'")
+            break
+    
+    # Map tmk alternatives (after normalization, "TMK" becomes "tmk")
+    tmk_alternatives = ["tmk"]
+    for col in normalized_columns:
+        if col in tmk_alternatives:
+            column_mapping[col] = "tmk"
+            logger.info(f"Bulk upload: Mapped column '{col}' to 'tmk'")
+            break
+    
     # Note: We don't map title/project_name/description to filename here
     # Instead, we check for them in priority order when reading each row
     
