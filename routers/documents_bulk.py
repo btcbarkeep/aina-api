@@ -361,14 +361,23 @@ async def bulk_upload_documents(
             except Exception:
                 return None
         
-        # Get document_type for title generation
+        # Get document_type for title generation (required)
         document_type = clean_value(row.get("document_type"))
         if not document_type:
             errors.append(f"Row {row_num}: document_type is required for title generation")
             continue
         
-        # Generate title: "County Archive" + document_type
-        title = f"County Archive {document_type}".strip()
+        # Get permit_type and permit_number for title generation
+        permit_type = clean_value(row.get("permit_type"))
+        permit_number = clean_value(row.get("permit_number"))
+        
+        # Generate title based on available data:
+        # If permit_type and permit_number exist: "County Archive" + PermitType + Permit Number
+        # Otherwise: "County Archive" + DocumentType
+        if permit_type and permit_number:
+            title = f"County Archive {permit_type} {permit_number}".strip()
+        else:
+            title = f"County Archive {document_type}".strip()
         
         # Get description from project_name or description columns (in that order)
         description = None
