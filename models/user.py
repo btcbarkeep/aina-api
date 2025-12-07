@@ -17,6 +17,8 @@ class UserMetadata(BaseModel):
     role: Optional[str] = "aoao"
     full_name: Optional[str] = None
     contractor_id: Optional[UUID] = None
+    aoao_organization_id: Optional[UUID] = None
+    pm_company_id: Optional[UUID] = None
     organization_name: Optional[str] = None
     email_verified: Optional[bool] = False
 
@@ -35,6 +37,8 @@ class UserBase(BaseModel):
     role: Optional[str] = None
     full_name: Optional[str] = None
     contractor_id: Optional[UUID] = None
+    aoao_organization_id: Optional[UUID] = None
+    pm_company_id: Optional[UUID] = None
     organization_name: Optional[str] = None
     email_verified: Optional[bool] = False
 
@@ -54,6 +58,8 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = "aoao"
     contractor_id: Optional[UUID] = None
+    aoao_organization_id: Optional[UUID] = None
+    pm_company_id: Optional[UUID] = None
     organization_name: Optional[str] = None
     phone: Optional[str] = None
 
@@ -65,5 +71,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     contractor_id: Optional[UUID] = None
+    aoao_organization_id: Optional[UUID] = None
+    pm_company_id: Optional[UUID] = None
     organization_name: Optional[str] = None
     phone: Optional[str] = None
