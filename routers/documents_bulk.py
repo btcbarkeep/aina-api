@@ -170,21 +170,13 @@ async def bulk_upload_documents(
             raise HTTPException(400, f"Error validating building_id parameter: {e}")
     
     # Determine required columns based on whether building_id is provided
-    # title will be generated from "County Archive" + document_type
+    # title will be generated from permit_type/permit_number or document_type (document_type is optional)
     # description can come from "project_name" or "description" columns
-    required_columns = {"document_url", "document_type"}
+    required_columns = {"document_url"}
     if not global_building_id:
         required_columns.add("building_id")
     
-    # Check if document_type column exists (needed for title generation)
-    if "document_type" not in df.columns:
-        found_columns = sorted(list(df.columns))
-        raise HTTPException(
-            400, 
-            f"Missing required column: document_type (or 'Document Type', 'DocumentType'). "
-            f"Found columns in spreadsheet: {', '.join(found_columns)}"
-        )
-    
+    # document_type is optional - title can be generated from permit_type/permit_number or document_type
     missing = required_columns - set(df.columns)
     if missing:
         # Provide helpful error message with accepted alternatives and show found columns
@@ -361,23 +353,30 @@ async def bulk_upload_documents(
             except Exception:
                 return None
         
-        # Get document_type for title generation (required)
-        document_type = clean_value(row.get("document_type"))
-        if not document_type:
-            errors.append(f"Row {row_num}: document_type is required for title generation")
-            continue
-        
-        # Get permit_type and permit_number for title generation
+        # Get permit_type and permit_number for title generation (preferred)
         permit_type = clean_value(row.get("permit_type"))
         permit_number = clean_value(row.get("permit_number"))
         
+        # Get document_type as fallback for title generation (optional)
+        document_type = clean_value(row.get("document_type"))
+        
         # Generate title based on available data:
-        # If permit_type and permit_number exist: "County Archive" + PermitType + Permit Number
-        # Otherwise: "County Archive" + DocumentType
+        # Priority 1: "County Archive - {permit_type} - {permit_number}" (if both exist)
+        # Priority 2: "County Archive - {permit_type}" (if only permit_type exists)
+        # Priority 3: "County Archive - {permit_number}" (if only permit_number exists)
+        # Priority 4: "County Archive - {document_type}" (if document_type exists)
+        # Priority 5: "County Archive" (fallback if nothing else available)
         if permit_type and permit_number:
-            title = f"County Archive {permit_type} {permit_number}".strip()
+            title = f"County Archive - {permit_type} - {permit_number}".strip()
+        elif permit_type:
+            title = f"County Archive - {permit_type}".strip()
+        elif permit_number:
+            title = f"County Archive - {permit_number}".strip()
+        elif document_type:
+            title = f"County Archive - {document_type}".strip()
         else:
-            title = f"County Archive {document_type}".strip()
+            # Fallback if no permit or document type available
+            title = "County Archive"
         
         # Get description from project_name or description columns (in that order)
         description = None
@@ -391,39 +390,46 @@ async def bulk_upload_documents(
         
         document_url = clean_value(row.get("document_url"))
         
-        # Generate filename from URL or use fallback (still needed for database)
+        # Generate filename from title (for database compatibility, but can be blank)
+        # Use the title we just generated and sanitize it for filename
         filename = None
-        if document_url:
-            try:
-                parsed_url = urlparse(document_url)
-                # Try to get filename from URL path
-                path = unquote(parsed_url.path)
-                if path and '/' in path:
-                    filename = path.split('/')[-1]
-                    # Remove query parameters if any
-                    if '?' in filename:
-                        filename = filename.split('?')[0]
-                    # Clean up the filename
-                    if filename:
-                        filename = filename.strip()
-                # If no filename in path, try to get from query params (common in some systems)
-                if not filename or filename == '':
-                    query_params = parse_qs(parsed_url.query)
-                    # Check common filename parameters
-                    for param in ['f', 'file', 'filename', 'name']:
-                        if param in query_params and query_params[param]:
-                            filename = query_params[param][0].strip()
-                            break
-            except Exception as e:
-                logger.warning(f"Row {row_num}: Error extracting filename from URL: {e}")
+        if title and title != "County Archive":
+            # Generate a safe filename from title
+            safe_title = re.sub(r'[^A-Za-z0-9._-]', '_', title)[:100]
+            filename = f"{safe_title}.pdf"
+        else:
+            # If no meaningful title, try to extract from URL
+            if document_url:
+                try:
+                    parsed_url = urlparse(document_url)
+                    # Try to get filename from URL path
+                    path = unquote(parsed_url.path)
+                    if path and '/' in path:
+                        filename = path.split('/')[-1]
+                        # Remove query parameters if any
+                        if '?' in filename:
+                            filename = filename.split('?')[0]
+                        # Clean up the filename
+                        if filename:
+                            filename = filename.strip()
+                    # If no filename in path, try to get from query params
+                    if not filename or filename == '':
+                        query_params = parse_qs(parsed_url.query)
+                        # Check common filename parameters
+                        for param in ['f', 'file', 'filename', 'name']:
+                            if param in query_params and query_params[param]:
+                                filename = query_params[param][0].strip()
+                                break
+                except Exception as e:
+                    logger.warning(f"Row {row_num}: Error extracting filename from URL: {e}")
         
-        # Final fallback for filename
+        # filename can be None/blank - database should allow it or we'll generate a minimal one
         if not filename:
-            filename = "bulk_upload_document.pdf"
+            filename = "document.pdf"  # Minimal fallback
         
         doc_data = {
             "id": str(uuid.uuid4()),
-            "title": title,  # Generated from "County Archive" + document_type
+            "title": title,  # Generated from "County Archive - {permit_type} - {permit_number}" or fallback
             "filename": filename,  # Extracted from URL or fallback
             "document_url": document_url,
             "building_id": building_id_str,  # Always set since we validated it exists
