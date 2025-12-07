@@ -190,6 +190,16 @@ def start_trial(
             trial_ends_at = datetime.fromisoformat(existing.get("trial_ends_at").replace('Z', '+00:00'))
             if is_trial_active(trial_ends_at):
                 raise HTTPException(400, f"User already has an active trial for role '{role}'")
+        
+        # Prevent multiple self-service trials (even after expiration)
+        # Users who have already used a trial cannot start another one via self-service
+        # Admins can still grant trials via the admin endpoint
+        if existing.get("is_trial") or existing.get("trial_started_at"):
+            raise HTTPException(
+                400,
+                f"User has already used a free trial for role '{role}'. "
+                f"Please contact an admin if you need another trial."
+            )
     
     # Start trial
     now = datetime.now(timezone.utc)
