@@ -643,3 +643,187 @@ def start_pm_company_trial(
         logger.error(f"Error granting trial to PM company {company_id}: {e}")
         raise HTTPException(500, f"Failed to grant trial: {str(e)}")
 
+
+# ============================================================
+# LIST ALL SUBSCRIPTIONS (Admin Only)
+# ============================================================
+
+@router.get("/all")
+def list_all_subscriptions(
+    subscription_tier: Optional[str] = Query(None, description="Filter by subscription tier (free, paid)"),
+    subscription_status: Optional[str] = Query(None, description="Filter by subscription status (active, canceled, past_due, trialing, etc.)"),
+    subscription_type: Optional[str] = Query(None, description="Filter by subscription type (user, contractor, aoao_organization, pm_company)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    List all subscriptions across all types (users, contractors, AOAO organizations, PM companies).
+    
+    **Admin Only:** Only admins and super_admins can view all subscriptions.
+    
+    Returns a comprehensive list of all subscriptions with their details.
+    """
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admins can view all subscriptions")
+    
+    client = get_supabase_client()
+    all_subscriptions = []
+    
+    try:
+        # 1. Get all user subscriptions
+        user_subscriptions_result = (
+            client.table("user_subscriptions")
+            .select("*")
+            .execute()
+        )
+        
+        for sub in (user_subscriptions_result.data or []):
+            # Get user details
+            try:
+                user_resp = client.auth.admin.get_user_by_id(sub["user_id"])
+                user_email = user_resp.user.email if user_resp.user else None
+                user_metadata = user_resp.user.user_metadata or {} if user_resp.user else {}
+                user_name = user_metadata.get("full_name") or user_email
+            except:
+                user_email = None
+                user_name = f"User {sub['user_id']}"
+            
+            subscription_entry = {
+                "subscription_type": "user",
+                "id": sub["id"],
+                "user_id": sub["user_id"],
+                "user_email": user_email,
+                "user_name": user_name,
+                "role": sub.get("role"),
+                "subscription_tier": sub.get("subscription_tier"),
+                "subscription_status": sub.get("subscription_status"),
+                "stripe_customer_id": sub.get("stripe_customer_id"),
+                "stripe_subscription_id": sub.get("stripe_subscription_id"),
+                "is_trial": sub.get("is_trial", False),
+                "trial_started_at": sub.get("trial_started_at"),
+                "trial_ends_at": sub.get("trial_ends_at"),
+                "created_at": sub.get("created_at"),
+                "updated_at": sub.get("updated_at"),
+            }
+            
+            # Apply filters
+            if subscription_tier and subscription_entry["subscription_tier"] != subscription_tier:
+                continue
+            if subscription_status and subscription_entry["subscription_status"] != subscription_status:
+                continue
+            if subscription_type and subscription_entry["subscription_type"] != subscription_type:
+                continue
+            
+            all_subscriptions.append(subscription_entry)
+        
+        # 2. Get all contractor subscriptions
+        contractors_result = (
+            client.table("contractors")
+            .select("id, company_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, is_trial, trial_started_at, trial_ends_at, created_at, updated_at")
+            .execute()
+        )
+        
+        for contractor in (contractors_result.data or []):
+            subscription_entry = {
+                "subscription_type": "contractor",
+                "id": contractor["id"],
+                "company_name": contractor.get("company_name"),
+                "subscription_tier": contractor.get("subscription_tier"),
+                "subscription_status": contractor.get("subscription_status"),
+                "stripe_customer_id": contractor.get("stripe_customer_id"),
+                "stripe_subscription_id": contractor.get("stripe_subscription_id"),
+                "is_trial": contractor.get("is_trial", False),
+                "trial_started_at": contractor.get("trial_started_at"),
+                "trial_ends_at": contractor.get("trial_ends_at"),
+                "created_at": contractor.get("created_at"),
+                "updated_at": contractor.get("updated_at"),
+            }
+            
+            # Apply filters
+            if subscription_tier and subscription_entry["subscription_tier"] != subscription_tier:
+                continue
+            if subscription_status and subscription_entry["subscription_status"] != subscription_status:
+                continue
+            if subscription_type and subscription_entry["subscription_type"] != subscription_type:
+                continue
+            
+            all_subscriptions.append(subscription_entry)
+        
+        # 3. Get all AOAO organization subscriptions
+        aoao_orgs_result = (
+            client.table("aoao_organizations")
+            .select("id, organization_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, is_trial, trial_started_at, trial_ends_at, created_at, updated_at")
+            .execute()
+        )
+        
+        for org in (aoao_orgs_result.data or []):
+            subscription_entry = {
+                "subscription_type": "aoao_organization",
+                "id": org["id"],
+                "organization_name": org.get("organization_name"),
+                "subscription_tier": org.get("subscription_tier"),
+                "subscription_status": org.get("subscription_status"),
+                "stripe_customer_id": org.get("stripe_customer_id"),
+                "stripe_subscription_id": org.get("stripe_subscription_id"),
+                "is_trial": org.get("is_trial", False),
+                "trial_started_at": org.get("trial_started_at"),
+                "trial_ends_at": org.get("trial_ends_at"),
+                "created_at": org.get("created_at"),
+                "updated_at": org.get("updated_at"),
+            }
+            
+            # Apply filters
+            if subscription_tier and subscription_entry["subscription_tier"] != subscription_tier:
+                continue
+            if subscription_status and subscription_entry["subscription_status"] != subscription_status:
+                continue
+            if subscription_type and subscription_entry["subscription_type"] != subscription_type:
+                continue
+            
+            all_subscriptions.append(subscription_entry)
+        
+        # 4. Get all PM company subscriptions
+        pm_companies_result = (
+            client.table("property_management_companies")
+            .select("id, company_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, is_trial, trial_started_at, trial_ends_at, created_at, updated_at")
+            .execute()
+        )
+        
+        for company in (pm_companies_result.data or []):
+            subscription_entry = {
+                "subscription_type": "pm_company",
+                "id": company["id"],
+                "company_name": company.get("company_name"),
+                "subscription_tier": company.get("subscription_tier"),
+                "subscription_status": company.get("subscription_status"),
+                "stripe_customer_id": company.get("stripe_customer_id"),
+                "stripe_subscription_id": company.get("stripe_subscription_id"),
+                "is_trial": company.get("is_trial", False),
+                "trial_started_at": company.get("trial_started_at"),
+                "trial_ends_at": company.get("trial_ends_at"),
+                "created_at": company.get("created_at"),
+                "updated_at": company.get("updated_at"),
+            }
+            
+            # Apply filters
+            if subscription_tier and subscription_entry["subscription_tier"] != subscription_tier:
+                continue
+            if subscription_status and subscription_entry["subscription_status"] != subscription_status:
+                continue
+            if subscription_type and subscription_entry["subscription_type"] != subscription_type:
+                continue
+            
+            all_subscriptions.append(subscription_entry)
+        
+        # Sort by created_at (newest first)
+        all_subscriptions.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+        
+        return {
+            "success": True,
+            "total": len(all_subscriptions),
+            "subscriptions": all_subscriptions
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing all subscriptions: {e}")
+        raise HTTPException(500, f"Failed to list subscriptions: {str(e)}")
+
