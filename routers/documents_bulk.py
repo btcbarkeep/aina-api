@@ -4,6 +4,7 @@ import uuid
 import tempfile
 import re
 import pandas as pd
+import numpy as np
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from typing import Optional
 
@@ -178,7 +179,24 @@ async def bulk_upload_documents(
     errors = []
     for idx, row in df.iterrows():
         row_num = idx + 2  # +2 because Excel/CSV is 1-indexed and has header
-        row = row.to_dict()
+        # Convert row to dict and handle pandas types
+        row_dict = {}
+        for col in row.index:
+            value = row[col]
+            # Convert pandas types immediately
+            if pd.isna(value):
+                row_dict[col] = None
+            elif isinstance(value, (np.integer, np.int64, np.int32)):
+                row_dict[col] = int(value)
+            elif isinstance(value, (np.floating, np.float64, np.float32)):
+                row_dict[col] = float(value)
+            elif isinstance(value, np.bool_):
+                row_dict[col] = bool(value)
+            elif isinstance(value, (pd.Timestamp, pd.NaTType)):
+                row_dict[col] = None
+            else:
+                row_dict[col] = value
+        row = row_dict
         
         # Use global building_id if provided, otherwise use row's building_id
         row_building_id = row.get("building_id")
@@ -277,36 +295,79 @@ async def bulk_upload_documents(
             errors.append(f"Row {row_num}: Error validating public documents category: {e}")
             continue
         
+        # Helper function to convert pandas types to Python native types
+        def clean_value(value):
+            """Convert pandas NaN/NaT to None, and ensure native Python types."""
+            # Handle None and pandas NaN/NaT
+            if value is None or pd.isna(value):
+                return None
+            
+            # Handle numpy types
+            if isinstance(value, (np.integer, np.int64, np.int32)):
+                return int(value)
+            if isinstance(value, (np.floating, np.float64, np.float32)):
+                return float(value)
+            if isinstance(value, np.bool_):
+                return bool(value)
+            
+            # Handle pandas timestamp types
+            if isinstance(value, (pd.Timestamp, pd.NaTType)):
+                return None
+            
+            # Handle strings - strip and return None if empty
+            if isinstance(value, str):
+                cleaned = value.strip()
+                return cleaned if cleaned else None
+            
+            # For any other type, convert to string
+            try:
+                str_value = str(value).strip()
+                return str_value if str_value else None
+            except Exception:
+                return None
+        
         doc_data = {
             "id": str(uuid.uuid4()),
-            "title": row.get("title"),
-            "document_url": row.get("document_url"),
+            "title": clean_value(row.get("title")),
+            "document_url": clean_value(row.get("document_url")),
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
             "event_id": str(event_id) if event_id else None,
             "category_id": PUBLIC_DOCUMENTS_CATEGORY_ID,  # All bulk uploads use public_documents category
-            "permit_number": row.get("permit_number"),
-            "permit_type": row.get("permit_type"),
-            "folder": row.get("folder"),
-            "tmk": row.get("tmk"),
-            "description": row.get("description"),
+            "permit_number": clean_value(row.get("permit_number")),
+            "permit_type": clean_value(row.get("permit_type")),
+            "folder": clean_value(row.get("folder")),
+            "tmk": clean_value(row.get("tmk")),
+            "description": clean_value(row.get("description")),
             "uploaded_by": str(current_user.id),
         }
 
         sanitized = sanitize(doc_data)
+        
+        # Remove any None values that might cause issues, but keep empty strings as None
+        # PostgREST doesn't like certain None values in some contexts
+        final_data = {k: v for k, v in sanitized.items() if v is not None or k in ["unit_id", "event_id"]}
+        
+        # Log the data being sent for debugging (first few rows only)
+        if row_num <= 5:
+            logger.info(f"Bulk upload row {row_num} data: {final_data}")
 
         try:
-            res = client.table("documents").insert(sanitized).execute()
+            res = client.table("documents").insert(final_data).execute()
             if res.data:
                 created_docs.append(res.data[0])
             else:
                 errors.append(f"Row {row_num}: Insert returned no data")
         except Exception as e:
             error_msg = str(e)
+            # Log the actual data that failed for debugging
+            logger.error(f"Bulk upload error on row {row_num}: {e}. Data: {final_data}")
             if "foreign key" in error_msg.lower() or "violates foreign key" in error_msg.lower():
                 errors.append(f"Row {row_num}: Invalid reference (building_id, unit_id, or event_id)")
             elif "duplicate" in error_msg.lower():
                 errors.append(f"Row {row_num}: Duplicate entry")
+            elif "empty or invalid json" in error_msg.lower() or "pgrst102" in error_msg.lower():
+                errors.append(f"Row {row_num}: Invalid data format - check for empty or malformed values")
             else:
                 errors.append(f"Row {row_num}: Insert failed: {error_msg}")
             logger.warning(f"Bulk upload error on row {row_num}: {e}")
