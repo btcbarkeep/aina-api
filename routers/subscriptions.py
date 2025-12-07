@@ -18,7 +18,7 @@ from core.role_subscriptions import (
     is_trial_active
 )
 from core.stripe_helpers import verify_contractor_subscription
-from models.subscription import UserSubscriptionRead, UserSubscriptionCreate, UserSubscriptionUpdate
+from models.subscription import UserSubscriptionRead
 from models.enums import SubscriptionTier, SubscriptionStatus
 
 router = APIRouter(
@@ -27,32 +27,20 @@ router = APIRouter(
 )
 
 
-@router.get("/me", response_model=List[UserSubscriptionRead])
-def get_my_subscriptions(
-    role: Optional[str] = Query(None, description="Filter by role"),
+@router.get("/me", response_model=UserSubscriptionRead)
+def get_my_subscription(
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    Get all subscriptions for the current user.
+    Get subscription for the current user.
     
-    Optionally filter by role.
+    Since users have a single role, this returns their subscription for that role.
     """
-    subscriptions = get_user_subscriptions(current_user.auth_user_id)
+    role = current_user.role
     
-    if role:
-        subscriptions = [s for s in subscriptions if s.get("role") == role]
+    if not role:
+        raise HTTPException(400, "User does not have a role assigned")
     
-    return subscriptions
-
-
-@router.get("/me/{role}", response_model=UserSubscriptionRead)
-def get_my_subscription_by_role(
-    role: str,
-    current_user: CurrentUser = Depends(get_current_user)
-):
-    """
-    Get subscription for the current user's specific role.
-    """
     subscription = get_user_subscription(current_user.auth_user_id, role)
     
     if not subscription:
@@ -61,19 +49,23 @@ def get_my_subscription_by_role(
     return subscription
 
 
-@router.post("/me/{role}/sync", response_model=UserSubscriptionRead)
+@router.post("/me/sync", response_model=UserSubscriptionRead)
 def sync_my_subscription(
-    role: str,
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    Manually sync subscription status from Stripe for the current user's role.
+    Manually sync subscription status from Stripe for the current user.
     
-    This endpoint:
+    Automatically uses the current user's role. This endpoint:
     1. Verifies the subscription status with Stripe
     2. Updates the user's subscription record
     3. Returns the updated subscription data
     """
+    role = current_user.role
+    
+    if not role:
+        raise HTTPException(400, "User does not have a role assigned")
+    
     subscription = get_user_subscription(current_user.auth_user_id, role)
     
     if not subscription:
@@ -85,7 +77,7 @@ def sync_my_subscription(
     if not stripe_customer_id and not stripe_subscription_id:
         raise HTTPException(
             400,
-            f"Subscription for role '{role}' does not have a Stripe customer ID or subscription ID. Cannot sync."
+            f"Subscription does not have a Stripe customer ID or subscription ID. Cannot sync."
         )
     
     # Verify subscription with Stripe
