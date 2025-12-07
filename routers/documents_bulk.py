@@ -390,23 +390,19 @@ async def bulk_upload_documents(
         
         document_url = clean_value(row.get("document_url"))
         
-        # Generate a unique filename for database constraint (NOT NULL required)
-        # Since bulk uploads use document_url (external URLs), not S3 uploads,
-        # this filename is just metadata and won't cause S3 conflicts
-        # Use document UUID to ensure uniqueness
+        # Generate document UUID
         doc_uuid = str(uuid.uuid4())
-        # Generate a safe filename from title if available, otherwise use UUID
-        if title and title != "County Archive":
-            safe_title = re.sub(r'[^A-Za-z0-9._-]', '_', title)[:50]  # Limit length
-            filename = f"{safe_title}_{doc_uuid[:8]}.pdf"
-        else:
-            # Fallback: use UUID-based filename
-            filename = f"document_{doc_uuid[:8]}.pdf"
+        
+        # filename is optional for bulk uploads (they use document_url, not S3)
+        # Leave it blank to avoid any potential conflicts
+        # After running the migration to make filename nullable, this will work
+        filename = None
         
         doc_data = {
-            "id": doc_uuid,  # Use the same UUID generated above
+            "id": doc_uuid,
             "title": title,  # Generated from "County Archive - {permit_type} - {permit_number}" or fallback
-            "filename": filename,  # Unique filename generated from title + UUID (satisfies NOT NULL constraint, won't cause S3 conflicts)
+            # filename is intentionally left blank for bulk uploads (they use document_url, not S3)
+            "document_url": document_url,
             "document_url": document_url,
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
@@ -426,8 +422,8 @@ async def bulk_upload_documents(
         
         # Remove any None values that might cause issues, but keep empty strings as None
         # PostgREST doesn't like certain None values in some contexts
-        # Keep optional fields that can be None: unit_id, event_id, source
-        final_data = {k: v for k, v in sanitized.items() if v is not None or k in ["unit_id", "event_id", "source"]}
+        # Keep optional fields that can be None: unit_id, event_id, source, filename
+        final_data = {k: v for k, v in sanitized.items() if v is not None or k in ["unit_id", "event_id", "source", "filename"]}
         
         # Log the data being sent for debugging (first few rows only)
         if row_num <= 5:
