@@ -18,9 +18,15 @@ The document download endpoint now supports a hybrid access control model that a
 Add these to your environment (Render, `.env`, etc.):
 
 ```bash
-STRIPE_SECRET_KEY=sk_test_...  # Your Stripe secret key
-STRIPE_WEBHOOK_SECRET=whsec_...  # Optional: for webhook verification
+STRIPE_SECRET_KEY=sk_test_...  # Your Stripe secret key (required for all Stripe features)
+STRIPE_WEBHOOK_SECRET=whsec_...  # Required for webhook verification (subscriptions, payments)
 ```
+
+**Note:** `STRIPE_SECRET_KEY` is required for:
+- Document payment verification
+- Subscription management
+- Revenue tracking and financials
+- Webhook processing
 
 ### 2. Install Dependencies
 
@@ -29,6 +35,29 @@ The Stripe SDK has been added to `requirements.txt`. Install with:
 ```bash
 pip install -r requirements.txt
 ```
+
+### 3. Stripe Webhook Configuration
+
+For subscription management and payment tracking, configure Stripe webhooks:
+
+1. **In Stripe Dashboard:**
+   - Go to Developers → Webhooks
+   - Add endpoint: `https://your-api-domain.com/stripe-webhooks/`
+   - Select events to listen for:
+     - `customer.subscription.created`
+     - `customer.subscription.updated`
+     - `customer.subscription.deleted`
+     - `invoice.payment_succeeded`
+     - `invoice.payment_failed`
+     - `checkout.session.completed` (for document payments)
+
+2. **Copy the webhook signing secret:**
+   - After creating the webhook, copy the "Signing secret"
+   - Add it to your environment as `STRIPE_WEBHOOK_SECRET`
+
+3. **Test the webhook:**
+   - Use Stripe CLI: `stripe listen --forward-to localhost:8000/stripe-webhooks/`
+   - Or use Stripe Dashboard → Send test webhook
 
 ## Usage
 
@@ -187,23 +216,181 @@ curl -H "Authorization: Bearer {jwt_token}" \
 }
 ```
 
+## Subscription Management
+
+### Overview
+
+Stripe is used for managing subscriptions for:
+- **Users** (individual subscriptions)
+- **Contractors** (business subscriptions)
+- **AOAO Organizations** (business subscriptions)
+- **Property Management Companies** (business subscriptions)
+
+### Subscription Fields
+
+Each subscription-enabled entity stores:
+- `stripe_customer_id` - Stripe Customer ID
+- `stripe_subscription_id` - Stripe Subscription ID
+- `subscription_tier` - "free" or "paid"
+- `subscription_status` - "active", "trialing", "canceled", "past_due", etc.
+
+### Syncing Subscriptions
+
+Use the sync endpoints to update subscription status from Stripe:
+
+**Contractor:**
+```bash
+POST /contractors/{contractor_id}/sync-subscription
+```
+
+**AOAO Organization:**
+```bash
+POST /aoao-organizations/{organization_id}/sync-subscription
+```
+
+**PM Company:**
+```bash
+POST /pm-companies/{company_id}/sync-subscription
+```
+
+**User:**
+```bash
+POST /subscriptions/me/sync
+```
+
+These endpoints fetch the latest subscription status from Stripe and update the database.
+
+### Webhook Processing
+
+The `/stripe-webhooks/` endpoint automatically processes:
+- Subscription creation/updates/deletions
+- Payment success/failure events
+- Updates subscription status in database automatically
+
+## Financials & Revenue Tracking
+
+### Overview
+
+The financials endpoints provide revenue tracking and subscription analytics (Super Admin only).
+
+### Revenue Summary
+
+**Endpoint:** `GET /financials/revenue`
+
+Returns:
+- Subscription counts by type (users, contractors, AOAO, PM companies)
+- Active paid subscriptions count
+- Trial subscriptions count
+- **Stripe revenue data** (if `STRIPE_SECRET_KEY` is configured):
+  - Total revenue from paid invoices in the period
+  - Recurring subscription revenue
+  - Currency
+  - Invoice count
+
+**Example Request:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://api.ainaprotocol.com/financials/revenue?start_date=2025-01-01T00:00:00Z&end_date=2025-12-31T23:59:59Z"
+```
+
+**Example Response:**
+```json
+{
+  "period": {
+    "start_date": "2025-01-01T00:00:00+00:00",
+    "end_date": "2025-12-31T23:59:59+00:00"
+  },
+  "subscriptions": {
+    "user_subscriptions": {"total": 10, "active_paid": 5, "trials": 2},
+    "contractors": {"total": 5, "active_paid": 3, "trials": 1},
+    "aoao_organizations": {"total": 3, "active_paid": 2, "trials": 0},
+    "pm_companies": {"total": 4, "active_paid": 2, "trials": 1}
+  },
+  "summary": {
+    "total_subscriptions": 22,
+    "total_active_paid": 12,
+    "total_trials": 4
+  },
+  "stripe": {
+    "total_revenue": 50000,
+    "total_revenue_decimal": 500.00,
+    "subscription_revenue": 45000,
+    "subscription_revenue_decimal": 450.00,
+    "currency": "usd",
+    "invoice_count": 5
+  }
+}
+```
+
+### Subscription Breakdown
+
+**Endpoint:** `GET /financials/subscriptions/breakdown`
+
+Returns detailed revenue information for each paid subscription:
+- Individual subscription revenue (amount, currency, billing interval)
+- Total monthly revenue (all subscriptions converted to monthly)
+- Total annual revenue (all subscriptions converted to annual)
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "total_subscriptions": 12,
+  "total_monthly_revenue": 120000,
+  "total_monthly_revenue_decimal": 1200.00,
+  "total_annual_revenue": 1440000,
+  "total_annual_revenue_decimal": 14400.00,
+  "subscriptions": [
+    {
+      "subscription_type": "contractor",
+      "subscription_id": "uuid",
+      "company_name": "ABC Contractors",
+      "subscription_tier": "paid",
+      "subscription_status": "active",
+      "stripe_subscription_id": "sub_...",
+      "revenue": {
+        "amount": 5000,
+        "amount_decimal": 50.00,
+        "currency": "usd",
+        "interval": "month",
+        "status": "active"
+      }
+    }
+  ]
+}
+```
+
+**Note:** If `STRIPE_SECRET_KEY` is not configured, revenue data will show an error message but subscription counts will still be available.
+
 ## Implementation Details
 
 ### Files Created/Modified
 
-1. **`core/stripe_helpers.py`** - Stripe payment verification functions
+1. **`core/stripe_helpers.py`** - Stripe integration functions
    - `verify_stripe_session()` - Verifies Checkout Session
    - `verify_stripe_payment_intent()` - Verifies Payment Intent
+   - `verify_contractor_subscription()` - Verifies subscription status
+   - `get_subscription_revenue()` - Gets revenue info for a subscription
+   - `get_total_revenue_for_period()` - Gets total revenue from Stripe for a period
 
-2. **`core/rate_limiter.py`** - Rate limiting functionality
+2. **`routers/stripe_webhooks.py`** - Webhook handler
+   - Processes subscription events
+   - Updates subscription status in database
+   - Handles payment events
+
+3. **`routers/financials.py`** - Financials endpoints (Super Admin only)
+   - `/financials/revenue` - Revenue summary with Stripe integration
+   - `/financials/subscriptions/breakdown` - Detailed subscription breakdown
+
+4. **`core/rate_limiter.py`** - Rate limiting functionality
    - `require_rate_limit()` - Enforces rate limits
    - `get_rate_limit_identifier()` - Gets unique identifier (IP or user ID)
 
-3. **`dependencies/auth.py`** - Added `get_optional_auth()` function
+5. **`dependencies/auth.py`** - Added `get_optional_auth()` function
    - Returns `CurrentUser` if token provided, `None` otherwise
    - Does not raise exceptions for missing tokens
 
-4. **`routers/uploads.py`** - Updated download endpoint
+6. **`routers/uploads.py`** - Updated download endpoint
    - Implements hybrid access control
    - Supports all three access methods
 
@@ -292,12 +479,33 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 - Ensure `STRIPE_SECRET_KEY` is set in environment variables
 - The endpoint will still work for free documents and authenticated users
+- Financials endpoints will return error messages but won't crash
 
 ### Payment verification fails
 
 - Check that session/payment intent status is "paid" and "complete"
 - Verify document ID is in session/payment intent metadata
 - Check Stripe dashboard for payment status
+
+### Subscription sync fails
+
+- Verify `stripe_customer_id` or `stripe_subscription_id` is set in database
+- Check Stripe dashboard to ensure subscription exists
+- Verify `STRIPE_SECRET_KEY` is correct and has proper permissions
+
+### Revenue data not showing
+
+- Ensure `STRIPE_SECRET_KEY` is configured
+- Check that subscriptions have valid `stripe_subscription_id` or `stripe_customer_id`
+- Verify Stripe API key has read access to subscriptions and invoices
+- Check server logs for Stripe API errors
+
+### Webhook not processing
+
+- Verify `STRIPE_WEBHOOK_SECRET` is set correctly
+- Check webhook endpoint URL is accessible
+- Verify webhook events are selected in Stripe Dashboard
+- Check server logs for webhook processing errors
 
 ### Rate limit issues
 
