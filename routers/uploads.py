@@ -142,8 +142,8 @@ def get_unit_building(unit_id: str | None):
 async def upload_document(
     file: UploadFile = File(...),
 
-    # Required filename
-    filename: str = Form(...),
+    # Required title (filename will be auto-generated)
+    title: str = Form(..., description="Document title (required)"),
 
     # New full compatibility
     building_id: str | None = Form(None),
@@ -164,7 +164,7 @@ async def upload_document(
     """
     Uploads a file to S3 AND creates a Supabase document record.
     Supports: building_id, event_id, unit_ids (array).
-    Requires: filename (custom filename for the uploaded file).
+    Requires: title (document title - filename will be auto-generated).
     """
 
     # Normalize values
@@ -297,10 +297,11 @@ async def upload_document(
     # -----------------------------------------------------
     s3, bucket, region = get_s3()
 
-    # Use the provided filename (required), sanitize it
-    if not filename or not filename.strip():
-        raise HTTPException(400, "filename is required and cannot be empty")
-    clean_filename = safe_filename(filename.strip())
+    # Generate filename from title (required for database)
+    if not title or not title.strip():
+        raise HTTPException(400, "title is required and cannot be empty")
+    # Sanitize title to create a safe filename
+    clean_filename = safe_filename(title.strip())[:100] + ".pdf"
 
     # Look up category name from document_categories table if category_id is provided
     safe_category = "general"  # default
@@ -422,7 +423,8 @@ async def upload_document(
         "event_id": event_id,
         "category_id": category_id,
         "subcategory_id": subcategory_id,
-        "filename": clean_filename,
+        "title": title.strip(),  # Use title as primary field
+        "filename": clean_filename,  # Auto-generated from title for database compatibility
         "s3_key": s3_key,
         "uploaded_by": current_user.id,
         "is_redacted": False,  # Manual redaction is handled via separate endpoint
@@ -532,7 +534,8 @@ async def upload_document(
     # -----------------------------------------------------
     return {
         "upload": {
-            "filename": clean_filename,
+            "title": title.strip(),
+            "filename": clean_filename,  # Auto-generated from title
             "s3_key": s3_key,
             "presigned_url": presigned_url,  # Valid for 1 day
             "uploaded_at": datetime.utcnow().isoformat(),
