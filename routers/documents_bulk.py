@@ -102,8 +102,8 @@ async def bulk_upload_documents(
             logger.info(f"Bulk upload: Mapped column '{col}' to 'title'")
             break
     
-    # Map document_url alternatives (after normalization, "document url" becomes "document_url", "document link" becomes "document_link")
-    document_url_alternatives = ["document_url", "document_link"]
+    # Map document_url alternatives (after normalization, "document url" becomes "document_url", "document link" becomes "document_link", "download link" becomes "download_link")
+    document_url_alternatives = ["document_url", "document_link", "download_link", "download_url"]
     for col in normalized_columns:
         if col in document_url_alternatives:
             column_mapping[col] = "document_url"
@@ -160,7 +160,7 @@ async def bulk_upload_documents(
             if col == "title":
                 missing_list.append("title (or 'Project Name')")
             elif col == "document_url":
-                missing_list.append("document_url (or 'document url', 'document link', 'document_link')")
+                missing_list.append("document_url (or 'document url', 'document link', 'document_link', 'download link', 'download_link', 'download url', 'download_url')")
             else:
                 missing_list.append(col)
         
