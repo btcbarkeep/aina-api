@@ -116,22 +116,7 @@ async def handle_stripe_subscription_webhook(
                 logger.warning(f"Missing subscription_id or customer_id in webhook event: {event_type}")
                 return {"status": "ignored", "reason": "missing_ids"}
             
-            # Find contractor by Stripe customer ID or subscription ID
             client = get_supabase_client()
-            contractor_res = (
-                client.table("contractors")
-                .select("id, company_name, stripe_customer_id, stripe_subscription_id")
-                .or_(f"stripe_customer_id.eq.{customer_id},stripe_subscription_id.eq.{subscription_id}")
-                .limit(1)
-                .execute()
-            )
-            
-            if not contractor_res.data:
-                logger.warning(f"No contractor found for Stripe customer {customer_id} or subscription {subscription_id}")
-                return {"status": "ignored", "reason": "contractor_not_found"}
-            
-            contractor = contractor_res.data[0]
-            contractor_id = contractor["id"]
             
             # Determine subscription tier and status
             if event_type == "customer.subscription.deleted":
@@ -145,14 +130,13 @@ async def handle_stripe_subscription_webhook(
                 )
                 
                 if error:
-                    logger.warning(f"Error verifying subscription for contractor {contractor_id}: {error}")
+                    logger.warning(f"Error verifying subscription for Stripe customer {customer_id}: {error}")
                     subscription_tier = "free"
                     subscription_status = status or "unknown"
                 else:
                     subscription_tier = "paid" if is_active else "free"
                     subscription_status = verified_status or status or "unknown"
             
-            # Update contractor
             update_data = {
                 "subscription_tier": subscription_tier,
                 "subscription_status": subscription_status,
@@ -160,32 +144,103 @@ async def handle_stripe_subscription_webhook(
                 "stripe_subscription_id": subscription_id
             }
             
-            try:
-                update_res = (
-                    client.table("contractors")
-                    .update(update_data)
-                    .eq("id", contractor_id)
-                    .execute()
-                )
+            # Check contractors
+            contractor_res = (
+                client.table("contractors")
+                .select("id, company_name, stripe_customer_id, stripe_subscription_id")
+                .or_(f"stripe_customer_id.eq.{customer_id},stripe_subscription_id.eq.{subscription_id}")
+                .limit(1)
+                .execute()
+            )
+            
+            if contractor_res.data:
+                contractor = contractor_res.data[0]
+                contractor_id = contractor["id"]
                 
-                if update_res.data:
-                    logger.info(
-                        f"Updated contractor {contractor_id} subscription: "
-                        f"tier={subscription_tier}, status={subscription_status}"
+                try:
+                    update_res = (
+                        client.table("contractors")
+                        .update(update_data)
+                        .eq("id", contractor_id)
+                        .execute()
                     )
-                    return {
-                        "status": "success",
-                        "contractor_id": contractor_id,
-                        "subscription_tier": subscription_tier,
-                        "subscription_status": subscription_status
-                    }
-                else:
-                    logger.error(f"Failed to update contractor {contractor_id} subscription")
-                    return {"status": "error", "reason": "update_failed"}
                     
-            except Exception as e:
-                logger.error(f"Error updating contractor {contractor_id} subscription: {e}")
-                raise HTTPException(500, f"Failed to update contractor subscription: {str(e)}")
+                    if update_res.data:
+                        logger.info(
+                            f"Updated contractor {contractor_id} subscription: "
+                            f"tier={subscription_tier}, status={subscription_status}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error updating contractor {contractor_id} subscription: {e}")
+            
+            # Check AOAO organizations
+            aoao_org_res = (
+                client.table("aoao_organizations")
+                .select("id, organization_name, stripe_customer_id, stripe_subscription_id")
+                .or_(f"stripe_customer_id.eq.{customer_id},stripe_subscription_id.eq.{subscription_id}")
+                .limit(1)
+                .execute()
+            )
+            
+            if aoao_org_res.data:
+                org = aoao_org_res.data[0]
+                org_id = org["id"]
+                
+                try:
+                    update_res = (
+                        client.table("aoao_organizations")
+                        .update(update_data)
+                        .eq("id", org_id)
+                        .execute()
+                    )
+                    
+                    if update_res.data:
+                        logger.info(
+                            f"Updated AOAO organization {org_id} subscription: "
+                            f"tier={subscription_tier}, status={subscription_status}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error updating AOAO organization {org_id} subscription: {e}")
+            
+            # Check PM companies
+            pm_company_res = (
+                client.table("property_management_companies")
+                .select("id, company_name, stripe_customer_id, stripe_subscription_id")
+                .or_(f"stripe_customer_id.eq.{customer_id},stripe_subscription_id.eq.{subscription_id}")
+                .limit(1)
+                .execute()
+            )
+            
+            if pm_company_res.data:
+                pm_company = pm_company_res.data[0]
+                pm_company_id = pm_company["id"]
+                
+                try:
+                    update_res = (
+                        client.table("property_management_companies")
+                        .update(update_data)
+                        .eq("id", pm_company_id)
+                        .execute()
+                    )
+                    
+                    if update_res.data:
+                        logger.info(
+                            f"Updated PM company {pm_company_id} subscription: "
+                            f"tier={subscription_tier}, status={subscription_status}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error updating PM company {pm_company_id} subscription: {e}")
+            
+            # Return success if any business entity was updated
+            if contractor_res.data or aoao_org_res.data or pm_company_res.data:
+                return {
+                    "status": "success",
+                    "subscription_tier": subscription_tier,
+                    "subscription_status": subscription_status
+                }
+            
+            # If no business entity found, log warning but continue to check user subscriptions
+            logger.warning(f"No business entity found for Stripe customer {customer_id} or subscription {subscription_id}")
             
             # Also check for user subscriptions
             user_subscription_res = (
