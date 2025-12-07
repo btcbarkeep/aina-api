@@ -65,14 +65,15 @@ POST /subscriptions/me/start-trial?trial_days=14
 - Automatically uses the authenticated user's role from their token
 - Creates a subscription record **specifically for this user** in the `user_subscriptions` table
 - **Does NOT affect other users** with the same role - each user has their own independent subscription
-- Default trial duration is 14 days (1-180 days allowed)
+- **Self-service limits:** Default trial duration is 14 days (configurable via `TRIAL_SELF_SERVICE_MAX_DAYS` environment variable)
+- Maximum trial days for self-service is **14 days by default** (admins can grant longer trials)
 
 **Important:** This is a per-user subscription, not a per-role subscription. Each user must start their own trial.
 
 ### Admin: Grant Free Trial to User
 
 ```bash
-POST /subscriptions/users/{user_id}/start-trial?trial_days=14&role=property_manager
+POST /subscriptions/users/{user_id}/start-trial?trial_days=30&role=property_manager
 ```
 
 **Admin-only endpoint to grant a free trial to a specific user.**
@@ -80,15 +81,35 @@ POST /subscriptions/users/{user_id}/start-trial?trial_days=14&role=property_mana
 - **Admin/Super Admin only** - requires admin authentication
 - If `role` is not provided, automatically fetches the user's role from their metadata
 - Creates a subscription record for the specified user
-- Default trial duration is 14 days (1-180 days allowed)
+- **Admin limits:** Default trial duration is 180 days (configurable via `TRIAL_ADMIN_MAX_DAYS` environment variable)
+- Maximum trial days for admin grants is **180 days by default** (higher than self-service limit)
 
 **Example:**
 ```bash
 # Grant 30-day trial to a user (auto-detects their role)
 POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial_days=30
 
-# Grant trial for a specific role
-POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial_days=30&role=property_manager
+# Grant 180-day trial for a specific role (admin can grant longer than self-service)
+POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial_days=180&role=property_manager
+```
+
+## Trial Limits Configuration
+
+Trial limits are configurable via environment variables:
+
+**Self-Service Limits (users starting their own trials):**
+- `TRIAL_SELF_SERVICE_MAX_DAYS` - Maximum days users can request (default: 14)
+- `TRIAL_SELF_SERVICE_MIN_DAYS` - Minimum days for self-service (default: 1)
+
+**Admin Limits (admins granting trials):**
+- `TRIAL_ADMIN_MAX_DAYS` - Maximum days admins can grant (default: 180)
+- `TRIAL_ADMIN_MIN_DAYS` - Minimum days for admin grants (default: 1)
+
+**Example configuration:**
+```bash
+# Allow users to request up to 7 days, admins can grant up to 90 days
+TRIAL_SELF_SERVICE_MAX_DAYS=7
+TRIAL_ADMIN_MAX_DAYS=90
 ```
 
 **Requirements:**
