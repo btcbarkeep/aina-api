@@ -38,30 +38,21 @@ Run the migration to create the table:
 
 ## API Endpoints
 
-### Get My Subscriptions
+### Get My Subscription
 
 ```bash
 GET /subscriptions/me
-GET /subscriptions/me?role=aoao
 ```
 
-Returns all subscriptions for the current user, optionally filtered by role.
-
-### Get My Subscription by Role
-
-```bash
-GET /subscriptions/me/{role}
-```
-
-Returns subscription for a specific role.
+Returns the subscription for the current user (automatically uses their role).
 
 ### Sync Subscription from Stripe
 
 ```bash
-POST /subscriptions/me/{role}/sync
+POST /subscriptions/me/sync
 ```
 
-Manually syncs subscription status from Stripe.
+Manually syncs subscription status from Stripe for the current user (automatically uses their role).
 
 ### Start Free Trial (Self-Service)
 
@@ -218,15 +209,16 @@ Response:
 ## Example: Syncing from Stripe
 
 ```bash
-# Sync subscription status from Stripe
-curl -X POST "https://api.ainaprotocol.com/subscriptions/me/aoao/sync" \
+# Sync subscription status from Stripe (automatically uses your role)
+curl -X POST "https://api.ainaprotocol.com/subscriptions/me/sync" \
   -H "Authorization: Bearer {token}"
 ```
 
 This will:
-1. Fetch current subscription status from Stripe
-2. Update the database record
-3. Return the updated subscription
+1. Automatically use your role from your authentication token
+2. Fetch current subscription status from Stripe
+3. Update the database record
+4. Return the updated subscription
 
 ## Integration with CurrentUser
 
