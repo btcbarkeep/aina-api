@@ -136,9 +136,15 @@ def start_trial(
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    Start a free trial for the current user's role.
+    Start a free trial for the CURRENT USER ONLY (per-user subscription).
     
-    Automatically uses the current user's role (from their authentication).
+    This creates a subscription record specifically for the authenticated user.
+    It does NOT affect other users with the same role.
+    
+    **How it works:**
+    - Automatically uses the current user's role (from their authentication token)
+    - Creates a subscription record in `user_subscriptions` table for THIS USER ONLY
+    - Each user has their own independent subscription
     
     **Requirements:**
     - Role must support trials (AOAO, property_manager, contractor, owner)
