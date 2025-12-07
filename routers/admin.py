@@ -1,6 +1,7 @@
 # routers/admin.py
 
 from typing import List, Optional
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
@@ -338,39 +339,63 @@ def update_user(
 
     validate_role_change(current_user, new_role, target_user_id=user_id)
     
-    # Validate organization IDs exist if being updated
+    # Helper function to validate UUID format and filter out placeholders
+    def is_valid_uuid(value: str) -> bool:
+        """Check if a string is a valid UUID format (not a placeholder like 'string')."""
+        if not value or value.lower() == "string":
+            return False
+        try:
+            uuid.UUID(str(value))
+            return True
+        except (ValueError, AttributeError, TypeError):
+            return False
+    
+    # Filter out placeholder values from organization IDs before validation
     if "contractor_id" in updates and updates["contractor_id"]:
-        contractor_check = (
-            client.table("contractors")
-            .select("id")
-            .eq("id", updates["contractor_id"])
-            .limit(1)
-            .execute()
-        )
-        if not contractor_check.data:
-            raise HTTPException(400, f"Contractor {updates['contractor_id']} does not exist")
+        if not is_valid_uuid(updates["contractor_id"]):
+            # Remove placeholder values like "string" from updates
+            updates.pop("contractor_id")
+        else:
+            contractor_id = updates["contractor_id"]
+            contractor_check = (
+                client.table("contractors")
+                .select("id")
+                .eq("id", contractor_id)
+                .limit(1)
+                .execute()
+            )
+            if not contractor_check.data:
+                raise HTTPException(400, f"Contractor {contractor_id} does not exist")
     
     if "aoao_organization_id" in updates and updates["aoao_organization_id"]:
-        org_check = (
-            client.table("aoao_organizations")
-            .select("id")
-            .eq("id", updates["aoao_organization_id"])
-            .limit(1)
-            .execute()
-        )
-        if not org_check.data:
-            raise HTTPException(400, f"AOAO organization {updates['aoao_organization_id']} does not exist")
+        if not is_valid_uuid(updates["aoao_organization_id"]):
+            # Remove placeholder values like "string" from updates
+            updates.pop("aoao_organization_id")
+        else:
+            aoao_id = updates["aoao_organization_id"]
+            org_check = (
+                client.table("aoao_organizations")
+                .select("id")
+                .eq("id", aoao_id)
+                .limit(1)
+                .execute()
+            )
+            if not org_check.data:
+                raise HTTPException(400, f"AOAO organization {aoao_id} does not exist")
     
     if "pm_company_id" in updates and updates["pm_company_id"]:
+        pm_id = updates["pm_company_id"]
+        if not is_valid_uuid(pm_id):
+            raise HTTPException(400, f"Invalid pm_company_id format: {pm_id}. Must be a valid UUID.")
         pm_check = (
             client.table("property_management_companies")
             .select("id")
-            .eq("id", updates["pm_company_id"])
+            .eq("id", pm_id)
             .limit(1)
             .execute()
         )
         if not pm_check.data:
-            raise HTTPException(400, f"Property management company {updates['pm_company_id']} does not exist")
+            raise HTTPException(400, f"Property management company {pm_id} does not exist")
 
     # Build merged metadata: start with current, then apply updates
     # Ensure we have a dict to work with (current_meta might be None)
