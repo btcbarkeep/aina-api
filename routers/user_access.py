@@ -39,6 +39,18 @@ class UserUnitAccessRead(BaseModel):
     unit_id: str
 
 
+class AOAOOrganizationBuildingAccessCreate(BaseModel):
+    building_id: str
+
+
+class PMCompanyBuildingAccessCreate(BaseModel):
+    building_id: str
+
+
+class PMCompanyUnitAccessCreate(BaseModel):
+    unit_id: str
+
+
 # ============================================================
 # Admin — List all building access
 # ============================================================
@@ -408,3 +420,393 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
 
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
+
+
+# ============================================================
+# AOAO ORGANIZATION BUILDING ACCESS
+# ============================================================
+
+@router.post(
+    "/aoao-organizations/{organization_id}/buildings",
+    summary="Grant building access to an AOAO organization",
+    description="All users linked to this organization will inherit building access",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def add_aoao_org_building_access(
+    organization_id: str,
+    payload: AOAOOrganizationBuildingAccessCreate
+):
+    """
+    Grant building access to an AOAO organization.
+    All users with aoao_organization_id matching this organization will inherit this access.
+    """
+    client = get_supabase_client()
+    
+    # Validate organization exists
+    org_result = (
+        client.table("aoao_organizations")
+        .select("id, organization_name")
+        .eq("id", organization_id)
+        .limit(1)
+        .execute()
+    )
+    if not org_result.data:
+        raise HTTPException(404, f"AOAO organization {organization_id} not found")
+    
+    # Validate building exists
+    building_result = (
+        client.table("buildings")
+        .select("id")
+        .eq("id", payload.building_id)
+        .limit(1)
+        .execute()
+    )
+    if not building_result.data:
+        raise HTTPException(404, f"Building {payload.building_id} not found")
+    
+    # Check for duplicate
+    existing = (
+        client.table("aoao_organization_building_access")
+        .select("id")
+        .eq("aoao_organization_id", organization_id)
+        .eq("building_id", payload.building_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(400, "Organization already has access to this building")
+    
+    try:
+        result = (
+            client.table("aoao_organization_building_access")
+            .insert({
+                "aoao_organization_id": organization_id,
+                "building_id": payload.building_id
+            }, returning="representation")
+            .execute()
+        )
+        
+        logger.info(f"Granted building {payload.building_id} access to AOAO organization {organization_id}")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to grant building access: {e}")
+
+
+@router.get(
+    "/aoao-organizations/{organization_id}/buildings",
+    summary="List building access for an AOAO organization",
+    dependencies=[Depends(requires_permission("user_access:read"))],
+)
+def list_aoao_org_building_access(organization_id: str):
+    """List all buildings an AOAO organization has access to."""
+    client = get_supabase_client()
+    
+    result = (
+        client.table("aoao_organization_building_access")
+        .select("building_id")
+        .eq("aoao_organization_id", organization_id)
+        .execute()
+    )
+    
+    return result.data or []
+
+
+@router.delete(
+    "/aoao-organizations/{organization_id}/buildings/{building_id}",
+    summary="Remove building access from an AOAO organization",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def delete_aoao_org_building_access(organization_id: str, building_id: str):
+    """Remove building access from an AOAO organization."""
+    client = get_supabase_client()
+    
+    # Check if record exists
+    check_result = (
+        client.table("aoao_organization_building_access")
+        .select("id")
+        .eq("aoao_organization_id", organization_id)
+        .eq("building_id", building_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not check_result.data:
+        raise HTTPException(404, "Access record not found")
+    
+    try:
+        (
+            client.table("aoao_organization_building_access")
+            .delete()
+            .eq("aoao_organization_id", organization_id)
+            .eq("building_id", building_id)
+            .execute()
+        )
+        
+        logger.info(f"Removed building {building_id} access from AOAO organization {organization_id}")
+        return {
+            "status": "deleted",
+            "organization_id": organization_id,
+            "building_id": building_id
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to remove building access: {e}")
+
+
+# ============================================================
+# PM COMPANY BUILDING ACCESS
+# ============================================================
+
+@router.post(
+    "/pm-companies/{company_id}/buildings",
+    summary="Grant building access to a property management company",
+    description="All users linked to this company will inherit building access",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def add_pm_company_building_access(
+    company_id: str,
+    payload: PMCompanyBuildingAccessCreate
+):
+    """
+    Grant building access to a property management company.
+    All users with pm_company_id matching this company will inherit this access.
+    """
+    client = get_supabase_client()
+    
+    # Validate company exists
+    company_result = (
+        client.table("property_management_companies")
+        .select("id, company_name")
+        .eq("id", company_id)
+        .limit(1)
+        .execute()
+    )
+    if not company_result.data:
+        raise HTTPException(404, f"Property management company {company_id} not found")
+    
+    # Validate building exists
+    building_result = (
+        client.table("buildings")
+        .select("id")
+        .eq("id", payload.building_id)
+        .limit(1)
+        .execute()
+    )
+    if not building_result.data:
+        raise HTTPException(404, f"Building {payload.building_id} not found")
+    
+    # Check for duplicate
+    existing = (
+        client.table("pm_company_building_access")
+        .select("id")
+        .eq("pm_company_id", company_id)
+        .eq("building_id", payload.building_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(400, "Company already has access to this building")
+    
+    try:
+        result = (
+            client.table("pm_company_building_access")
+            .insert({
+                "pm_company_id": company_id,
+                "building_id": payload.building_id
+            }, returning="representation")
+            .execute()
+        )
+        
+        logger.info(f"Granted building {payload.building_id} access to PM company {company_id}")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to grant building access: {e}")
+
+
+@router.get(
+    "/pm-companies/{company_id}/buildings",
+    summary="List building access for a property management company",
+    dependencies=[Depends(requires_permission("user_access:read"))],
+)
+def list_pm_company_building_access(company_id: str):
+    """List all buildings a property management company has access to."""
+    client = get_supabase_client()
+    
+    result = (
+        client.table("pm_company_building_access")
+        .select("building_id")
+        .eq("pm_company_id", company_id)
+        .execute()
+    )
+    
+    return result.data or []
+
+
+@router.delete(
+    "/pm-companies/{company_id}/buildings/{building_id}",
+    summary="Remove building access from a property management company",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def delete_pm_company_building_access(company_id: str, building_id: str):
+    """Remove building access from a property management company."""
+    client = get_supabase_client()
+    
+    # Check if record exists
+    check_result = (
+        client.table("pm_company_building_access")
+        .select("id")
+        .eq("pm_company_id", company_id)
+        .eq("building_id", building_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not check_result.data:
+        raise HTTPException(404, "Access record not found")
+    
+    try:
+        (
+            client.table("pm_company_building_access")
+            .delete()
+            .eq("pm_company_id", company_id)
+            .eq("building_id", building_id)
+            .execute()
+        )
+        
+        logger.info(f"Removed building {building_id} access from PM company {company_id}")
+        return {
+            "status": "deleted",
+            "company_id": company_id,
+            "building_id": building_id
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to remove building access: {e}")
+
+
+# ============================================================
+# PM COMPANY UNIT ACCESS
+# ============================================================
+
+@router.post(
+    "/pm-companies/{company_id}/units",
+    summary="Grant unit access to a property management company",
+    description="All users linked to this company will inherit unit access",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def add_pm_company_unit_access(
+    company_id: str,
+    payload: PMCompanyUnitAccessCreate
+):
+    """
+    Grant unit access to a property management company.
+    All users with pm_company_id matching this company will inherit this access.
+    """
+    client = get_supabase_client()
+    
+    # Validate company exists
+    company_result = (
+        client.table("property_management_companies")
+        .select("id, company_name")
+        .eq("id", company_id)
+        .limit(1)
+        .execute()
+    )
+    if not company_result.data:
+        raise HTTPException(404, f"Property management company {company_id} not found")
+    
+    # Validate unit exists
+    unit_result = (
+        client.table("units")
+        .select("id")
+        .eq("id", payload.unit_id)
+        .limit(1)
+        .execute()
+    )
+    if not unit_result.data:
+        raise HTTPException(404, f"Unit {payload.unit_id} not found")
+    
+    # Check for duplicate
+    existing = (
+        client.table("pm_company_unit_access")
+        .select("id")
+        .eq("pm_company_id", company_id)
+        .eq("unit_id", payload.unit_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(400, "Company already has access to this unit")
+    
+    try:
+        result = (
+            client.table("pm_company_unit_access")
+            .insert({
+                "pm_company_id": company_id,
+                "unit_id": payload.unit_id
+            }, returning="representation")
+            .execute()
+        )
+        
+        logger.info(f"Granted unit {payload.unit_id} access to PM company {company_id}")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to grant unit access: {e}")
+
+
+@router.get(
+    "/pm-companies/{company_id}/units",
+    summary="List unit access for a property management company",
+    dependencies=[Depends(requires_permission("user_access:read"))],
+)
+def list_pm_company_unit_access(company_id: str):
+    """List all units a property management company has access to."""
+    client = get_supabase_client()
+    
+    result = (
+        client.table("pm_company_unit_access")
+        .select("unit_id")
+        .eq("pm_company_id", company_id)
+        .execute()
+    )
+    
+    return result.data or []
+
+
+@router.delete(
+    "/pm-companies/{company_id}/units/{unit_id}",
+    summary="Remove unit access from a property management company",
+    dependencies=[Depends(requires_permission("user_access:write"))],
+)
+def delete_pm_company_unit_access(company_id: str, unit_id: str):
+    """Remove unit access from a property management company."""
+    client = get_supabase_client()
+    
+    # Check if record exists
+    check_result = (
+        client.table("pm_company_unit_access")
+        .select("id")
+        .eq("pm_company_id", company_id)
+        .eq("unit_id", unit_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not check_result.data:
+        raise HTTPException(404, "Access record not found")
+    
+    try:
+        (
+            client.table("pm_company_unit_access")
+            .delete()
+            .eq("pm_company_id", company_id)
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        
+        logger.info(f"Removed unit {unit_id} access from PM company {company_id}")
+        return {
+            "status": "deleted",
+            "company_id": company_id,
+            "unit_id": unit_id
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to remove unit access: {e}")
