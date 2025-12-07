@@ -716,24 +716,29 @@ def list_all_subscriptions(
             all_subscriptions.append(subscription_entry)
         
         # 2. Get all contractor subscriptions
+        # Note: contractors table may not have is_trial, trial_started_at, trial_ends_at columns
         contractors_result = (
             client.table("contractors")
-            .select("id, company_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, is_trial, trial_started_at, trial_ends_at, created_at, updated_at")
+            .select("id, company_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, created_at, updated_at")
             .execute()
         )
         
         for contractor in (contractors_result.data or []):
+            # Check if subscription_status is "trialing" to determine if it's a trial
+            subscription_status = contractor.get("subscription_status")
+            is_trial = subscription_status == "trialing" if subscription_status else False
+            
             subscription_entry = {
                 "subscription_type": "contractor",
                 "id": contractor["id"],
                 "company_name": contractor.get("company_name"),
                 "subscription_tier": contractor.get("subscription_tier"),
-                "subscription_status": contractor.get("subscription_status"),
+                "subscription_status": subscription_status,
                 "stripe_customer_id": contractor.get("stripe_customer_id"),
                 "stripe_subscription_id": contractor.get("stripe_subscription_id"),
-                "is_trial": contractor.get("is_trial", False),
-                "trial_started_at": contractor.get("trial_started_at"),
-                "trial_ends_at": contractor.get("trial_ends_at"),
+                "is_trial": is_trial,
+                "trial_started_at": None,  # Not available in contractors table
+                "trial_ends_at": None,  # Not available in contractors table
                 "created_at": contractor.get("created_at"),
                 "updated_at": contractor.get("updated_at"),
             }
@@ -749,24 +754,29 @@ def list_all_subscriptions(
             all_subscriptions.append(subscription_entry)
         
         # 3. Get all AOAO organization subscriptions
+        # Note: aoao_organizations table doesn't have is_trial, trial_started_at, trial_ends_at columns
         aoao_orgs_result = (
             client.table("aoao_organizations")
-            .select("id, organization_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, is_trial, trial_started_at, trial_ends_at, created_at, updated_at")
+            .select("id, organization_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, created_at, updated_at")
             .execute()
         )
         
         for org in (aoao_orgs_result.data or []):
+            # Check if subscription_status is "trialing" to determine if it's a trial
+            subscription_status = org.get("subscription_status")
+            is_trial = subscription_status == "trialing" if subscription_status else False
+            
             subscription_entry = {
                 "subscription_type": "aoao_organization",
                 "id": org["id"],
                 "organization_name": org.get("organization_name"),
                 "subscription_tier": org.get("subscription_tier"),
-                "subscription_status": org.get("subscription_status"),
+                "subscription_status": subscription_status,
                 "stripe_customer_id": org.get("stripe_customer_id"),
                 "stripe_subscription_id": org.get("stripe_subscription_id"),
-                "is_trial": org.get("is_trial", False),
-                "trial_started_at": org.get("trial_started_at"),
-                "trial_ends_at": org.get("trial_ends_at"),
+                "is_trial": is_trial,
+                "trial_started_at": None,  # Not available in aoao_organizations table
+                "trial_ends_at": None,  # Not available in aoao_organizations table
                 "created_at": org.get("created_at"),
                 "updated_at": org.get("updated_at"),
             }
@@ -782,24 +792,29 @@ def list_all_subscriptions(
             all_subscriptions.append(subscription_entry)
         
         # 4. Get all PM company subscriptions
+        # Note: property_management_companies table doesn't have is_trial, trial_started_at, trial_ends_at columns
         pm_companies_result = (
             client.table("property_management_companies")
-            .select("id, company_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, is_trial, trial_started_at, trial_ends_at, created_at, updated_at")
+            .select("id, company_name, subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, created_at, updated_at")
             .execute()
         )
         
         for company in (pm_companies_result.data or []):
+            # Check if subscription_status is "trialing" to determine if it's a trial
+            subscription_status = company.get("subscription_status")
+            is_trial = subscription_status == "trialing" if subscription_status else False
+            
             subscription_entry = {
                 "subscription_type": "pm_company",
                 "id": company["id"],
                 "company_name": company.get("company_name"),
                 "subscription_tier": company.get("subscription_tier"),
-                "subscription_status": company.get("subscription_status"),
+                "subscription_status": subscription_status,
                 "stripe_customer_id": company.get("stripe_customer_id"),
                 "stripe_subscription_id": company.get("stripe_subscription_id"),
-                "is_trial": company.get("is_trial", False),
-                "trial_started_at": company.get("trial_started_at"),
-                "trial_ends_at": company.get("trial_ends_at"),
+                "is_trial": is_trial,
+                "trial_started_at": None,  # Not available in property_management_companies table
+                "trial_ends_at": None,  # Not available in property_management_companies table
                 "created_at": company.get("created_at"),
                 "updated_at": company.get("updated_at"),
             }
