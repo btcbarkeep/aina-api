@@ -414,26 +414,66 @@ def update_user(
     if "pm_company_id" in updates:
         merged["pm_company_id"] = updates["pm_company_id"]
     
-    # Handle permissions: only update if explicitly provided
+    # Handle permissions: only update if explicitly provided and valid
     if "permissions" in updates:
-        merged["permissions"] = updates["permissions"]
+        permissions = updates["permissions"]
+        # Filter out placeholder values like "string"
+        if isinstance(permissions, list):
+            # Remove placeholder strings and empty values
+            cleaned_permissions = [p for p in permissions if p and p != "string" and isinstance(p, str)]
+            merged["permissions"] = cleaned_permissions if cleaned_permissions else []
+        else:
+            merged["permissions"] = []
     elif "permissions" not in merged:
         merged["permissions"] = []
     
     # Always set role
     merged["role"] = new_role
+    
+    # Clean up any remaining placeholder "string" values from metadata
+    for key, value in list(merged.items()):
+        if value == "string" or (isinstance(value, str) and value.lower() == "string"):
+            # Remove placeholder values, but keep the key if it has a default
+            if key not in ["permissions", "role"]:  # Don't remove required fields
+                merged.pop(key, None)
 
     try:
         # Log what we're about to send for debugging
         logger.info(f"Updating user {user_id} with metadata: {merged}")
+        
+        # Check if user is confirmed/verified - unverified users might have restrictions
+        user_is_confirmed = getattr(resp.user, "email_confirmed_at", None) is not None
+        if not user_is_confirmed:
+            logger.warning(f"User {user_id} is not yet verified/confirmed. Attempting to confirm user first.")
+            # Try to confirm the user if they're not confirmed yet
+            try:
+                client.auth.admin.update_user_by_id(
+                    user_id,
+                    {"email_confirm": True}
+                )
+                logger.info(f"User {user_id} has been confirmed")
+            except Exception as confirm_error:
+                logger.warning(f"Failed to confirm user {user_id}: {confirm_error}. Continuing with metadata update.")
+        
+        # Try to update user metadata
+        update_payload = {"user_metadata": merged}
+        
         client.auth.admin.update_user_by_id(
             user_id,
-            {"user_metadata": merged}
+            update_payload
         )
     except Exception as e:
         error_msg = str(e)
         # Log the full error for debugging
         logger.error(f"Failed to update user {user_id}: {error_msg}. Metadata being sent: {merged}")
+        
+        # Check if it's a verification-related error
+        if "not allowed" in error_msg.lower():
+            logger.warning(f"User {user_id} update failed with 'not allowed' - this may be due to:")
+            logger.warning(f"  1. User not verified (check email_confirmed_at)")
+            logger.warning(f"  2. Service role key permissions")
+            logger.warning(f"  3. Supabase project settings")
+        
         raise HTTPException(500, f"Supabase update error: {error_msg}")
 
     return {"success": True, "data": merged}
