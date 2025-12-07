@@ -25,6 +25,8 @@ class CurrentUser(BaseModel):
     organization_name: Optional[str] = None
     phone: Optional[str] = None
     contractor_id: Optional[str] = None
+    aoao_organization_id: Optional[str] = None
+    pm_company_id: Optional[str] = None
 
     # ⭐ Option A — per-user metadata overrides
     permissions: Optional[List[str]] = []
@@ -119,6 +121,8 @@ def get_current_user(
         organization_name=metadata.get("organization_name"),
         phone=metadata.get("phone"),
         contractor_id=metadata.get("contractor_id"),
+        aoao_organization_id=metadata.get("aoao_organization_id"),
+        pm_company_id=metadata.get("pm_company_id"),
         permissions=extended_permissions,
     )
 
