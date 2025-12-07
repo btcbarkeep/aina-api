@@ -28,6 +28,8 @@ from routers.documents import router as documents_router
 from routers.documents_bulk import router as documents_bulk_router
 from routers.contractors import router as contractors_router
 from routers.contractor_events import router as contractor_events_router
+from routers.aoao_organizations import router as aoao_organizations_router
+from routers.pm_companies import router as pm_companies_router
 
 from routers.uploads import router as uploads_router
 from routers.manual_redact import router as manual_redact_router
@@ -183,6 +185,8 @@ def create_app() -> FastAPI:
     app.include_router(documents_bulk_router)
     app.include_router(contractors_router)
     app.include_router(contractor_events_router)
+    app.include_router(aoao_organizations_router)
+    app.include_router(pm_companies_router)
 
     # Admin Tools
     app.include_router(admin_router)
