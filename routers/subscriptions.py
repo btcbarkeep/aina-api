@@ -130,10 +130,10 @@ def sync_my_subscription(
     return updated_subscription
 
 
-@router.post("/me/{role}/start-trial", response_model=UserSubscriptionRead])
+@router.post("/me/{role}/start-trial", response_model=UserSubscriptionRead)
 def start_trial(
     role: str,
-    trial_days: int = Query(14, ge=1, le=90, description="Trial duration in days (1-90)"),
+    trial_days: int = Query(14, ge=1, le=180, description="Trial duration in days (1-180)"),
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
@@ -205,3 +205,4 @@ def get_user_subscriptions_admin(
         subscriptions = [s for s in subscriptions if s.get("role") == role]
     
     return subscriptions
+
