@@ -40,16 +40,17 @@ A comprehensive final audit was conducted to ensure all recent changes (organiza
 
 ### 5. Database Migrations
 - **Status:** ✅ COMPLETE
-- All 9 migration files created:
+- All 8 migration files created:
   1. `add_user_subscriptions.sql`
   2. `add_aoao_organizations.sql`
   3. `add_property_management_companies.sql`
   4. `add_organization_building_access.sql`
   5. `add_organization_unit_access.sql`
-  6. `add_contractor_building_access.sql` ⭐ NEW
-  7. `add_contractor_subscription_fields.sql`
-  8. `add_contractor_fields.sql`
-  9. `add_user_organization_fields.sql` (informational)
+  6. `add_contractor_subscription_fields.sql`
+  7. `add_contractor_fields.sql`
+  8. `add_user_organization_fields.sql` (informational)
+  
+  **Note:** Contractors have access to all buildings and units by default (no explicit access grants needed).
 
 ## ⚠️ Minor Issues Found
 
