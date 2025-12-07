@@ -1,4 +1,5 @@
 from typing import Optional, List
+from datetime import datetime
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -27,6 +28,12 @@ class CurrentUser(BaseModel):
 
     # ⭐ Option A — per-user metadata overrides
     permissions: Optional[List[str]] = []
+    
+    # ⭐ Subscription info (optional, fetched separately if needed)
+    subscription_tier: Optional[str] = None
+    subscription_status: Optional[str] = None
+    is_trial: Optional[bool] = None
+    trial_ends_at: Optional[datetime] = None
 
 
 # ============================================================
