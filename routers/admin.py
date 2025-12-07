@@ -143,6 +143,40 @@ def admin_create_account(
     validate_role_change(current_user, payload.role)
 
     client = get_supabase_client()
+    
+    # Validate organization IDs exist if provided
+    if payload.contractor_id:
+        contractor_check = (
+            client.table("contractors")
+            .select("id")
+            .eq("id", payload.contractor_id)
+            .limit(1)
+            .execute()
+        )
+        if not contractor_check.data:
+            raise HTTPException(400, f"Contractor {payload.contractor_id} does not exist")
+    
+    if payload.aoao_organization_id:
+        org_check = (
+            client.table("aoao_organizations")
+            .select("id")
+            .eq("id", payload.aoao_organization_id)
+            .limit(1)
+            .execute()
+        )
+        if not org_check.data:
+            raise HTTPException(400, f"AOAO organization {payload.aoao_organization_id} does not exist")
+    
+    if payload.pm_company_id:
+        pm_check = (
+            client.table("property_management_companies")
+            .select("id")
+            .eq("id", payload.pm_company_id)
+            .limit(1)
+            .execute()
+        )
+        if not pm_check.data:
+            raise HTTPException(400, f"Property management company {payload.pm_company_id} does not exist")
 
     metadata = {
         "full_name": payload.full_name,
@@ -302,6 +336,40 @@ def update_user(
     new_role = updates.get("role", current_meta.get("role", "aoao"))
 
     validate_role_change(current_user, new_role, target_user_id=user_id)
+    
+    # Validate organization IDs exist if being updated
+    if "contractor_id" in updates and updates["contractor_id"]:
+        contractor_check = (
+            client.table("contractors")
+            .select("id")
+            .eq("id", updates["contractor_id"])
+            .limit(1)
+            .execute()
+        )
+        if not contractor_check.data:
+            raise HTTPException(400, f"Contractor {updates['contractor_id']} does not exist")
+    
+    if "aoao_organization_id" in updates and updates["aoao_organization_id"]:
+        org_check = (
+            client.table("aoao_organizations")
+            .select("id")
+            .eq("id", updates["aoao_organization_id"])
+            .limit(1)
+            .execute()
+        )
+        if not org_check.data:
+            raise HTTPException(400, f"AOAO organization {updates['aoao_organization_id']} does not exist")
+    
+    if "pm_company_id" in updates and updates["pm_company_id"]:
+        pm_check = (
+            client.table("property_management_companies")
+            .select("id")
+            .eq("id", updates["pm_company_id"])
+            .limit(1)
+            .execute()
+        )
+        if not pm_check.data:
+            raise HTTPException(400, f"Property management company {updates['pm_company_id']} does not exist")
 
     # Preserve organization IDs unless explicitly updated
     merged = {**current_meta, **updates}
