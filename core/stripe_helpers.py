@@ -143,3 +143,93 @@ def verify_stripe_payment_intent(
         logger.error(f"Error verifying Stripe payment intent {payment_intent_id}: {e}")
         return False
 
+
+def verify_contractor_subscription(
+    stripe_customer_id: Optional[str] = None,
+    stripe_subscription_id: Optional[str] = None
+) -> tuple[bool, Optional[str], Optional[str]]:
+    """
+    Verify a contractor's Stripe subscription status.
+    
+    Args:
+        stripe_customer_id: Stripe customer ID
+        stripe_subscription_id: Stripe subscription ID (preferred if available)
+    
+    Returns:
+        Tuple of (is_active: bool, subscription_status: Optional[str], error_message: Optional[str])
+        - is_active: True if subscription is active and paid
+        - subscription_status: Current subscription status from Stripe
+        - error_message: Error message if verification failed
+    """
+    if not STRIPE_AVAILABLE or not settings.STRIPE_SECRET_KEY:
+        logger.warning("Stripe not configured - subscription verification disabled")
+        return False, None, "Stripe not configured"
+    
+    if not stripe_customer_id and not stripe_subscription_id:
+        return False, None, "No Stripe customer or subscription ID provided"
+    
+    try:
+        stripe_client = get_stripe_client()
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        
+        # If subscription_id provided, use it directly (preferred)
+        if stripe_subscription_id:
+            subscription = stripe_client.Subscription.retrieve(stripe_subscription_id)
+            status = subscription.status
+            
+            # Check if subscription is active
+            is_active = status in ["active", "trialing"]
+            
+            return is_active, status, None
+        
+        # Otherwise, look up by customer_id
+        if stripe_customer_id:
+            # Get the most recent active subscription for this customer
+            subscriptions = stripe_client.Subscription.list(
+                customer=stripe_customer_id,
+                status="all",
+                limit=1
+            )
+            
+            if not subscriptions.data:
+                return False, None, "No subscription found for this customer"
+            
+            subscription = subscriptions.data[0]
+            status = subscription.status
+            
+            # Check if subscription is active
+            is_active = status in ["active", "trialing"]
+            
+            return is_active, status, None
+        
+        return False, None, "No valid Stripe identifiers provided"
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe API error verifying subscription: {e}")
+        return False, None, f"Stripe API error: {str(e)}"
+    except Exception as e:
+        logger.error(f"Error verifying Stripe subscription: {e}")
+        return False, None, f"Error: {str(e)}"
+
+
+def get_subscription_tier_from_stripe(
+    stripe_customer_id: Optional[str] = None,
+    stripe_subscription_id: Optional[str] = None
+) -> str:
+    """
+    Get subscription tier ("free" or "paid") based on Stripe subscription status.
+    
+    Args:
+        stripe_customer_id: Stripe customer ID
+        stripe_subscription_id: Stripe subscription ID (preferred if available)
+    
+    Returns:
+        "paid" if subscription is active, "free" otherwise
+    """
+    is_active, status, _ = verify_contractor_subscription(
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_subscription_id
+    )
+    
+    return "paid" if is_active else "free"
+
