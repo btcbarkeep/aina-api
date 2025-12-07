@@ -13,6 +13,7 @@ from dependencies.auth import (
 from core.permission_helpers import requires_permission
 from core.permissions import ROLE_PERMISSIONS
 from core.supabase_client import get_supabase_client
+from core.logging_config import logger
 from models.user_create import AdminCreateUser
 
 
@@ -372,7 +373,8 @@ def update_user(
             raise HTTPException(400, f"Property management company {updates['pm_company_id']} does not exist")
 
     # Build merged metadata: start with current, then apply updates
-    merged = current_meta.copy()
+    # Ensure we have a dict to work with (current_meta might be None)
+    merged = dict(current_meta) if current_meta else {}
     
     # Apply updates (excluding organization IDs which are handled separately)
     for key, value in updates.items():
@@ -397,6 +399,8 @@ def update_user(
     merged["role"] = new_role
 
     try:
+        # Log what we're about to send for debugging
+        logger.info(f"Updating user {user_id} with metadata: {merged}")
         client.auth.admin.update_user_by_id(
             user_id,
             {"user_metadata": merged}
@@ -404,8 +408,7 @@ def update_user(
     except Exception as e:
         error_msg = str(e)
         # Log the full error for debugging
-        import logging
-        logging.error(f"Failed to update user {user_id}: {error_msg}. Metadata: {merged}")
+        logger.error(f"Failed to update user {user_id}: {error_msg}. Metadata being sent: {merged}")
         raise HTTPException(500, f"Supabase update error: {error_msg}")
 
     return {"success": True, "data": merged}
