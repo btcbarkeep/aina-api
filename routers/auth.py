@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
+from typing import Optional
 from core.supabase_client import get_supabase_client
 from core.rate_limiter import require_rate_limit, get_rate_limit_identifier
 from dependencies.auth import get_current_user, CurrentUser
@@ -66,6 +67,84 @@ def login(payload: LoginRequest, request: Request):
 @router.get("/me", response_model=CurrentUser, summary="Current authenticated user")
 def read_me(current_user: CurrentUser = Depends(get_current_user)):
     return current_user
+
+
+class ProfileUpdate(BaseModel):
+    """Profile update model for self-service editing."""
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+@router.patch("/me", response_model=CurrentUser, summary="Update current user profile")
+def update_profile(
+    payload: ProfileUpdate,
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Update the current user's profile (self-service).
+    
+    Users can update their own full_name and phone.
+    Other fields (role, organization IDs, etc.) must be updated by admins.
+    """
+    client = get_supabase_client()
+    
+    # Build update payload
+    update_metadata = {}
+    
+    if payload.full_name is not None:
+        update_metadata["full_name"] = payload.full_name.strip() if payload.full_name else None
+    
+    if payload.phone is not None:
+        update_metadata["phone"] = payload.phone.strip() if payload.phone else None
+    
+    if not update_metadata:
+        # No changes, return current user
+        return current_user
+    
+    try:
+        # Get current user metadata
+        resp = client.auth.admin.get_user_by_id(current_user.auth_user_id)
+        if not resp.user:
+            raise HTTPException(404, "User not found")
+        
+        current_meta = resp.user.user_metadata or {}
+        
+        # Merge updates
+        updated_meta = {**current_meta, **update_metadata}
+        
+        # Update user metadata
+        client.auth.admin.update_user_by_id(
+            current_user.auth_user_id,
+            {"user_metadata": updated_meta}
+        )
+        
+        logger.info(f"User {current_user.auth_user_id} updated their profile")
+        
+        # Return updated user
+        updated_resp = client.auth.admin.get_user_by_id(current_user.auth_user_id)
+        if not updated_resp.user:
+            raise HTTPException(500, "Failed to retrieve updated user")
+        
+        updated_meta = updated_resp.user.user_metadata or {}
+        
+        return CurrentUser(
+            id=updated_resp.user.id,
+            auth_user_id=updated_resp.user.id,
+            email=updated_resp.user.email,
+            role=updated_meta.get("role", "aoao"),
+            full_name=updated_meta.get("full_name"),
+            organization_name=updated_meta.get("organization_name"),
+            phone=updated_meta.get("phone"),
+            contractor_id=updated_meta.get("contractor_id"),
+            aoao_organization_id=updated_meta.get("aoao_organization_id"),
+            pm_company_id=updated_meta.get("pm_company_id"),
+            permissions=updated_meta.get("permissions", []),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update user profile: {e}")
+        raise HTTPException(500, f"Failed to update profile: {str(e)}")
 
 
 # ============================================================
