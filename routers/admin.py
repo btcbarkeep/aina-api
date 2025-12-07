@@ -41,7 +41,9 @@ class AdminUpdateUser(BaseModel):
     phone: Optional[str] = None
     role: Optional[str] = None
     permissions: Optional[List[str]] = None
-    contractor_id: Optional[str] = None   # NEW — safe contractor_id update
+    contractor_id: Optional[str] = None
+    aoao_organization_id: Optional[str] = None
+    pm_company_id: Optional[str] = None
 
 
 # -----------------------------------------------------
@@ -148,6 +150,8 @@ def admin_create_account(
         "phone": payload.phone,
         "role": payload.role,
         "contractor_id": payload.contractor_id,
+        "aoao_organization_id": payload.aoao_organization_id,
+        "pm_company_id": payload.pm_company_id,
         "permissions": payload.permissions or [],
     }
     
@@ -215,6 +219,8 @@ def list_users(role: str | None = None):
                 "phone": meta.get("phone"),
                 "role": u_role,
                 "contractor_id": meta.get("contractor_id"),
+                "aoao_organization_id": meta.get("aoao_organization_id"),
+                "pm_company_id": meta.get("pm_company_id"),
                 "permissions": meta.get("permissions", []),
                 "created_at": getattr(u, "created_at", None),
             })
@@ -256,6 +262,8 @@ def get_user(user_id: str):
             "phone": meta.get("phone"),
             "role": meta.get("role"),
             "contractor_id": meta.get("contractor_id"),
+            "aoao_organization_id": meta.get("aoao_organization_id"),
+            "pm_company_id": meta.get("pm_company_id"),
             "permissions": meta.get("permissions", []),
             "created_at": getattr(u, "created_at", None),
         },
@@ -295,10 +303,14 @@ def update_user(
 
     validate_role_change(current_user, new_role, target_user_id=user_id)
 
-    # Preserve contractor_id unless explicitly updated
+    # Preserve organization IDs unless explicitly updated
     merged = {**current_meta, **updates}
     if "contractor_id" not in updates:
         merged["contractor_id"] = current_meta.get("contractor_id")
+    if "aoao_organization_id" not in updates:
+        merged["aoao_organization_id"] = current_meta.get("aoao_organization_id")
+    if "pm_company_id" not in updates:
+        merged["pm_company_id"] = current_meta.get("pm_company_id")
 
     merged["role"] = new_role
 
