@@ -555,14 +555,30 @@ async def generate_building_report(
         aoao_orgs = aoao_orgs_result.data or []
     
     # Get property management companies assigned to this building
-    pm_companies = []
     pm_building_access_result = (
         client.table("pm_company_building_access")
         .select("pm_company_id")
         .eq("building_id", building_id)
         .execute()
     )
-    pm_company_ids = [row["pm_company_id"] for row in (pm_building_access_result.data or [])]
+    pm_company_ids_from_building = [row["pm_company_id"] for row in (pm_building_access_result.data or [])]
+    
+    # Get property management companies assigned to units within this building
+    unit_ids = [u["id"] for u in units]
+    pm_company_ids_from_units = []
+    if unit_ids:
+        pm_unit_access_result = (
+            client.table("pm_company_unit_access")
+            .select("pm_company_id")
+            .in_("unit_id", unit_ids)
+            .execute()
+        )
+        pm_company_ids_from_units = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
+    
+    # Combine and deduplicate PM company IDs
+    pm_company_ids = list(set(pm_company_ids_from_building + pm_company_ids_from_units))
+    
+    pm_companies = []
     if pm_company_ids:
         pm_companies_result = (
             client.table("property_management_companies")
