@@ -130,14 +130,15 @@ def sync_my_subscription(
     return updated_subscription
 
 
-@router.post("/me/{role}/start-trial", response_model=UserSubscriptionRead)
+@router.post("/me/start-trial", response_model=UserSubscriptionRead)
 def start_trial(
-    role: str,
     trial_days: int = Query(14, ge=1, le=180, description="Trial duration in days (1-180)"),
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
     Start a free trial for the current user's role.
+    
+    Automatically uses the current user's role (from their authentication).
     
     **Requirements:**
     - Role must support trials (AOAO, property_manager, contractor, owner)
@@ -145,6 +146,12 @@ def start_trial(
     
     **Note:** AOAO role requires paid subscription after trial expires.
     """
+    # Use the current user's role
+    role = current_user.role
+    
+    if not role:
+        raise HTTPException(400, "User does not have a role assigned")
+    
     requirements = get_role_subscription_requirements(role)
     
     if not requirements["supports_trial"]:
