@@ -61,7 +61,7 @@ class PMCompanyUnitAccessCreate(BaseModel):
 @router.get(
     "/buildings",
     summary="List all user building access entries",
-    description="[User Access] List all individual user building access grants",
+    description="[User Access] List all individual user building access grants (includes both direct access and inherited organization access)",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_building_access():
@@ -70,12 +70,109 @@ def list_building_access():
         raise HTTPException(500, "Supabase client not configured")
 
     try:
-        result = (
+        # Get direct user building access
+        direct_access_result = (
             client.table("user_building_access")
             .select("user_id, building_id")
             .execute()
         )
-        return result.data or []
+        direct_access = direct_access_result.data or []
+        
+        # Helper to extract user list from Supabase response (same pattern as admin.py)
+        def extract_user_list(result):
+            """Extract user list from Supabase response."""
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict) and "users" in result:
+                return result["users"]
+            users_attr = getattr(result, "users", None)
+            if users_attr is not None:
+                return users_attr
+            return []
+        
+        # Get all users from Supabase Auth to check their organization assignments
+        try:
+            all_users_raw = client.auth.admin.list_users()
+            users_list = extract_user_list(all_users_raw)
+        except Exception as e:
+            logger.warning(f"Failed to fetch all users for inherited access: {e}")
+            users_list = []
+        
+        # Build a set of direct access for quick lookup
+        direct_access_set = {(entry["user_id"], entry["building_id"]) for entry in direct_access}
+        
+        # Get inherited access from AOAO organizations
+        aoao_building_access = {}
+        try:
+            aoao_access_result = (
+                client.table("aoao_organization_building_access")
+                .select("aoao_organization_id, building_id")
+                .execute()
+            )
+            for entry in (aoao_access_result.data or []):
+                org_id = entry["aoao_organization_id"]
+                building_id = entry["building_id"]
+                if org_id not in aoao_building_access:
+                    aoao_building_access[org_id] = []
+                aoao_building_access[org_id].append(building_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch AOAO organization building access: {e}")
+        
+        # Get inherited access from PM companies
+        pm_building_access = {}
+        try:
+            pm_access_result = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id, building_id")
+                .execute()
+            )
+            for entry in (pm_access_result.data or []):
+                company_id = entry["pm_company_id"]
+                building_id = entry["building_id"]
+                if company_id not in pm_building_access:
+                    pm_building_access[company_id] = []
+                pm_building_access[company_id].append(building_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch PM company building access: {e}")
+        
+        # Add inherited access for users assigned to organizations
+        inherited_access = []
+        for user in users_list:
+            user_id = user.id
+            user_meta = user.user_metadata or {}
+            
+            # Check AOAO organization access
+            aoao_org_id = user_meta.get("aoao_organization_id")
+            if aoao_org_id and aoao_org_id in aoao_building_access:
+                for building_id in aoao_building_access[aoao_org_id]:
+                    # Only add if not already in direct access (avoid duplicates)
+                    if (user_id, building_id) not in direct_access_set:
+                        inherited_access.append({
+                            "user_id": user_id,
+                            "building_id": building_id,
+                            "access_type": "inherited_aoao"
+                        })
+            
+            # Check PM company access
+            pm_company_id = user_meta.get("pm_company_id")
+            if pm_company_id and pm_company_id in pm_building_access:
+                for building_id in pm_building_access[pm_company_id]:
+                    # Only add if not already in direct access (avoid duplicates)
+                    if (user_id, building_id) not in direct_access_set:
+                        inherited_access.append({
+                            "user_id": user_id,
+                            "building_id": building_id,
+                            "access_type": "inherited_pm"
+                        })
+        
+        # Combine direct and inherited access
+        # Add access_type to direct access entries
+        direct_with_type = [
+            {**entry, "access_type": "direct"} 
+            for entry in direct_access
+        ]
+        
+        return direct_with_type + inherited_access
 
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
