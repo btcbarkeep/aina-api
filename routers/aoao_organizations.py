@@ -1,13 +1,20 @@
 # routers/aoao_organizations.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from typing import List, Optional
+from pydantic import BaseModel
+import os
+import tempfile
+from pathlib import Path as PathLib
+from datetime import datetime
+import uuid
 
 from dependencies.auth import get_current_user, CurrentUser, requires_permission
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
 from core.logging_config import logger
 from core.errors import handle_supabase_error
+from core.s3_client import get_s3
 from models.aoao_organization import (
     AOAOOrganizationCreate,
     AOAOOrganizationUpdate,
@@ -348,3 +355,136 @@ def sync_aoao_org_subscription(
         from core.errors import handle_supabase_error
         raise handle_supabase_error(e, "Failed to sync subscription status", 500)
 
+
+
+# ============================================================
+# UPLOAD AOAO ORGANIZATION LOGO
+# ============================================================
+class LogoUploadResponse(BaseModel):
+    success: bool
+    logo_url: str
+    s3_key: str
+    message: str
+
+
+@router.post(
+    "/{organization_id}/logo",
+    summary="Upload AOAO organization logo",
+    description="Upload a logo image for an AOAO organization. Supported formats: JPG, PNG, GIF, WebP. Max file size: 5MB.",
+    response_model=LogoUploadResponse,
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
+async def upload_aoao_org_logo(
+    organization_id: str,
+    file: UploadFile = File(...),
+    update_organization: bool = Form(True, description="Automatically update organization's logo_url field"),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Upload a logo image for an AOAO organization.
+    
+    The image is uploaded to S3 and optionally updates the organization's logo_url field.
+    """
+    # Check access
+    ensure_aoao_org_access(current_user, organization_id)
+    
+    # Validate organization exists
+    client = get_supabase_client()
+    org_check = (
+        client.table("aoao_organizations")
+        .select("id, organization_name")
+        .eq("id", organization_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not org_check.data:
+        raise HTTPException(404, f"AOAO organization '{organization_id}' not found")
+    
+    # Validate file type
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    file_extension = PathLib(file.filename or "").suffix.lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            400,
+            f"Invalid file type. Allowed formats: {', '.join(allowed_extensions)}"
+        )
+    
+    # Validate file size (5MB max)
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(400, f"File size exceeds maximum of {MAX_FILE_SIZE / 1024 / 1024}MB")
+    
+    # Get S3 client
+    try:
+        s3, bucket, region = get_s3()
+    except RuntimeError as e:
+        logger.error(f"S3 configuration error: {e}")
+        raise HTTPException(500, "File storage not configured")
+    
+    # Generate S3 key
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    safe_org_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in org_check.data[0]["organization_name"])[:50]
+    s3_key = f"aoao-organizations/logos/{organization_id}/{safe_org_name}_{timestamp}_{unique_id}{file_extension}"
+    
+    # Upload to S3
+    temp_file_path = None
+    try:
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(content)
+            temp_file.flush()
+        
+        # Upload to S3
+        try:
+            content_type = file.content_type or "image/jpeg"
+            s3.upload_file(
+                Filename=temp_file_path,
+                Bucket=bucket,
+                Key=s3_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+            logger.info(f"Uploaded AOAO organization logo to S3: {s3_key}")
+        except Exception as e:
+            logger.error(f"S3 upload error: {e}")
+            raise HTTPException(500, f"Failed to upload logo: {e}")
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+    
+    # Generate presigned URL (valid for 1 year for logos)
+    try:
+        logo_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": s3_key},
+            ExpiresIn=31536000,  # 1 year
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate presigned URL: {e}")
+        raise HTTPException(500, "Failed to generate logo URL")
+    
+    # Optionally update organization's logo_url field
+    if update_organization:
+        try:
+            client.table("aoao_organizations").update({
+                "logo_url": logo_url
+            }).eq("id", organization_id).execute()
+            logger.info(f"Updated AOAO organization {organization_id} logo_url")
+        except Exception as e:
+            logger.warning(f"Failed to update organization logo_url: {e}")
+            # Don't fail the request if update fails - logo is still uploaded
+    
+    return {
+        "success": True,
+        "logo_url": logo_url,
+        "s3_key": s3_key,
+        "message": "Logo uploaded successfully" + (" and organization updated" if update_organization else "")
+    }
