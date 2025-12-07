@@ -135,11 +135,24 @@ def list_building_access():
         except Exception as e:
             logger.warning(f"Failed to fetch PM company building access: {e}")
         
+        # Get all building IDs (needed for contractors who have access to all buildings)
+        all_building_ids = []
+        try:
+            buildings_result = (
+                client.table("buildings")
+                .select("id")
+                .execute()
+            )
+            all_building_ids = [b["id"] for b in (buildings_result.data or [])]
+        except Exception as e:
+            logger.warning(f"Failed to fetch all buildings: {e}")
+        
         # Add inherited access for users assigned to organizations
         inherited_access = []
         for user in users_list:
             user_id = user.id
             user_meta = user.user_metadata or {}
+            user_role = user_meta.get("role", "")
             
             # Check AOAO organization access
             aoao_org_id = user_meta.get("aoao_organization_id")
@@ -164,6 +177,19 @@ def list_building_access():
                             "building_id": building_id,
                             "access_type": "inherited_pm"
                         })
+            
+            # Check Contractor access (contractors have access to all buildings by default)
+            contractor_id = user_meta.get("contractor_id")
+            if contractor_id and user_role in ["contractor", "contractor_staff"]:
+                # Contractors have access to all buildings
+                for building_id in all_building_ids:
+                    # Only add if not already in direct access (avoid duplicates)
+                    if (user_id, building_id) not in direct_access_set:
+                        inherited_access.append({
+                            "user_id": user_id,
+                            "building_id": building_id,
+                            "access_type": "inherited_contractor"
+                        })
         
         # Combine direct and inherited access
         # Add access_type to direct access entries
@@ -181,19 +207,142 @@ def list_building_access():
 @router.get(
     "/units",
     summary="List all user unit access entries",
-    description="[User Access] List all individual user unit access grants",
+    description="[User Access] List all individual user unit access grants (includes both direct access and inherited organization access)",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_unit_access():
     client = get_supabase_client()
 
     try:
-        result = (
+        # Get direct user unit access
+        direct_access_result = (
             client.table("user_units_access")
             .select("user_id, unit_id")
             .execute()
         )
-        return result.data or []
+        direct_access = direct_access_result.data or []
+        
+        # Helper to extract user list from Supabase response (same pattern as admin.py)
+        def extract_user_list(result):
+            """Extract user list from Supabase response."""
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict) and "users" in result:
+                return result["users"]
+            users_attr = getattr(result, "users", None)
+            if users_attr is not None:
+                return users_attr
+            return []
+        
+        # Get all users from Supabase Auth to check their organization assignments
+        try:
+            all_users_raw = client.auth.admin.list_users()
+            users_list = extract_user_list(all_users_raw)
+        except Exception as e:
+            logger.warning(f"Failed to fetch all users for inherited unit access: {e}")
+            users_list = []
+        
+        # Build a set of direct access for quick lookup
+        direct_access_set = {(entry["user_id"], entry["unit_id"]) for entry in direct_access}
+        
+        # Get inherited access from AOAO organizations
+        aoao_unit_access = {}
+        try:
+            aoao_access_result = (
+                client.table("aoao_organization_unit_access")
+                .select("aoao_organization_id, unit_id")
+                .execute()
+            )
+            for entry in (aoao_access_result.data or []):
+                org_id = entry["aoao_organization_id"]
+                unit_id = entry["unit_id"]
+                if org_id not in aoao_unit_access:
+                    aoao_unit_access[org_id] = []
+                aoao_unit_access[org_id].append(unit_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch AOAO organization unit access: {e}")
+        
+        # Get inherited access from PM companies
+        pm_unit_access = {}
+        try:
+            pm_access_result = (
+                client.table("pm_company_unit_access")
+                .select("pm_company_id, unit_id")
+                .execute()
+            )
+            for entry in (pm_access_result.data or []):
+                company_id = entry["pm_company_id"]
+                unit_id = entry["unit_id"]
+                if company_id not in pm_unit_access:
+                    pm_unit_access[company_id] = []
+                pm_unit_access[company_id].append(unit_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch PM company unit access: {e}")
+        
+        # Get all unit IDs (needed for contractors who have access to all units)
+        all_unit_ids = []
+        try:
+            units_result = (
+                client.table("units")
+                .select("id")
+                .execute()
+            )
+            all_unit_ids = [u["id"] for u in (units_result.data or [])]
+        except Exception as e:
+            logger.warning(f"Failed to fetch all units: {e}")
+        
+        # Add inherited access for users assigned to organizations
+        inherited_access = []
+        for user in users_list:
+            user_id = user.id
+            user_meta = user.user_metadata or {}
+            user_role = user_meta.get("role", "")
+            
+            # Check AOAO organization access
+            aoao_org_id = user_meta.get("aoao_organization_id")
+            if aoao_org_id and aoao_org_id in aoao_unit_access:
+                for unit_id in aoao_unit_access[aoao_org_id]:
+                    # Only add if not already in direct access (avoid duplicates)
+                    if (user_id, unit_id) not in direct_access_set:
+                        inherited_access.append({
+                            "user_id": user_id,
+                            "unit_id": unit_id,
+                            "access_type": "inherited_aoao"
+                        })
+            
+            # Check PM company access
+            pm_company_id = user_meta.get("pm_company_id")
+            if pm_company_id and pm_company_id in pm_unit_access:
+                for unit_id in pm_unit_access[pm_company_id]:
+                    # Only add if not already in direct access (avoid duplicates)
+                    if (user_id, unit_id) not in direct_access_set:
+                        inherited_access.append({
+                            "user_id": user_id,
+                            "unit_id": unit_id,
+                            "access_type": "inherited_pm"
+                        })
+            
+            # Check Contractor access (contractors have access to all units by default)
+            contractor_id = user_meta.get("contractor_id")
+            if contractor_id and user_role in ["contractor", "contractor_staff"]:
+                # Contractors have access to all units
+                for unit_id in all_unit_ids:
+                    # Only add if not already in direct access (avoid duplicates)
+                    if (user_id, unit_id) not in direct_access_set:
+                        inherited_access.append({
+                            "user_id": user_id,
+                            "unit_id": unit_id,
+                            "access_type": "inherited_contractor"
+                        })
+        
+        # Combine direct and inherited access
+        # Add access_type to direct access entries
+        direct_with_type = [
+            {**entry, "access_type": "direct"} 
+            for entry in direct_access
+        ]
+        
+        return direct_with_type + inherited_access
 
     except Exception as e:
         raise HTTPException(500, f"Supabase error: {e}")
