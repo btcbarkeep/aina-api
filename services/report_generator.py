@@ -536,12 +536,50 @@ async def generate_building_report(
         from core.contractor_helpers import batch_enrich_contractors_with_roles
         contractors = batch_enrich_contractors_with_roles(contractors)
     
+    # Get AOAO organizations assigned to this building
+    aoao_orgs = []
+    aoao_building_access_result = (
+        client.table("aoao_organization_building_access")
+        .select("aoao_organization_id")
+        .eq("building_id", building_id)
+        .execute()
+    )
+    aoao_org_ids = [row["aoao_organization_id"] for row in (aoao_building_access_result.data or [])]
+    if aoao_org_ids:
+        aoao_orgs_result = (
+            client.table("aoao_organizations")
+            .select("*")
+            .in_("id", aoao_org_ids)
+            .execute()
+        )
+        aoao_orgs = aoao_orgs_result.data or []
+    
+    # Get property management companies assigned to this building
+    pm_companies = []
+    pm_building_access_result = (
+        client.table("pm_company_building_access")
+        .select("pm_company_id")
+        .eq("building_id", building_id)
+        .execute()
+    )
+    pm_company_ids = [row["pm_company_id"] for row in (pm_building_access_result.data or [])]
+    if pm_company_ids:
+        pm_companies_result = (
+            client.table("property_management_companies")
+            .select("*")
+            .in_("id", pm_company_ids)
+            .execute()
+        )
+        pm_companies = pm_companies_result.data or []
+    
     # Calculate statistics
     stats = {
         "total_events": len(events),
         "total_documents": len(documents),
         "total_units": len(units),
         "total_contractors": len(contractors),
+        "total_aoao_organizations": len(aoao_orgs),
+        "total_pm_companies": len(pm_companies),
     }
     
     # Build report data
@@ -551,6 +589,8 @@ async def generate_building_report(
         "events": events,
         "documents": documents,
         "contractors": contractors,
+        "aoao_organizations": aoao_orgs,
+        "property_management_companies": pm_companies,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
@@ -718,11 +758,30 @@ async def generate_unit_report(
             for i, contractor in enumerate(contractors):
                 contractors[i] = enrich_contractor_with_roles(contractor)
     
+    # Get property management companies assigned to this unit
+    pm_companies = []
+    pm_unit_access_result = (
+        client.table("pm_company_unit_access")
+        .select("pm_company_id")
+        .eq("unit_id", unit_id)
+        .execute()
+    )
+    pm_company_ids = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
+    if pm_company_ids:
+        pm_companies_result = (
+            client.table("property_management_companies")
+            .select("*")
+            .in_("id", pm_company_ids)
+            .execute()
+        )
+        pm_companies = pm_companies_result.data or []
+    
     # Calculate statistics
     stats = {
         "total_events": len(events),
         "total_documents": len(documents),
         "total_contractors": len(contractors),
+        "total_pm_companies": len(pm_companies),
     }
     
     # Build report data
@@ -732,6 +791,7 @@ async def generate_unit_report(
         "events": events,
         "documents": documents,
         "contractors": contractors,
+        "property_management_companies": pm_companies,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
