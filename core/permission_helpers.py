@@ -151,6 +151,7 @@ def require_unit_access(user: CurrentUser, unit_id: str):
     Checks organization-level access first (if user is linked to an organization):
     - AOAO organizations (aoao_organization_id)
     - PM companies (pm_company_id)
+    If organization has building access, they automatically have access to all units in that building.
     Then falls back to individual user access.
     """
     if is_admin(user):
@@ -162,13 +163,27 @@ def require_unit_access(user: CurrentUser, unit_id: str):
     
     client = get_supabase_client()
     
+    # Get the unit's building_id first
+    unit_result = (
+        client.table("units")
+        .select("building_id")
+        .eq("id", unit_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not unit_result.data:
+        raise HTTPException(status_code=404, detail="Unit not found")
+    
+    unit_building_id = unit_result.data[0]["building_id"]
+    
     # Check organization-level access first (if user is linked to an organization)
     aoao_org_id = getattr(user, "aoao_organization_id", None)
     pm_company_id = getattr(user, "pm_company_id", None)
     
     if aoao_org_id:
-        # Check AOAO organization unit access
-        org_result = (
+        # Check AOAO organization unit access (direct)
+        org_unit_result = (
             client.table("aoao_organization_unit_access")
             .select("id")
             .eq("aoao_organization_id", aoao_org_id)
@@ -176,12 +191,24 @@ def require_unit_access(user: CurrentUser, unit_id: str):
             .limit(1)
             .execute()
         )
-        if org_result.data:
-            return  # Organization has access, user inherits it
+        if org_unit_result.data:
+            return  # Organization has direct unit access, user inherits it
+        
+        # Check if AOAO organization has building access (grants access to all units in building)
+        org_building_result = (
+            client.table("aoao_organization_building_access")
+            .select("id")
+            .eq("aoao_organization_id", aoao_org_id)
+            .eq("building_id", unit_building_id)
+            .limit(1)
+            .execute()
+        )
+        if org_building_result.data:
+            return  # Organization has building access, user inherits access to all units in building
     
     if pm_company_id:
-        # Check PM company unit access
-        company_result = (
+        # Check PM company unit access (direct)
+        company_unit_result = (
             client.table("pm_company_unit_access")
             .select("id")
             .eq("pm_company_id", pm_company_id)
@@ -189,8 +216,20 @@ def require_unit_access(user: CurrentUser, unit_id: str):
             .limit(1)
             .execute()
         )
-        if company_result.data:
-            return  # Company has access, user inherits it
+        if company_unit_result.data:
+            return  # Company has direct unit access, user inherits it
+        
+        # Check if PM company has building access (grants access to all units in building)
+        company_building_result = (
+            client.table("pm_company_building_access")
+            .select("id")
+            .eq("pm_company_id", pm_company_id)
+            .eq("building_id", unit_building_id)
+            .limit(1)
+            .execute()
+        )
+        if company_building_result.data:
+            return  # Company has building access, user inherits access to all units in building
     
     # Fall back to individual user access
     result = (
@@ -337,6 +376,7 @@ def get_user_accessible_unit_ids(user: CurrentUser) -> List[str]:
     Includes organization-level access if user is linked to an organization:
     - AOAO organizations (aoao_organization_id)
     - PM companies (pm_company_id)
+    If organization has building access, they automatically have access to all units in those buildings.
     """
     if is_admin(user):
         return None  # None means all units
@@ -353,22 +393,60 @@ def get_user_accessible_unit_ids(user: CurrentUser) -> List[str]:
     pm_company_id = getattr(user, "pm_company_id", None)
     
     if aoao_org_id:
-        org_result = (
+        # Get direct AOAO organization unit access
+        org_unit_result = (
             client.table("aoao_organization_unit_access")
             .select("unit_id")
             .eq("aoao_organization_id", aoao_org_id)
             .execute()
         )
-        unit_ids.update([row["unit_id"] for row in (org_result.data or [])])
+        unit_ids.update([row["unit_id"] for row in (org_unit_result.data or [])])
+        
+        # Get AOAO organization building access, then get all units in those buildings
+        org_building_result = (
+            client.table("aoao_organization_building_access")
+            .select("building_id")
+            .eq("aoao_organization_id", aoao_org_id)
+            .execute()
+        )
+        building_ids = [row["building_id"] for row in (org_building_result.data or [])]
+        if building_ids:
+            # Get all units in these buildings
+            units_in_buildings_result = (
+                client.table("units")
+                .select("id")
+                .in_("building_id", building_ids)
+                .execute()
+            )
+            unit_ids.update([row["id"] for row in (units_in_buildings_result.data or [])])
     
     if pm_company_id:
-        company_result = (
+        # Get direct PM company unit access
+        company_unit_result = (
             client.table("pm_company_unit_access")
             .select("unit_id")
             .eq("pm_company_id", pm_company_id)
             .execute()
         )
-        unit_ids.update([row["unit_id"] for row in (company_result.data or [])])
+        unit_ids.update([row["unit_id"] for row in (company_unit_result.data or [])])
+        
+        # Get PM company building access, then get all units in those buildings
+        company_building_result = (
+            client.table("pm_company_building_access")
+            .select("building_id")
+            .eq("pm_company_id", pm_company_id)
+            .execute()
+        )
+        building_ids = [row["building_id"] for row in (company_building_result.data or [])]
+        if building_ids:
+            # Get all units in these buildings
+            units_in_buildings_result = (
+                client.table("units")
+                .select("id")
+                .in_("building_id", building_ids)
+                .execute()
+            )
+            unit_ids.update([row["id"] for row in (units_in_buildings_result.data or [])])
     
     # Add individual user access
     user_result = (
