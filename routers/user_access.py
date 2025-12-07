@@ -351,31 +351,33 @@ def list_unit_access():
 @router.get(
     "/",
     summary="List all user access entries (buildings and units)",
-    description="[User Access] List all individual user access grants (both buildings and units)",
+    description="[User Access] List all individual user access grants (both buildings and units, includes inherited organization access)",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_user_access():
-    client = get_supabase_client()
-
+    """
+    List all user access entries for both buildings and units.
+    This includes both direct access and inherited access from organizations.
+    """
+    # Reuse the logic from the individual endpoints
+    # Get building access (includes inherited)
     try:
-        building_result = (
-            client.table("user_building_access")
-            .select("user_id, building_id")
-            .execute()
-        )
-        unit_result = (
-            client.table("user_units_access")
-            .select("user_id, unit_id")
-            .execute()
-        )
-        
-        return {
-            "buildings": building_result.data or [],
-            "units": unit_result.data or [],
-        }
-
+        building_access = list_building_access()
     except Exception as e:
-        raise HTTPException(500, f"Supabase error: {e}")
+        logger.error(f"Failed to get building access: {e}")
+        building_access = []
+    
+    # Get unit access (includes inherited)
+    try:
+        unit_access = list_unit_access()
+    except Exception as e:
+        logger.error(f"Failed to get unit access: {e}")
+        unit_access = []
+    
+    return {
+        "buildings": building_access,
+        "units": unit_access,
+    }
 
 
 # ============================================================
