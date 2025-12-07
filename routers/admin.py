@@ -371,15 +371,29 @@ def update_user(
         if not pm_check.data:
             raise HTTPException(400, f"Property management company {updates['pm_company_id']} does not exist")
 
-    # Preserve organization IDs unless explicitly updated
-    merged = {**current_meta, **updates}
-    if "contractor_id" not in updates:
-        merged["contractor_id"] = current_meta.get("contractor_id")
-    if "aoao_organization_id" not in updates:
-        merged["aoao_organization_id"] = current_meta.get("aoao_organization_id")
-    if "pm_company_id" not in updates:
-        merged["pm_company_id"] = current_meta.get("pm_company_id")
-
+    # Build merged metadata: start with current, then apply updates
+    merged = current_meta.copy()
+    
+    # Apply updates (excluding organization IDs which are handled separately)
+    for key, value in updates.items():
+        if key not in ["contractor_id", "aoao_organization_id", "pm_company_id", "permissions"]:
+            merged[key] = value
+    
+    # Handle organization IDs: only update if explicitly provided
+    if "contractor_id" in updates:
+        merged["contractor_id"] = updates["contractor_id"]
+    if "aoao_organization_id" in updates:
+        merged["aoao_organization_id"] = updates["aoao_organization_id"]
+    if "pm_company_id" in updates:
+        merged["pm_company_id"] = updates["pm_company_id"]
+    
+    # Handle permissions: only update if explicitly provided
+    if "permissions" in updates:
+        merged["permissions"] = updates["permissions"]
+    elif "permissions" not in merged:
+        merged["permissions"] = []
+    
+    # Always set role
     merged["role"] = new_role
 
     try:
@@ -388,7 +402,11 @@ def update_user(
             {"user_metadata": merged}
         )
     except Exception as e:
-        raise HTTPException(500, f"Supabase update error: {e}")
+        error_msg = str(e)
+        # Log the full error for debugging
+        import logging
+        logging.error(f"Failed to update user {user_id}: {error_msg}. Metadata: {merged}")
+        raise HTTPException(500, f"Supabase update error: {error_msg}")
 
     return {"success": True, "data": merged}
 
