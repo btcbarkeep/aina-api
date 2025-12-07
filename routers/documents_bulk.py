@@ -71,8 +71,30 @@ async def bulk_upload_documents(
     if df.empty:
         raise HTTPException(400, "Spreadsheet is empty.")
 
-    # Normalize column names
-    df.columns = [c.strip().lower() for c in df.columns]
+    # Normalize column names (lowercase, strip whitespace, replace spaces with underscores)
+    normalized_columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    df.columns = normalized_columns
+    
+    # Map alternative column names to standard names
+    column_mapping = {}
+    
+    # Map title alternatives (after normalization, "Project Name" becomes "project_name")
+    title_alternatives = ["title", "project_name"]
+    for col in normalized_columns:
+        if col in title_alternatives:
+            column_mapping[col] = "title"
+            break
+    
+    # Map document_url alternatives (after normalization, "document url" becomes "document_url", "document link" becomes "document_link")
+    document_url_alternatives = ["document_url", "document_link"]
+    for col in normalized_columns:
+        if col in document_url_alternatives:
+            column_mapping[col] = "document_url"
+            break
+    
+    # Rename columns using the mapping
+    if column_mapping:
+        df = df.rename(columns=column_mapping)
 
     client = get_supabase_client()
     
@@ -112,7 +134,17 @@ async def bulk_upload_documents(
     
     missing = required_columns - set(df.columns)
     if missing:
-        raise HTTPException(400, f"Missing required columns: {', '.join(missing)}")
+        # Provide helpful error message with accepted alternatives
+        error_msg = "Missing required columns: "
+        missing_list = []
+        for col in missing:
+            if col == "title":
+                missing_list.append("title (or 'Project Name')")
+            elif col == "document_url":
+                missing_list.append("document_url (or 'document url', 'document link', 'document_link')")
+            else:
+                missing_list.append(col)
+        raise HTTPException(400, error_msg + ", ".join(missing_list))
 
     created_docs = []
 
