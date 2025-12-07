@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     # -------------------------------------------------
     STRIPE_SECRET_KEY: Optional[str] = Field(None, env="STRIPE_SECRET_KEY")
     STRIPE_WEBHOOK_SECRET: Optional[str] = Field(None, env="STRIPE_WEBHOOK_SECRET")
+    
+    # -------------------------------------------------
+    # Subscription Trial Limits
+    # -------------------------------------------------
+    # Self-service trial limits (users starting their own trials)
+    TRIAL_SELF_SERVICE_MAX_DAYS: int = Field(14, env="TRIAL_SELF_SERVICE_MAX_DAYS", description="Maximum trial days users can request themselves (default: 14)")
+    TRIAL_SELF_SERVICE_MIN_DAYS: int = Field(1, env="TRIAL_SELF_SERVICE_MIN_DAYS", description="Minimum trial days for self-service (default: 1)")
+    
+    # Admin trial limits (admins granting trials to users)
+    TRIAL_ADMIN_MAX_DAYS: int = Field(180, env="TRIAL_ADMIN_MAX_DAYS", description="Maximum trial days admins can grant (default: 180)")
+    TRIAL_ADMIN_MIN_DAYS: int = Field(1, env="TRIAL_ADMIN_MIN_DAYS", description="Minimum trial days for admin grants (default: 1)")
 
     # -------------------------------------------------
     # Model Config
