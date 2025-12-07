@@ -37,14 +37,16 @@ router = APIRouter(
 async def bulk_upload_documents(
     file: UploadFile = File(...),
     building_id: Optional[str] = Form(None, description="Optional building ID to assign to all documents in the bulk upload. If provided, building_id column in spreadsheet is optional."),
+    source: Optional[str] = Form(None, description="Optional source text to apply to all documents in the bulk upload (e.g., 'Maui County Permits', 'Public Records', etc.)"),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Accepts an Excel file (.xlsx) or CSV containing document metadata.
     Creates 1 row in `documents` per row in the spreadsheet.
     
-    If `building_id` is provided as a parameter, all documents will be assigned to that building.
-    If not provided, each row must include a `building_id` column.
+    - If `building_id` is provided as a parameter, all documents will be assigned to that building.
+    - If `source` is provided, it will be applied to all documents.
+    - All bulk upload documents are automatically set to `is_public=True`.
     """
 
     # ------------------------------
@@ -381,7 +383,7 @@ async def bulk_upload_documents(
         
         doc_data = {
             "id": str(uuid.uuid4()),
-            "filename": filename,  # From "title" column in spreadsheet
+            "filename": filename,  # From "title", "project_name", or "description" column in spreadsheet
             "document_url": document_url,
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
@@ -392,6 +394,8 @@ async def bulk_upload_documents(
             "folder": clean_value(row.get("folder")),
             "tmk": clean_value(row.get("tmk")),
             "description": clean_value(row.get("description")),
+            "source": source if source else None,  # Apply source to all documents if provided
+            "is_public": True,  # All bulk upload documents are public
             "uploaded_by": str(current_user.id),
         }
 
@@ -399,7 +403,8 @@ async def bulk_upload_documents(
         
         # Remove any None values that might cause issues, but keep empty strings as None
         # PostgREST doesn't like certain None values in some contexts
-        final_data = {k: v for k, v in sanitized.items() if v is not None or k in ["unit_id", "event_id"]}
+        # Keep optional fields that can be None: unit_id, event_id, source
+        final_data = {k: v for k, v in sanitized.items() if v is not None or k in ["unit_id", "event_id", "source"]}
         
         # Log the data being sent for debugging (first few rows only)
         if row_num <= 5:
