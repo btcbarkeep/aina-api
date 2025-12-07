@@ -271,7 +271,29 @@ def admin_start_trial_for_user(
             # Fetch user from Supabase auth to get their role
             resp = client.auth.admin.get_user_by_id(user_id)
             if not resp.user:
-                raise HTTPException(404, f"User {user_id} not found")
+                # Check if this might be a contractor ID instead
+                contractor_check = (
+                    client.table("contractors")
+                    .select("id, company_name")
+                    .eq("id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+                if contractor_check.data:
+                    contractor = contractor_check.data[0]
+                    # Try to find users linked to this contractor
+                    try:
+                        # Note: We can't directly query auth.users, but we can check if there are any users
+                        # with this contractor_id in their metadata via a custom query if needed
+                        raise HTTPException(
+                            400,
+                            f"'{user_id}' is a contractor ID (company: {contractor.get('company_name', 'Unknown')}), not a user ID. "
+                            f"Please use a user ID from auth.users. To grant a trial to a contractor user, you need their user account ID (from auth.users), not the contractor company ID. "
+                            f"Use GET /admin/users to find users linked to this contractor."
+                        )
+                    except HTTPException:
+                        raise
+                raise HTTPException(404, f"User {user_id} not found in auth.users")
             
             metadata = resp.user.user_metadata or {}
             role = metadata.get("role", "aoao")
@@ -282,6 +304,24 @@ def admin_start_trial_for_user(
             raise
         except Exception as e:
             logger.error(f"Error fetching user {user_id} for trial: {e}")
+            # Check if this might be a contractor ID
+            try:
+                contractor_check = (
+                    client.table("contractors")
+                    .select("id, company_name")
+                    .eq("id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+                if contractor_check.data:
+                    contractor = contractor_check.data[0]
+                    raise HTTPException(
+                        400,
+                        f"'{user_id}' is a contractor ID (company: {contractor.get('company_name', 'Unknown')}), not a user ID. "
+                        f"Please use a user ID from auth.users."
+                    )
+            except HTTPException:
+                raise
             raise HTTPException(500, f"Failed to fetch user information: {str(e)}")
     
     # Apply admin trial limits
@@ -339,4 +379,257 @@ def admin_start_trial_for_user(
     )
     
     return subscription
+
+
+# ============================================================
+# BUSINESS TRIAL ENDPOINTS (Contractors, AOAO Orgs, PM Companies)
+# ============================================================
+
+@router.post("/contractors/{contractor_id}/start-trial")
+def start_contractor_trial(
+    contractor_id: str,
+    trial_days: Optional[int] = Query(
+        None,
+        ge=1,
+        description=f"Trial duration in days ({settings.TRIAL_ADMIN_MIN_DAYS}-{settings.TRIAL_ADMIN_MAX_DAYS}). Defaults to {settings.TRIAL_ADMIN_MAX_DAYS} days if not specified."
+    ),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Admin: Grant a free trial to a contractor company.
+    
+    **Admin Only:** Only admins and super_admins can grant trials.
+    
+    Updates the contractor's subscription to "trialing" status.
+    """
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admins can grant trials to contractors")
+    
+    # Apply admin trial limits
+    if trial_days is None:
+        trial_days = settings.TRIAL_ADMIN_MAX_DAYS
+    
+    if trial_days < settings.TRIAL_ADMIN_MIN_DAYS:
+        raise HTTPException(400, f"Trial duration must be at least {settings.TRIAL_ADMIN_MIN_DAYS} days")
+    
+    if trial_days > settings.TRIAL_ADMIN_MAX_DAYS:
+        raise HTTPException(400, f"Trial duration cannot exceed {settings.TRIAL_ADMIN_MAX_DAYS} days")
+    
+    client = get_supabase_client()
+    
+    # Check if contractor exists
+    contractor = (
+        client.table("contractors")
+        .select("id, company_name, subscription_tier, subscription_status")
+        .eq("id", contractor_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not contractor.data:
+        raise HTTPException(404, f"Contractor {contractor_id} not found")
+    
+    contractor_data = contractor.data[0]
+    
+    # Check if already has active subscription
+    if contractor_data.get("subscription_tier") == "paid" and contractor_data.get("subscription_status") in ["active", "trialing"]:
+        raise HTTPException(400, f"Contractor already has an active paid subscription")
+    
+    # Update contractor subscription
+    try:
+        update_res = (
+            client.table("contractors")
+            .update({
+                "subscription_tier": "paid",
+                "subscription_status": "trialing"
+            })
+            .eq("id", contractor_id)
+            .execute()
+        )
+        
+        if not update_res.data:
+            raise HTTPException(500, "Failed to update contractor subscription")
+        
+        logger.info(
+            f"Admin {current_user.auth_user_id} granted {trial_days}-day trial to contractor {contractor_id} "
+            f"({contractor_data.get('company_name', 'Unknown')})"
+        )
+        
+        return {
+            "success": True,
+            "contractor_id": contractor_id,
+            "company_name": contractor_data.get("company_name"),
+            "subscription_tier": "paid",
+            "subscription_status": "trialing",
+            "trial_days": trial_days
+        }
+    except Exception as e:
+        logger.error(f"Error granting trial to contractor {contractor_id}: {e}")
+        raise HTTPException(500, f"Failed to grant trial: {str(e)}")
+
+
+@router.post("/aoao-organizations/{organization_id}/start-trial")
+def start_aoao_org_trial(
+    organization_id: str,
+    trial_days: Optional[int] = Query(
+        None,
+        ge=1,
+        description=f"Trial duration in days ({settings.TRIAL_ADMIN_MIN_DAYS}-{settings.TRIAL_ADMIN_MAX_DAYS}). Defaults to {settings.TRIAL_ADMIN_MAX_DAYS} days if not specified."
+    ),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Admin: Grant a free trial to an AOAO organization.
+    
+    **Admin Only:** Only admins and super_admins can grant trials.
+    
+    Updates the organization's subscription to "trialing" status.
+    """
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admins can grant trials to AOAO organizations")
+    
+    # Apply admin trial limits
+    if trial_days is None:
+        trial_days = settings.TRIAL_ADMIN_MAX_DAYS
+    
+    if trial_days < settings.TRIAL_ADMIN_MIN_DAYS:
+        raise HTTPException(400, f"Trial duration must be at least {settings.TRIAL_ADMIN_MIN_DAYS} days")
+    
+    if trial_days > settings.TRIAL_ADMIN_MAX_DAYS:
+        raise HTTPException(400, f"Trial duration cannot exceed {settings.TRIAL_ADMIN_MAX_DAYS} days")
+    
+    client = get_supabase_client()
+    
+    # Check if organization exists
+    org = (
+        client.table("aoao_organizations")
+        .select("id, organization_name, subscription_tier, subscription_status")
+        .eq("id", organization_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not org.data:
+        raise HTTPException(404, f"AOAO organization {organization_id} not found")
+    
+    org_data = org.data[0]
+    
+    # Check if already has active subscription
+    if org_data.get("subscription_tier") == "paid" and org_data.get("subscription_status") in ["active", "trialing"]:
+        raise HTTPException(400, f"AOAO organization already has an active paid subscription")
+    
+    # Update organization subscription
+    try:
+        update_res = (
+            client.table("aoao_organizations")
+            .update({
+                "subscription_tier": "paid",
+                "subscription_status": "trialing"
+            })
+            .eq("id", organization_id)
+            .execute()
+        )
+        
+        if not update_res.data:
+            raise HTTPException(500, "Failed to update AOAO organization subscription")
+        
+        logger.info(
+            f"Admin {current_user.auth_user_id} granted {trial_days}-day trial to AOAO organization {organization_id} "
+            f"({org_data.get('organization_name', 'Unknown')})"
+        )
+        
+        return {
+            "success": True,
+            "organization_id": organization_id,
+            "organization_name": org_data.get("organization_name"),
+            "subscription_tier": "paid",
+            "subscription_status": "trialing",
+            "trial_days": trial_days
+        }
+    except Exception as e:
+        logger.error(f"Error granting trial to AOAO organization {organization_id}: {e}")
+        raise HTTPException(500, f"Failed to grant trial: {str(e)}")
+
+
+@router.post("/pm-companies/{company_id}/start-trial")
+def start_pm_company_trial(
+    company_id: str,
+    trial_days: Optional[int] = Query(
+        None,
+        ge=1,
+        description=f"Trial duration in days ({settings.TRIAL_ADMIN_MIN_DAYS}-{settings.TRIAL_ADMIN_MAX_DAYS}). Defaults to {settings.TRIAL_ADMIN_MAX_DAYS} days if not specified."
+    ),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Admin: Grant a free trial to a property management company.
+    
+    **Admin Only:** Only admins and super_admins can grant trials.
+    
+    Updates the company's subscription to "trialing" status.
+    """
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admins can grant trials to property management companies")
+    
+    # Apply admin trial limits
+    if trial_days is None:
+        trial_days = settings.TRIAL_ADMIN_MAX_DAYS
+    
+    if trial_days < settings.TRIAL_ADMIN_MIN_DAYS:
+        raise HTTPException(400, f"Trial duration must be at least {settings.TRIAL_ADMIN_MIN_DAYS} days")
+    
+    if trial_days > settings.TRIAL_ADMIN_MAX_DAYS:
+        raise HTTPException(400, f"Trial duration cannot exceed {settings.TRIAL_ADMIN_MAX_DAYS} days")
+    
+    client = get_supabase_client()
+    
+    # Check if company exists
+    company = (
+        client.table("property_management_companies")
+        .select("id, company_name, subscription_tier, subscription_status")
+        .eq("id", company_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not company.data:
+        raise HTTPException(404, f"Property management company {company_id} not found")
+    
+    company_data = company.data[0]
+    
+    # Check if already has active subscription
+    if company_data.get("subscription_tier") == "paid" and company_data.get("subscription_status") in ["active", "trialing"]:
+        raise HTTPException(400, f"Property management company already has an active paid subscription")
+    
+    # Update company subscription
+    try:
+        update_res = (
+            client.table("property_management_companies")
+            .update({
+                "subscription_tier": "paid",
+                "subscription_status": "trialing"
+            })
+            .eq("id", company_id)
+            .execute()
+        )
+        
+        if not update_res.data:
+            raise HTTPException(500, "Failed to update property management company subscription")
+        
+        logger.info(
+            f"Admin {current_user.auth_user_id} granted {trial_days}-day trial to PM company {company_id} "
+            f"({company_data.get('company_name', 'Unknown')})"
+        )
+        
+        return {
+            "success": True,
+            "company_id": company_id,
+            "company_name": company_data.get("company_name"),
+            "subscription_tier": "paid",
+            "subscription_status": "trialing",
+            "trial_days": trial_days
+        }
+    except Exception as e:
+        logger.error(f"Error granting trial to PM company {company_id}: {e}")
+        raise HTTPException(500, f"Failed to grant trial: {str(e)}")
 
