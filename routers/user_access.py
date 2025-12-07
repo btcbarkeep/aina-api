@@ -245,7 +245,10 @@ def list_unit_access():
         # Build a set of direct access for quick lookup
         direct_access_set = {(entry["user_id"], entry["unit_id"]) for entry in direct_access}
         
-        # Get inherited access from AOAO organizations
+        # Track inherited access to avoid duplicates
+        inherited_access_set = set()
+        
+        # Get inherited access from AOAO organizations (direct unit access)
         aoao_unit_access = {}
         try:
             aoao_access_result = (
@@ -262,7 +265,41 @@ def list_unit_access():
         except Exception as e:
             logger.warning(f"Failed to fetch AOAO organization unit access: {e}")
         
-        # Get inherited access from PM companies
+        # Get AOAO organization building access (grants access to all units in those buildings)
+        aoao_building_access = {}
+        try:
+            aoao_building_result = (
+                client.table("aoao_organization_building_access")
+                .select("aoao_organization_id, building_id")
+                .execute()
+            )
+            for entry in (aoao_building_result.data or []):
+                org_id = entry["aoao_organization_id"]
+                building_id = entry["building_id"]
+                if org_id not in aoao_building_access:
+                    aoao_building_access[org_id] = []
+                aoao_building_access[org_id].append(building_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch AOAO organization building access: {e}")
+        
+        # Get all units grouped by building_id (for efficient lookup)
+        units_by_building = {}
+        try:
+            all_units_result = (
+                client.table("units")
+                .select("id, building_id")
+                .execute()
+            )
+            for unit in (all_units_result.data or []):
+                building_id = unit["building_id"]
+                unit_id = unit["id"]
+                if building_id not in units_by_building:
+                    units_by_building[building_id] = []
+                units_by_building[building_id].append(unit_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch units by building: {e}")
+        
+        # Get inherited access from PM companies (direct unit access)
         pm_unit_access = {}
         try:
             pm_access_result = (
@@ -278,6 +315,23 @@ def list_unit_access():
                 pm_unit_access[company_id].append(unit_id)
         except Exception as e:
             logger.warning(f"Failed to fetch PM company unit access: {e}")
+        
+        # Get PM company building access (grants access to all units in those buildings)
+        pm_building_access = {}
+        try:
+            pm_building_result = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id, building_id")
+                .execute()
+            )
+            for entry in (pm_building_result.data or []):
+                company_id = entry["pm_company_id"]
+                building_id = entry["building_id"]
+                if company_id not in pm_building_access:
+                    pm_building_access[company_id] = []
+                pm_building_access[company_id].append(building_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch PM company building access: {e}")
         
         # Get all unit IDs (needed for contractors who have access to all units)
         all_unit_ids = []
@@ -300,40 +354,82 @@ def list_unit_access():
             
             # Check AOAO organization access
             aoao_org_id = user_meta.get("aoao_organization_id")
-            if aoao_org_id and aoao_org_id in aoao_unit_access:
-                for unit_id in aoao_unit_access[aoao_org_id]:
-                    # Only add if not already in direct access (avoid duplicates)
-                    if (user_id, unit_id) not in direct_access_set:
-                        inherited_access.append({
-                            "user_id": user_id,
-                            "unit_id": unit_id,
-                            "access_type": "inherited_aoao"
-                        })
+            if aoao_org_id:
+                # Add direct unit access
+                if aoao_org_id in aoao_unit_access:
+                    for unit_id in aoao_unit_access[aoao_org_id]:
+                        # Only add if not already in direct or inherited access (avoid duplicates)
+                        access_key = (user_id, unit_id)
+                        if access_key not in direct_access_set and access_key not in inherited_access_set:
+                            inherited_access.append({
+                                "user_id": user_id,
+                                "unit_id": unit_id,
+                                "access_type": "inherited_aoao"
+                            })
+                            inherited_access_set.add(access_key)
+                
+                # Add units from buildings the organization has access to
+                if aoao_org_id in aoao_building_access:
+                    for building_id in aoao_building_access[aoao_org_id]:
+                        # Get all units in this building
+                        building_units = units_by_building.get(building_id, [])
+                        for unit_id in building_units:
+                            # Only add if not already in direct or inherited access (avoid duplicates)
+                            access_key = (user_id, unit_id)
+                            if access_key not in direct_access_set and access_key not in inherited_access_set:
+                                inherited_access.append({
+                                    "user_id": user_id,
+                                    "unit_id": unit_id,
+                                    "access_type": "inherited_aoao_building"
+                                })
+                                inherited_access_set.add(access_key)
             
             # Check PM company access
             pm_company_id = user_meta.get("pm_company_id")
-            if pm_company_id and pm_company_id in pm_unit_access:
-                for unit_id in pm_unit_access[pm_company_id]:
-                    # Only add if not already in direct access (avoid duplicates)
-                    if (user_id, unit_id) not in direct_access_set:
-                        inherited_access.append({
-                            "user_id": user_id,
-                            "unit_id": unit_id,
-                            "access_type": "inherited_pm"
-                        })
+            if pm_company_id:
+                # Add direct unit access
+                if pm_company_id in pm_unit_access:
+                    for unit_id in pm_unit_access[pm_company_id]:
+                        # Only add if not already in direct or inherited access (avoid duplicates)
+                        access_key = (user_id, unit_id)
+                        if access_key not in direct_access_set and access_key not in inherited_access_set:
+                            inherited_access.append({
+                                "user_id": user_id,
+                                "unit_id": unit_id,
+                                "access_type": "inherited_pm"
+                            })
+                            inherited_access_set.add(access_key)
+                
+                # Add units from buildings the company has access to
+                if pm_company_id in pm_building_access:
+                    for building_id in pm_building_access[pm_company_id]:
+                        # Get all units in this building
+                        building_units = units_by_building.get(building_id, [])
+                        for unit_id in building_units:
+                            # Only add if not already in direct or inherited access (avoid duplicates)
+                            access_key = (user_id, unit_id)
+                            if access_key not in direct_access_set and access_key not in inherited_access_set:
+                                inherited_access.append({
+                                    "user_id": user_id,
+                                    "unit_id": unit_id,
+                                    "access_type": "inherited_pm_building"
+                                })
+                                inherited_access_set.add(access_key)
             
             # Check Contractor access (contractors have access to all units by default)
             contractor_id = user_meta.get("contractor_id")
             if contractor_id and user_role in ["contractor", "contractor_staff"]:
                 # Contractors have access to all units
                 for unit_id in all_unit_ids:
-                    # Only add if not already in direct access (avoid duplicates)
-                    if (user_id, unit_id) not in direct_access_set:
+                    # Only add if not already in direct or inherited access (avoid duplicates)
+                    access_key = (user_id, unit_id)
+                    if access_key not in direct_access_set and access_key not in inherited_access_set:
                         inherited_access.append({
                             "user_id": user_id,
                             "unit_id": unit_id,
                             "access_type": "inherited_contractor"
                         })
+                        inherited_access_set.add(access_key)
         
         # Combine direct and inherited access
         # Add access_type to direct access entries
