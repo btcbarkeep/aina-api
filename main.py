@@ -38,6 +38,11 @@ from routers.health import router as health_router
 from routers.subscriptions import router as subscriptions_router
 from routers.stripe_webhooks import router as stripe_webhooks_router
 
+# New Feature Routers
+from routers.messages import router as messages_router
+from routers.requests import router as requests_router
+from routers.financials import router as financials_router
+
 # Admin Routers
 from routers.admin import router as admin_router
 from routers.admin_daily import router as admin_daily_router
@@ -207,6 +212,11 @@ def create_app() -> FastAPI:
     # Subscriptions
     app.include_router(subscriptions_router)
     app.include_router(stripe_webhooks_router)
+    
+    # New Features
+    app.include_router(messages_router)
+    app.include_router(requests_router)
+    app.include_router(financials_router)
 
     # -------------------------------------------------
     # Root Redirect (Cloudflare Frontend)
