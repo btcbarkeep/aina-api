@@ -390,47 +390,16 @@ async def bulk_upload_documents(
         
         document_url = clean_value(row.get("document_url"))
         
-        # Generate filename from title (for database compatibility, but can be blank)
-        # Use the title we just generated and sanitize it for filename
+        # Leave filename blank to avoid S3 conflicts/overwrites
+        # Bulk uploads use document_url (external URLs), not S3 uploads
+        # filename is not needed for bulk uploads and can be None/empty
         filename = None
-        if title and title != "County Archive":
-            # Generate a safe filename from title
-            safe_title = re.sub(r'[^A-Za-z0-9._-]', '_', title)[:100]
-            filename = f"{safe_title}.pdf"
-        else:
-            # If no meaningful title, try to extract from URL
-            if document_url:
-                try:
-                    parsed_url = urlparse(document_url)
-                    # Try to get filename from URL path
-                    path = unquote(parsed_url.path)
-                    if path and '/' in path:
-                        filename = path.split('/')[-1]
-                        # Remove query parameters if any
-                        if '?' in filename:
-                            filename = filename.split('?')[0]
-                        # Clean up the filename
-                        if filename:
-                            filename = filename.strip()
-                    # If no filename in path, try to get from query params
-                    if not filename or filename == '':
-                        query_params = parse_qs(parsed_url.query)
-                        # Check common filename parameters
-                        for param in ['f', 'file', 'filename', 'name']:
-                            if param in query_params and query_params[param]:
-                                filename = query_params[param][0].strip()
-                                break
-                except Exception as e:
-                    logger.warning(f"Row {row_num}: Error extracting filename from URL: {e}")
-        
-        # filename can be None/blank - database should allow it or we'll generate a minimal one
-        if not filename:
-            filename = "document.pdf"  # Minimal fallback
         
         doc_data = {
             "id": str(uuid.uuid4()),
             "title": title,  # Generated from "County Archive - {permit_type} - {permit_number}" or fallback
-            "filename": filename,  # Extracted from URL or fallback
+            # filename is intentionally left blank for bulk uploads to avoid S3 conflicts
+            # Bulk uploads use document_url (external URLs), not S3 uploads
             "document_url": document_url,
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
