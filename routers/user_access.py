@@ -292,11 +292,13 @@ def list_unit_access():
                 .execute()
             )
             for unit in (all_units_result.data or []):
-                building_id = str(unit["building_id"])  # Normalize to string
+                building_id = str(unit["building_id"]) if unit.get("building_id") else None  # Normalize to string
                 unit_id = str(unit["id"])  # Normalize to string
-                if building_id not in units_by_building:
-                    units_by_building[building_id] = []
-                units_by_building[building_id].append(unit_id)
+                if building_id:  # Only add if building_id exists
+                    if building_id not in units_by_building:
+                        units_by_building[building_id] = []
+                    units_by_building[building_id].append(unit_id)
+            logger.debug(f"Loaded {len(units_by_building)} buildings with units. Total units: {sum(len(units) for units in units_by_building.values())}")
         except Exception as e:
             logger.warning(f"Failed to fetch units by building: {e}")
         
@@ -375,6 +377,8 @@ def list_unit_access():
                     for building_id in aoao_building_access[aoao_org_id]:
                         # Get all units in this building
                         building_units = units_by_building.get(building_id, [])
+                        if building_units:  # Only log if there are units
+                            logger.debug(f"AOAO org {aoao_org_id} has access to building {building_id} with {len(building_units)} units")
                         for unit_id in building_units:
                             # Only add if not already in direct or inherited access (avoid duplicates)
                             access_key = (user_id, unit_id)
@@ -405,9 +409,11 @@ def list_unit_access():
                 
                 # Add units from buildings the company has access to
                 if pm_company_id in pm_building_access:
+                    logger.debug(f"User {user_id} has PM company {pm_company_id} with building access: {pm_building_access[pm_company_id]}")
                     for building_id in pm_building_access[pm_company_id]:
                         # Get all units in this building
                         building_units = units_by_building.get(building_id, [])
+                        logger.debug(f"Building {building_id} has {len(building_units)} units. Units: {building_units[:5]}...")  # Log first 5
                         for unit_id in building_units:
                             # Only add if not already in direct or inherited access (avoid duplicates)
                             access_key = (user_id, unit_id)
@@ -418,6 +424,8 @@ def list_unit_access():
                                     "access_type": "inherited_pm_building"
                                 })
                                 inherited_access_set.add(access_key)
+                else:
+                    logger.debug(f"PM company {pm_company_id} not found in pm_building_access. Available keys: {list(pm_building_access.keys())[:5]}")
             
             # Check Contractor access (contractors have access to all units by default)
             contractor_id = user_meta.get("contractor_id")
