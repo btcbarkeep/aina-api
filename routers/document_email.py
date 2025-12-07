@@ -31,8 +31,8 @@ def send_documents_email(
     Send multiple documents (up to 5) via email to multiple recipients.
     
     **Permissions:**
-    - AOAO, admin, super_admin: Can always send
-    - Property Manager, Owner, Contractor: Must have active paid subscription
+    - Admin, super_admin: Can always send
+    - AOAO, Property Manager, Owner, Contractor: Must have active paid subscription (or active trial)
     
     **Features:**
     - Sends documents as email attachments (if S3 files) or download links
@@ -41,49 +41,50 @@ def send_documents_email(
     - Generates presigned URLs valid for 7 days
     """
     # Check if user has permission to send documents
-    allowed_roles = ["aoao", "admin", "super_admin"]
-    
-    if current_user.role not in allowed_roles:
-        # For property_manager, owner, contractor - check if they have active paid subscription
-        if current_user.role in ["property_manager", "owner", "contractor"]:
-            # Fetch subscription info if not already loaded
-            subscription_tier = current_user.subscription_tier
-            subscription_status = current_user.subscription_status
-            is_trial = current_user.is_trial
-            trial_ends_at = current_user.trial_ends_at
-            
-            # If subscription info not in current_user, fetch it
-            if not subscription_tier:
-                from core.subscription_helpers import get_user_subscription
-                sub = get_user_subscription(current_user.auth_user_id, current_user.role)
-                if sub:
-                    subscription_tier = sub.get("subscription_tier")
-                    subscription_status = sub.get("subscription_status")
-                    is_trial = sub.get("is_trial", False)
-                    trial_ends_at = sub.get("trial_ends_at")
-            
-            # Check subscription status
-            has_active_sub = check_user_has_active_subscription(
-                role=current_user.role,
-                subscription_tier=subscription_tier,
-                subscription_status=subscription_status,
-                is_trial=is_trial,
-                trial_ends_at=trial_ends_at,
-                contractor_id=current_user.contractor_id,
-                pm_company_id=current_user.pm_company_id,
-                aoao_organization_id=current_user.aoao_organization_id
-            )
-            
-            if not has_active_sub:
-                raise HTTPException(
-                    403,
-                    f"Active paid subscription required to send documents. Your current subscription: {subscription_tier or 'free'}"
-                )
-        else:
+    # Admin and super_admin can always send
+    if current_user.role in ["admin", "super_admin"]:
+        # Admins can always send, no subscription check needed
+        pass
+    elif current_user.role in ["aoao", "property_manager", "owner", "contractor"]:
+        # These roles require active paid subscription (or active trial)
+        # Fetch subscription info if not already loaded
+        subscription_tier = current_user.subscription_tier
+        subscription_status = current_user.subscription_status
+        is_trial = current_user.is_trial
+        trial_ends_at = current_user.trial_ends_at
+        
+        # If subscription info not in current_user, fetch it
+        if not subscription_tier:
+            from core.subscription_helpers import get_user_subscription
+            sub = get_user_subscription(current_user.auth_user_id, current_user.role)
+            if sub:
+                subscription_tier = sub.get("subscription_tier")
+                subscription_status = sub.get("subscription_status")
+                is_trial = sub.get("is_trial", False)
+                trial_ends_at = sub.get("trial_ends_at")
+        
+        # Check subscription status
+        has_active_sub = check_user_has_active_subscription(
+            role=current_user.role,
+            subscription_tier=subscription_tier,
+            subscription_status=subscription_status,
+            is_trial=is_trial,
+            trial_ends_at=trial_ends_at,
+            contractor_id=current_user.contractor_id,
+            pm_company_id=current_user.pm_company_id,
+            aoao_organization_id=current_user.aoao_organization_id
+        )
+        
+        if not has_active_sub:
             raise HTTPException(
                 403,
-                f"Your role '{current_user.role}' does not have permission to send documents via email"
+                f"Active paid subscription required to send documents. Your current subscription: {subscription_tier or 'free'}"
             )
+    else:
+        raise HTTPException(
+            403,
+            f"Your role '{current_user.role}' does not have permission to send documents via email"
+        )
     
     client = get_supabase_client()
     
