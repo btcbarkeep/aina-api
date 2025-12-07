@@ -66,10 +66,10 @@ Manually syncs subscription status from Stripe.
 ### Start Free Trial
 
 ```bash
-POST /subscriptions/me/{role}/start-trial?trial_days=14
+POST /subscriptions/me/start-trial?trial_days=14
 ```
 
-Starts a free trial for the specified role. Default trial duration is 14 days (1-180 days allowed).
+Starts a free trial for the current user's role (automatically uses the authenticated user's role). Default trial duration is 14 days (1-180 days allowed).
 
 **Requirements:**
 - Role must support trials
@@ -166,8 +166,9 @@ Trials are automatically tracked and validated:
 ## Example: Starting a Trial
 
 ```bash
-# Start 14-day trial for AOAO role (max 180 days)
-curl -X POST "https://api.ainaprotocol.com/subscriptions/me/aoao/start-trial?trial_days=14" \
+# Start 14-day trial for current user's role (max 180 days)
+# Automatically uses the authenticated user's role
+curl -X POST "https://api.ainaprotocol.com/subscriptions/me/start-trial?trial_days=14" \
   -H "Authorization: Bearer {token}"
 ```
 
