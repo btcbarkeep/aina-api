@@ -5,6 +5,7 @@ import tempfile
 import re
 import pandas as pd
 import numpy as np
+from urllib.parse import urlparse, unquote, parse_qs
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from typing import Optional
 
@@ -330,10 +331,51 @@ async def bulk_upload_documents(
             except Exception:
                 return None
         
+        # Generate filename from document_url or title if not provided
+        document_url = clean_value(row.get("document_url"))
+        title = clean_value(row.get("title"))
+        
+        # Try to extract filename from URL, or generate from title
+        filename = None
+        if document_url:
+            try:
+                parsed_url = urlparse(document_url)
+                # Try to get filename from URL path
+                path = unquote(parsed_url.path)
+                if path and '/' in path:
+                    filename = path.split('/')[-1]
+                    # Remove query parameters if any
+                    if '?' in filename:
+                        filename = filename.split('?')[0]
+                    # Clean up the filename
+                    if filename:
+                        filename = filename.strip()
+                # If no filename in path, try to get from query params (common in some systems)
+                if not filename or filename == '':
+                    query_params = parse_qs(parsed_url.query)
+                    # Check common filename parameters
+                    for param in ['f', 'file', 'filename', 'name']:
+                        if param in query_params and query_params[param]:
+                            filename = query_params[param][0].strip()
+                            break
+            except Exception as e:
+                logger.warning(f"Row {row_num}: Error extracting filename from URL: {e}")
+        
+        # If still no filename, generate from title
+        if not filename and title:
+            # Sanitize title for filename (remove invalid chars, limit length)
+            safe_title = re.sub(r'[^a-zA-Z0-9._-]', '_', title)[:100]
+            filename = f"{safe_title}.pdf"  # Default to .pdf extension
+        
+        # Final fallback
+        if not filename:
+            filename = "bulk_upload_document.pdf"
+        
         doc_data = {
             "id": str(uuid.uuid4()),
-            "title": clean_value(row.get("title")),
-            "document_url": clean_value(row.get("document_url")),
+            "title": title,
+            "document_url": document_url,
+            "filename": filename,  # Required field - generate from URL or title
             "building_id": building_id_str,  # Always set since we validated it exists
             "unit_id": str(unit_id) if unit_id else None,
             "event_id": str(event_id) if event_id else None,
