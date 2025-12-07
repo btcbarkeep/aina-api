@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
 from core.logging_config import logger
+from core.config import settings
 from core.subscription_helpers import (
     get_user_subscription,
     get_user_subscriptions,
@@ -124,7 +125,11 @@ def sync_my_subscription(
 
 @router.post("/me/start-trial", response_model=UserSubscriptionRead)
 def start_trial(
-    trial_days: int = Query(14, ge=1, le=180, description="Trial duration in days (1-180)"),
+    trial_days: Optional[int] = Query(
+        None,
+        ge=1,
+        description=f"Trial duration in days ({settings.TRIAL_SELF_SERVICE_MIN_DAYS}-{settings.TRIAL_SELF_SERVICE_MAX_DAYS}). Defaults to {settings.TRIAL_SELF_SERVICE_MAX_DAYS} days if not specified."
+    ),
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
@@ -149,6 +154,23 @@ def start_trial(
     
     if not role:
         raise HTTPException(400, "User does not have a role assigned")
+    
+    # Apply self-service trial limits
+    if trial_days is None:
+        trial_days = settings.TRIAL_SELF_SERVICE_MAX_DAYS
+    
+    if trial_days < settings.TRIAL_SELF_SERVICE_MIN_DAYS:
+        raise HTTPException(
+            400,
+            f"Trial duration must be at least {settings.TRIAL_SELF_SERVICE_MIN_DAYS} days for self-service trials"
+        )
+    
+    if trial_days > settings.TRIAL_SELF_SERVICE_MAX_DAYS:
+        raise HTTPException(
+            400,
+            f"Trial duration cannot exceed {settings.TRIAL_SELF_SERVICE_MAX_DAYS} days for self-service trials. "
+            f"Please contact an admin for longer trials."
+        )
     
     requirements = get_role_subscription_requirements(role)
     
@@ -216,7 +238,11 @@ def get_user_subscriptions_admin(
 def admin_start_trial_for_user(
     user_id: str,
     role: Optional[str] = Query(None, description="Role to start trial for (defaults to user's current role from their metadata)"),
-    trial_days: int = Query(14, ge=1, le=180, description="Trial duration in days (1-180)"),
+    trial_days: Optional[int] = Query(
+        None,
+        ge=1,
+        description=f"Trial duration in days ({settings.TRIAL_ADMIN_MIN_DAYS}-{settings.TRIAL_ADMIN_MAX_DAYS}). Defaults to {settings.TRIAL_ADMIN_MAX_DAYS} days if not specified."
+    ),
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
@@ -257,6 +283,22 @@ def admin_start_trial_for_user(
         except Exception as e:
             logger.error(f"Error fetching user {user_id} for trial: {e}")
             raise HTTPException(500, f"Failed to fetch user information: {str(e)}")
+    
+    # Apply admin trial limits
+    if trial_days is None:
+        trial_days = settings.TRIAL_ADMIN_MAX_DAYS
+    
+    if trial_days < settings.TRIAL_ADMIN_MIN_DAYS:
+        raise HTTPException(
+            400,
+            f"Trial duration must be at least {settings.TRIAL_ADMIN_MIN_DAYS} days"
+        )
+    
+    if trial_days > settings.TRIAL_ADMIN_MAX_DAYS:
+        raise HTTPException(
+            400,
+            f"Trial duration cannot exceed {settings.TRIAL_ADMIN_MAX_DAYS} days"
+        )
     
     requirements = get_role_subscription_requirements(role)
     
