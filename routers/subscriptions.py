@@ -728,6 +728,11 @@ def list_all_subscriptions(
             subscription_status = contractor.get("subscription_status")
             is_trial = subscription_status == "trialing" if subscription_status else False
             
+            # For business entities, use created_at as proxy for trial_started_at if trialing
+            # Trial end date is not tracked in contractors table, so we'll leave it as None
+            created_at_str = contractor.get("created_at")
+            trial_started_at = created_at_str if is_trial else None
+            
             subscription_entry = {
                 "subscription_type": "contractor",
                 "id": contractor["id"],
@@ -737,9 +742,9 @@ def list_all_subscriptions(
                 "stripe_customer_id": contractor.get("stripe_customer_id"),
                 "stripe_subscription_id": contractor.get("stripe_subscription_id"),
                 "is_trial": is_trial,
-                "trial_started_at": None,  # Not available in contractors table
-                "trial_ends_at": None,  # Not available in contractors table
-                "created_at": contractor.get("created_at"),
+                "trial_started_at": trial_started_at,
+                "trial_ends_at": None,  # Not tracked in contractors table
+                "created_at": created_at_str,
                 "updated_at": contractor.get("updated_at"),
             }
             
@@ -766,6 +771,11 @@ def list_all_subscriptions(
             subscription_status = org.get("subscription_status")
             is_trial = subscription_status == "trialing" if subscription_status else False
             
+            # For business entities, use created_at as proxy for trial_started_at if trialing
+            # Trial end date is not tracked in aoao_organizations table, so we'll leave it as None
+            created_at_str = org.get("created_at")
+            trial_started_at = created_at_str if is_trial else None
+            
             subscription_entry = {
                 "subscription_type": "aoao_organization",
                 "id": org["id"],
@@ -775,9 +785,9 @@ def list_all_subscriptions(
                 "stripe_customer_id": org.get("stripe_customer_id"),
                 "stripe_subscription_id": org.get("stripe_subscription_id"),
                 "is_trial": is_trial,
-                "trial_started_at": None,  # Not available in aoao_organizations table
-                "trial_ends_at": None,  # Not available in aoao_organizations table
-                "created_at": org.get("created_at"),
+                "trial_started_at": trial_started_at,
+                "trial_ends_at": None,  # Not tracked in aoao_organizations table
+                "created_at": created_at_str,
                 "updated_at": org.get("updated_at"),
             }
             
@@ -804,6 +814,11 @@ def list_all_subscriptions(
             subscription_status = company.get("subscription_status")
             is_trial = subscription_status == "trialing" if subscription_status else False
             
+            # For business entities, use created_at as proxy for trial_started_at if trialing
+            # Trial end date is not tracked in property_management_companies table, so we'll leave it as None
+            created_at_str = company.get("created_at")
+            trial_started_at = created_at_str if is_trial else None
+            
             subscription_entry = {
                 "subscription_type": "pm_company",
                 "id": company["id"],
@@ -813,9 +828,9 @@ def list_all_subscriptions(
                 "stripe_customer_id": company.get("stripe_customer_id"),
                 "stripe_subscription_id": company.get("stripe_subscription_id"),
                 "is_trial": is_trial,
-                "trial_started_at": None,  # Not available in property_management_companies table
-                "trial_ends_at": None,  # Not available in property_management_companies table
-                "created_at": company.get("created_at"),
+                "trial_started_at": trial_started_at,
+                "trial_ends_at": None,  # Not tracked in property_management_companies table
+                "created_at": created_at_str,
                 "updated_at": company.get("updated_at"),
             }
             
