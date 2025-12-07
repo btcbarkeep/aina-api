@@ -49,10 +49,11 @@ class DocumentBase(BaseModel):
     category_id: Optional[UUID] = Field(None, description="Optional category ID from document_categories table. Get from GET /categories endpoint.")
     subcategory_id: Optional[UUID] = Field(None, description="Optional subcategory ID from document_subcategories table. Get from GET /categories endpoint.")
 
-    # File metadata (nullable because bulk docs may not be S3 files)
+    # Document title (required) and file metadata
+    title: str = Field(..., description="Document title (required)")
     s3_key: Optional[str] = None
-    filename: Optional[str] = None
     size_bytes: Optional[int] = None
+    # Note: filename is auto-generated from title for database compatibility
 
     # Bulk-upload field
     document_url: Optional[str] = None
@@ -130,7 +131,7 @@ class DocumentCreate(DocumentBase):
                 "contractor_ids": ["REPLACE_WITH_ACTUAL_CONTRACTOR_ID"],
                 "category_id": "REPLACE_WITH_ACTUAL_CATEGORY_ID",
                 "subcategory_id": "REPLACE_WITH_ACTUAL_SUBCATEGORY_ID",
-                "filename": "example.pdf",
+                "title": "Example Document Title",
                 "is_public": True,
                 "is_redacted": False
             }
@@ -158,9 +159,10 @@ class DocumentUpdate(BaseModel):
     category_id: Optional[UUID] = Field(None, description="Category ID from document_categories table. Get current value from GET /documents/{id}")
     subcategory_id: Optional[UUID] = Field(None, description="Subcategory ID from document_subcategories table. Get current value from GET /documents/{id}")
 
+    title: Optional[str] = Field(None, description="Document title. Get current value from GET /documents/{id}")
     s3_key: Optional[str] = Field(None, description="S3 key. Get current value from GET /documents/{id}")
-    filename: Optional[str] = Field(None, description="Filename. Get current value from GET /documents/{id}")
     size_bytes: Optional[int] = Field(None, description="File size in bytes. Get current value from GET /documents/{id}")
+    # Note: filename is auto-generated from title for database compatibility
     document_url: Optional[str] = None  # Excluded from DB operations, bulk-only
 
     # Redaction and visibility controls
@@ -176,8 +178,8 @@ class DocumentUpdate(BaseModel):
                 "contractor_ids": None,
                 "category_id": None,
                 "subcategory_id": None,
+                "title": "Updated Document Title",
                 "s3_key": None,
-                "filename": "updated_filename.pdf",
                 "size_bytes": 1024,
                 "is_redacted": False,
                 "is_public": True
