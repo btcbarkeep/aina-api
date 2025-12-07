@@ -252,6 +252,8 @@ def delete_pm_company(company_id: str):
         )
         
         return {"success": True, "message": "Property management company deleted"}
+    except Exception as e:
+        handle_supabase_error(e, "Failed to delete property management company")
 
 
 # ============================================================
