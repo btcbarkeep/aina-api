@@ -1,32 +1,32 @@
--- Migration: Add organization-level building access
--- This allows AOAO organizations and PM companies to have building access
--- that is inherited by all users in that organization
+-- Migration: Add contractor-level building and unit access
+-- This allows contractors to have building/unit access
+-- that is inherited by all users linked to that contractor
 
--- AOAO Organization Building Access
-CREATE TABLE IF NOT EXISTS aoao_organization_building_access (
+-- Contractor Building Access
+CREATE TABLE IF NOT EXISTS contractor_building_access (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    aoao_organization_id UUID NOT NULL REFERENCES aoao_organizations(id) ON DELETE CASCADE,
+    contractor_id UUID NOT NULL REFERENCES contractors(id) ON DELETE CASCADE,
     building_id UUID NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(aoao_organization_id, building_id)
+    UNIQUE(contractor_id, building_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_aoao_org_building_access_org ON aoao_organization_building_access(aoao_organization_id);
-CREATE INDEX IF NOT EXISTS idx_aoao_org_building_access_building ON aoao_organization_building_access(building_id);
+CREATE INDEX IF NOT EXISTS idx_contractor_building_access_contractor ON contractor_building_access(contractor_id);
+CREATE INDEX IF NOT EXISTS idx_contractor_building_access_building ON contractor_building_access(building_id);
 
-COMMENT ON TABLE aoao_organization_building_access IS 'Maps AOAO organizations to buildings they have access to. All users in the organization inherit this access.';
+COMMENT ON TABLE contractor_building_access IS 'Maps contractors to buildings they have access to. All users linked to the contractor inherit this access.';
 
--- PM Company Building Access
-CREATE TABLE IF NOT EXISTS pm_company_building_access (
+-- Contractor Unit Access
+CREATE TABLE IF NOT EXISTS contractor_unit_access (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pm_company_id UUID NOT NULL REFERENCES property_management_companies(id) ON DELETE CASCADE,
-    building_id UUID NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    contractor_id UUID NOT NULL REFERENCES contractors(id) ON DELETE CASCADE,
+    unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(pm_company_id, building_id)
+    UNIQUE(contractor_id, unit_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pm_company_building_access_company ON pm_company_building_access(pm_company_id);
-CREATE INDEX IF NOT EXISTS idx_pm_company_building_access_building ON pm_company_building_access(building_id);
+CREATE INDEX IF NOT EXISTS idx_contractor_unit_access_contractor ON contractor_unit_access(contractor_id);
+CREATE INDEX IF NOT EXISTS idx_contractor_unit_access_unit ON contractor_unit_access(unit_id);
 
-COMMENT ON TABLE pm_company_building_access IS 'Maps property management companies to buildings they have access to. All users in the company inherit this access.';
+COMMENT ON TABLE contractor_unit_access IS 'Maps contractors to units they have access to. All users linked to the contractor inherit this access.';
 
