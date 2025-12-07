@@ -68,3 +68,28 @@ class ContractorRole(BaseStrEnum):
     appraiser = "appraiser"
     landscaper = "landscaper"
     other = "other"
+
+
+# -----------------------------------------------------
+# CONTRACTOR SUBSCRIPTION TIER
+# -----------------------------------------------------
+class SubscriptionTier(BaseStrEnum):
+    """Contractor subscription tier for UI display and feature access."""
+
+    free = "free"
+    paid = "paid"
+
+
+# -----------------------------------------------------
+# SUBSCRIPTION STATUS
+# -----------------------------------------------------
+class SubscriptionStatus(BaseStrEnum):
+    """Stripe subscription status."""
+
+    active = "active"
+    canceled = "canceled"
+    past_due = "past_due"
+    unpaid = "unpaid"
+    trialing = "trialing"
+    incomplete = "incomplete"
+    incomplete_expired = "incomplete_expired"
