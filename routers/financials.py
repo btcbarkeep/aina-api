@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
 from core.logging_config import logger
+from core.stripe_helpers import get_subscription_revenue, get_total_revenue_for_period
 
 router = APIRouter(
     prefix="/financials",
@@ -164,6 +165,23 @@ def get_revenue(
             revenue_data["subscriptions"]["pm_companies"]["trials"]
         )
         
+        # Fetch actual revenue from Stripe
+        stripe_revenue = get_total_revenue_for_period(start_dt, end_dt)
+        if "error" not in stripe_revenue:
+            revenue_data["stripe"] = {
+                "total_revenue": stripe_revenue.get("total_revenue", 0),
+                "total_revenue_decimal": stripe_revenue.get("total_revenue_decimal", 0.0),
+                "subscription_revenue": stripe_revenue.get("subscription_revenue", 0),
+                "subscription_revenue_decimal": stripe_revenue.get("subscription_revenue_decimal", 0.0),
+                "currency": stripe_revenue.get("currency", "usd"),
+                "invoice_count": stripe_revenue.get("invoice_count", 0),
+            }
+        else:
+            revenue_data["stripe"] = {
+                "error": stripe_revenue.get("error", "Unable to fetch Stripe revenue"),
+                "note": "Stripe integration may not be configured or there was an error fetching revenue data"
+            }
+        
         return revenue_data
     except HTTPException:
         raise
@@ -179,15 +197,157 @@ def get_subscription_breakdown(
     """
     Get detailed subscription breakdown (Super Admin only).
     
-    Returns detailed list of all paid subscriptions with revenue information.
+    Returns detailed list of all paid subscriptions with revenue information from Stripe.
     """
     if current_user.role != "super_admin":
         raise HTTPException(403, "Only super admins can view financial data")
     
-    # This would integrate with Stripe to get actual revenue data
-    # For now, return subscription counts
-    return {
-        "message": "Stripe integration for actual revenue data coming soon",
-        "note": "Use /financials/revenue for subscription counts"
-    }
+    client = get_supabase_client()
+    
+    try:
+        subscriptions = []
+        
+        # Get user subscriptions with Stripe revenue
+        user_subs_result = (
+            client.table("user_subscriptions")
+            .select("id, user_id, subscription_tier, subscription_status, stripe_subscription_id, stripe_customer_id, created_at")
+            .eq("subscription_tier", "paid")
+            .in_("subscription_status", ["active", "trialing"])
+            .execute()
+        )
+        
+        for sub in (user_subs_result.data or []):
+            revenue_info = {}
+            if sub.get("stripe_subscription_id") or sub.get("stripe_customer_id"):
+                revenue_info = get_subscription_revenue(
+                    stripe_subscription_id=sub.get("stripe_subscription_id"),
+                    stripe_customer_id=sub.get("stripe_customer_id")
+                )
+            
+            subscriptions.append({
+                "subscription_type": "user",
+                "subscription_id": sub.get("id"),
+                "user_id": sub.get("user_id"),
+                "subscription_tier": sub.get("subscription_tier"),
+                "subscription_status": sub.get("subscription_status"),
+                "stripe_subscription_id": sub.get("stripe_subscription_id"),
+                "revenue": revenue_info,
+                "created_at": sub.get("created_at"),
+            })
+        
+        # Get contractor subscriptions with Stripe revenue
+        contractors_result = (
+            client.table("contractors")
+            .select("id, company_name, subscription_tier, subscription_status, stripe_subscription_id, stripe_customer_id, created_at")
+            .eq("subscription_tier", "paid")
+            .in_("subscription_status", ["active", "trialing"])
+            .execute()
+        )
+        
+        for contractor in (contractors_result.data or []):
+            revenue_info = {}
+            if contractor.get("stripe_subscription_id") or contractor.get("stripe_customer_id"):
+                revenue_info = get_subscription_revenue(
+                    stripe_subscription_id=contractor.get("stripe_subscription_id"),
+                    stripe_customer_id=contractor.get("stripe_customer_id")
+                )
+            
+            subscriptions.append({
+                "subscription_type": "contractor",
+                "subscription_id": contractor.get("id"),
+                "company_name": contractor.get("company_name"),
+                "subscription_tier": contractor.get("subscription_tier"),
+                "subscription_status": contractor.get("subscription_status"),
+                "stripe_subscription_id": contractor.get("stripe_subscription_id"),
+                "revenue": revenue_info,
+                "created_at": contractor.get("created_at"),
+            })
+        
+        # Get AOAO organization subscriptions with Stripe revenue
+        aoao_result = (
+            client.table("aoao_organizations")
+            .select("id, organization_name, subscription_tier, subscription_status, stripe_subscription_id, stripe_customer_id, created_at")
+            .eq("subscription_tier", "paid")
+            .in_("subscription_status", ["active", "trialing"])
+            .execute()
+        )
+        
+        for org in (aoao_result.data or []):
+            revenue_info = {}
+            if org.get("stripe_subscription_id") or org.get("stripe_customer_id"):
+                revenue_info = get_subscription_revenue(
+                    stripe_subscription_id=org.get("stripe_subscription_id"),
+                    stripe_customer_id=org.get("stripe_customer_id")
+                )
+            
+            subscriptions.append({
+                "subscription_type": "aoao_organization",
+                "subscription_id": org.get("id"),
+                "organization_name": org.get("organization_name"),
+                "subscription_tier": org.get("subscription_tier"),
+                "subscription_status": org.get("subscription_status"),
+                "stripe_subscription_id": org.get("stripe_subscription_id"),
+                "revenue": revenue_info,
+                "created_at": org.get("created_at"),
+            })
+        
+        # Get PM company subscriptions with Stripe revenue
+        pm_result = (
+            client.table("property_management_companies")
+            .select("id, company_name, subscription_tier, subscription_status, stripe_subscription_id, stripe_customer_id, created_at")
+            .eq("subscription_tier", "paid")
+            .in_("subscription_status", ["active", "trialing"])
+            .execute()
+        )
+        
+        for company in (pm_result.data or []):
+            revenue_info = {}
+            if company.get("stripe_subscription_id") or company.get("stripe_customer_id"):
+                revenue_info = get_subscription_revenue(
+                    stripe_subscription_id=company.get("stripe_subscription_id"),
+                    stripe_customer_id=company.get("stripe_customer_id")
+                )
+            
+            subscriptions.append({
+                "subscription_type": "pm_company",
+                "subscription_id": company.get("id"),
+                "company_name": company.get("company_name"),
+                "subscription_tier": company.get("subscription_tier"),
+                "subscription_status": company.get("subscription_status"),
+                "stripe_subscription_id": company.get("stripe_subscription_id"),
+                "revenue": revenue_info,
+                "created_at": company.get("created_at"),
+            })
+        
+        # Calculate totals
+        total_monthly_revenue = 0
+        total_annual_revenue = 0
+        
+        for sub in subscriptions:
+            revenue = sub.get("revenue", {})
+            if "error" not in revenue:
+                amount = revenue.get("amount", 0)
+                interval = revenue.get("interval", "month")
+                
+                if interval == "month":
+                    total_monthly_revenue += amount
+                    total_annual_revenue += amount * 12
+                elif interval == "year":
+                    total_annual_revenue += amount
+                    total_monthly_revenue += amount / 12
+        
+        return {
+            "success": True,
+            "total_subscriptions": len(subscriptions),
+            "total_monthly_revenue": total_monthly_revenue,
+            "total_monthly_revenue_decimal": total_monthly_revenue / 100.0,
+            "total_annual_revenue": total_annual_revenue,
+            "total_annual_revenue_decimal": total_annual_revenue / 100.0,
+            "subscriptions": subscriptions,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get subscription breakdown: {e}")
+        raise HTTPException(500, f"Failed to get subscription breakdown: {str(e)}")
 
