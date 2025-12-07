@@ -69,7 +69,14 @@ Manually syncs subscription status from Stripe.
 POST /subscriptions/me/start-trial?trial_days=14
 ```
 
-Starts a free trial for the current user's role (automatically uses the authenticated user's role). Default trial duration is 14 days (1-180 days allowed).
+**Starts a free trial for the CURRENT USER ONLY** (per-user subscription).
+
+- Automatically uses the authenticated user's role from their token
+- Creates a subscription record **specifically for this user** in the `user_subscriptions` table
+- **Does NOT affect other users** with the same role - each user has their own independent subscription
+- Default trial duration is 14 days (1-180 days allowed)
+
+**Important:** This is a per-user subscription, not a per-role subscription. Each user must start their own trial.
 
 **Requirements:**
 - Role must support trials
