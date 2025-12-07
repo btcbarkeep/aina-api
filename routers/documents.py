@@ -585,6 +585,15 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     doc_data["event_id"] = str(event_id) if event_id else None
     doc_data["uploaded_by"] = str(current_user.id)
     
+    # Generate filename from title (filename is required by database, but we use title as the primary field)
+    if doc_data.get("title"):
+        import re
+        # Sanitize title to create a safe filename
+        safe_title = re.sub(r'[^A-Za-z0-9._-]', '_', doc_data["title"])[:100]
+        doc_data["filename"] = f"{safe_title}.pdf"
+    else:
+        raise HTTPException(400, "title is required")
+    
     # Convert UUID objects to strings for Supabase
     if doc_data.get("category_id"):
         doc_data["category_id"] = str(doc_data["category_id"])
@@ -718,12 +727,18 @@ def update_document(document_id: str, payload: DocumentUpdate, current_user: Cur
 
     # Prepare update data (exclude junction table fields)
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids", "document_url"}))
-
+    
+    # If title is being updated, generate filename from title (filename is required by database)
+    if "title" in update_data and update_data["title"]:
+        import re
+        safe_title = re.sub(r'[^A-Za-z0-9._-]', '_', update_data["title"])[:100]
+        update_data["filename"] = f"{safe_title}.pdf"
+    
     # event_id changed → derive new building
     if "event_id" in update_data and update_data["event_id"]:
         building_id, _ = get_event_info(update_data["event_id"])
         update_data["building_id"] = str(building_id)
-
+    
     # building only changed → allow (rare)
     if "building_id" in update_data:
         update_data["building_id"] = str(update_data["building_id"])
