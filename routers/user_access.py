@@ -274,8 +274,8 @@ def list_unit_access():
                 .execute()
             )
             for entry in (aoao_building_result.data or []):
-                org_id = entry["aoao_organization_id"]
-                building_id = entry["building_id"]
+                org_id = str(entry["aoao_organization_id"])  # Normalize to string
+                building_id = str(entry["building_id"])  # Normalize to string
                 if org_id not in aoao_building_access:
                     aoao_building_access[org_id] = []
                 aoao_building_access[org_id].append(building_id)
@@ -283,6 +283,7 @@ def list_unit_access():
             logger.warning(f"Failed to fetch AOAO organization building access: {e}")
         
         # Get all units grouped by building_id (for efficient lookup)
+        # Normalize building_ids to strings to ensure consistent lookups
         units_by_building = {}
         try:
             all_units_result = (
@@ -291,8 +292,8 @@ def list_unit_access():
                 .execute()
             )
             for unit in (all_units_result.data or []):
-                building_id = unit["building_id"]
-                unit_id = unit["id"]
+                building_id = str(unit["building_id"])  # Normalize to string
+                unit_id = str(unit["id"])  # Normalize to string
                 if building_id not in units_by_building:
                     units_by_building[building_id] = []
                 units_by_building[building_id].append(unit_id)
@@ -325,8 +326,8 @@ def list_unit_access():
                 .execute()
             )
             for entry in (pm_building_result.data or []):
-                company_id = entry["pm_company_id"]
-                building_id = entry["building_id"]
+                company_id = str(entry["pm_company_id"])  # Normalize to string
+                building_id = str(entry["building_id"])  # Normalize to string
                 if company_id not in pm_building_access:
                     pm_building_access[company_id] = []
                 pm_building_access[company_id].append(building_id)
@@ -355,6 +356,7 @@ def list_unit_access():
             # Check AOAO organization access
             aoao_org_id = user_meta.get("aoao_organization_id")
             if aoao_org_id:
+                aoao_org_id = str(aoao_org_id)  # Normalize to string
                 # Add direct unit access
                 if aoao_org_id in aoao_unit_access:
                     for unit_id in aoao_unit_access[aoao_org_id]:
@@ -387,6 +389,7 @@ def list_unit_access():
             # Check PM company access
             pm_company_id = user_meta.get("pm_company_id")
             if pm_company_id:
+                pm_company_id = str(pm_company_id)  # Normalize to string
                 # Add direct unit access
                 if pm_company_id in pm_unit_access:
                     for unit_id in pm_unit_access[pm_company_id]:
