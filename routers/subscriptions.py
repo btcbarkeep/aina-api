@@ -219,3 +219,90 @@ def get_user_subscriptions_admin(
     
     return subscriptions
 
+
+@router.post("/users/{user_id}/start-trial", response_model=UserSubscriptionRead)
+def admin_start_trial_for_user(
+    user_id: str,
+    role: Optional[str] = Query(None, description="Role to start trial for (defaults to user's current role from their metadata)"),
+    trial_days: int = Query(14, ge=1, le=180, description="Trial duration in days (1-180)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Admin: Grant a free trial to a specific user.
+    
+    **Admin Only:** Only admins and super_admins can grant trials to users.
+    
+    **How it works:**
+    - Creates a subscription record for the specified user
+    - If `role` is not provided, automatically fetches the user's role from their metadata
+    - Each user has their own independent subscription
+    
+    **Requirements:**
+    - Role must support trials (AOAO, property_manager, contractor, owner)
+    - User must not already have an active subscription for this role
+    
+    **Note:** AOAO role requires paid subscription after trial expires.
+    """
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(403, "Only admins can grant trials to users")
+    
+    # Get the target user's role if not provided
+    if not role:
+        client = get_supabase_client()
+        try:
+            # Fetch user from Supabase auth to get their role
+            resp = client.auth.admin.get_user_by_id(user_id)
+            if not resp.user:
+                raise HTTPException(404, f"User {user_id} not found")
+            
+            metadata = resp.user.user_metadata or {}
+            role = metadata.get("role", "aoao")
+            
+            if not role:
+                raise HTTPException(400, f"User {user_id} does not have a role assigned. Please specify the role parameter.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error fetching user {user_id} for trial: {e}")
+            raise HTTPException(500, f"Failed to fetch user information: {str(e)}")
+    
+    requirements = get_role_subscription_requirements(role)
+    
+    if not requirements["supports_trial"]:
+        raise HTTPException(400, f"Role '{role}' does not support free trials")
+    
+    # Check if subscription already exists
+    existing = get_user_subscription(user_id, role)
+    
+    if existing:
+        # Check if already has active paid subscription
+        if existing.get("subscription_tier") == "paid" and existing.get("subscription_status") in ["active", "trialing"]:
+            raise HTTPException(400, f"User already has an active paid subscription for role '{role}'")
+        
+        # Check if trial is already active
+        if existing.get("is_trial") and existing.get("trial_ends_at"):
+            trial_ends_at = datetime.fromisoformat(existing.get("trial_ends_at").replace('Z', '+00:00'))
+            if is_trial_active(trial_ends_at):
+                raise HTTPException(400, f"User already has an active trial for role '{role}'")
+    
+    # Start trial
+    now = datetime.now(timezone.utc)
+    trial_ends_at = now + timedelta(days=trial_days)
+    
+    subscription = create_or_update_user_subscription(
+        user_id=user_id,
+        role=role,
+        subscription_tier="paid" if requirements["requires_paid"] else "free",
+        subscription_status="trialing",
+        is_trial=True,
+        trial_started_at=now,
+        trial_ends_at=trial_ends_at
+    )
+    
+    logger.info(
+        f"Admin {current_user.auth_user_id} granted {trial_days}-day trial to user {user_id}, role {role}. "
+        f"Trial ends at {trial_ends_at.isoformat()}"
+    )
+    
+    return subscription
+
