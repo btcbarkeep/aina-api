@@ -1,13 +1,20 @@
 # routers/pm_companies.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from typing import List, Optional
+from pydantic import BaseModel
+import os
+import tempfile
+from pathlib import Path as PathLib
+from datetime import datetime
+import uuid
 
 from dependencies.auth import get_current_user, CurrentUser, requires_permission
 from core.supabase_client import get_supabase_client
 from core.utils import sanitize
 from core.logging_config import logger
 from core.errors import handle_supabase_error
+from core.s3_client import get_s3
 from models.pm_company import (
     PMCompanyCreate,
     PMCompanyUpdate,
@@ -346,6 +353,137 @@ def sync_pm_company_subscription(
         }
     except Exception as e:
         raise handle_supabase_error(e, "Failed to sync subscription status", 500)
+
+
+# ============================================================
+# UPLOAD PM COMPANY LOGO
+# ============================================================
+class LogoUploadResponse(BaseModel):
+    success: bool
+    logo_url: str
+    s3_key: str
+    message: str
+
+
+@router.post(
+    "/{company_id}/logo",
+    summary="Upload property management company logo",
+    description="Upload a logo image for a property management company. Supported formats: JPG, PNG, GIF, WebP. Max file size: 5MB.",
+    response_model=LogoUploadResponse,
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
+async def upload_pm_company_logo(
+    company_id: str,
+    file: UploadFile = File(...),
+    update_company: bool = Form(True, description="Automatically update company's logo_url field"),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Upload a logo image for a property management company.
+    
+    The image is uploaded to S3 and optionally updates the company's logo_url field.
+    """
+    # Check access
+    ensure_pm_company_access(current_user, company_id)
+    
+    # Validate company exists
+    client = get_supabase_client()
+    company_check = (
+        client.table("property_management_companies")
+        .select("id, company_name")
+        .eq("id", company_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not company_check.data:
+        raise HTTPException(404, f"Property management company '{company_id}' not found")
+    
+    # Validate file type
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    file_extension = PathLib(file.filename or "").suffix.lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            400,
+            f"Invalid file type. Allowed formats: {', '.join(allowed_extensions)}"
+        )
+    
+    # Validate file size (5MB max)
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(400, f"File size exceeds maximum of {MAX_FILE_SIZE / 1024 / 1024}MB")
+    
+    # Get S3 client
+    try:
+        s3, bucket, region = get_s3()
+    except RuntimeError as e:
+        logger.error(f"S3 configuration error: {e}")
+        raise HTTPException(500, "File storage not configured")
+    
+    # Generate S3 key
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    safe_company_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in company_check.data[0]["company_name"])[:50]
+    s3_key = f"pm-companies/logos/{company_id}/{safe_company_name}_{timestamp}_{unique_id}{file_extension}"
+    
+    # Upload to S3
+    temp_file_path = None
+    try:
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(content)
+            temp_file.flush()
+        
+        # Upload to S3
+        try:
+            content_type = file.content_type or "image/jpeg"
+            s3.upload_file(
+                Filename=temp_file_path,
+                Bucket=bucket,
+                Key=s3_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+            logger.info(f"Uploaded PM company logo to S3: {s3_key}")
+        except Exception as e:
+            logger.error(f"S3 upload error: {e}")
+            raise HTTPException(500, f"Failed to upload logo: {e}")
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+    
+    # Generate presigned URL (valid for 1 year for logos)
+    try:
+        logo_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": s3_key},
+            ExpiresIn=31536000,  # 1 year
+        )
     except Exception as e:
-        handle_supabase_error(e, "Failed to delete property management company")
+        logger.error(f"Failed to generate presigned URL: {e}")
+        raise HTTPException(500, "Failed to generate logo URL")
+    
+    # Optionally update company's logo_url field
+    if update_company:
+        try:
+            client.table("property_management_companies").update({
+                "logo_url": logo_url
+            }).eq("id", company_id).execute()
+            logger.info(f"Updated PM company {company_id} logo_url")
+        except Exception as e:
+            logger.warning(f"Failed to update company logo_url: {e}")
+            # Don't fail the request if update fails - logo is still uploaded
+    
+    return {
+        "success": True,
+        "logo_url": logo_url,
+        "s3_key": s3_key,
+        "message": "Logo uploaded successfully" + (" and company updated" if update_company else "")
+    }
 
