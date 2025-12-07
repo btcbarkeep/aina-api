@@ -40,7 +40,7 @@ ROLE_PERMISSIONS = {
         "documents:read", "documents:write",
 
         # Access control
-        "access:read", "access:write",
+        "user_access:read", "user_access:write",
 
         # Contractor management
         "contractors:read", "contractors:write",
@@ -61,7 +61,7 @@ ROLE_PERMISSIONS = {
         "events:read", "events:write",
         "documents:read", "documents:write",
         "contractors:read",
-        "access:read", "access:write",
+        "user_access:read", "user_access:write",
     ],
 
     # =====================================================
