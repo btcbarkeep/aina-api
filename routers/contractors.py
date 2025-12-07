@@ -19,6 +19,8 @@ from core.supabase_client import get_supabase_client
 from core.utils import sanitize
 from core.s3_client import get_s3
 from core.logging_config import logger
+from core.stripe_helpers import verify_contractor_subscription, get_subscription_tier_from_stripe
+from models.enums import SubscriptionTier, SubscriptionStatus
 
 
 router = APIRouter(
@@ -210,6 +212,10 @@ class ContractorBase(BaseModel):
     - contact_person, contact_phone, contact_email (primary contact info)
     - notes (additional information)
     - logo_url (use POST /contractors/{id}/logo to upload)
+    - subscription_tier: "free" or "paid" (defaults to "free")
+    - stripe_customer_id: Stripe customer ID (for paid subscriptions)
+    - stripe_subscription_id: Stripe subscription ID (for paid subscriptions)
+    - subscription_status: Stripe subscription status (e.g., "active", "canceled")
     """
     company_name: str = Field(..., description="Company name (required)")
     phone: Optional[str] = Field(None, description="Company phone number")
@@ -226,6 +232,10 @@ class ContractorBase(BaseModel):
     contact_email: Optional[str] = Field(None, description="Primary contact email address")
     notes: Optional[str] = Field(None, description="Additional notes about the contractor")
     logo_url: Optional[str] = Field(None, description="URL to contractor logo (use POST /contractors/{id}/logo to upload)")
+    subscription_tier: Optional[SubscriptionTier] = Field(SubscriptionTier.free, description="Subscription tier: 'free' or 'paid' (defaults to 'free')")
+    stripe_customer_id: Optional[str] = Field(None, description="Stripe customer ID (for paid subscriptions)")
+    stripe_subscription_id: Optional[str] = Field(None, description="Stripe subscription ID (for paid subscriptions)")
+    subscription_status: Optional[SubscriptionStatus] = Field(None, description="Stripe subscription status (e.g., 'active', 'canceled', 'past_due')")
 
 
 class ContractorCreate(ContractorBase):
@@ -290,6 +300,10 @@ class ContractorUpdate(BaseModel):
     notes: Optional[str] = Field(None, description="Additional notes about the contractor")
     logo_url: Optional[str] = Field(None, description="URL to contractor logo (use POST /contractors/{id}/logo to upload)")
     roles: Optional[List[str]] = Field(None, description="List of role names to assign (replaces existing roles)", example=["plumber", "electrician"])
+    subscription_tier: Optional[SubscriptionTier] = Field(None, description="Subscription tier: 'free' or 'paid'")
+    stripe_customer_id: Optional[str] = Field(None, description="Stripe customer ID (for paid subscriptions)")
+    stripe_subscription_id: Optional[str] = Field(None, description="Stripe subscription ID (for paid subscriptions)")
+    subscription_status: Optional[SubscriptionStatus] = Field(None, description="Stripe subscription status (e.g., 'active', 'canceled', 'past_due')")
 
 
 class LogoUploadResponse(BaseModel):
@@ -558,6 +572,12 @@ def create_contractor(payload: ContractorCreate):
     
     # Prepare contractor data (exclude roles - they go to junction table)
     data = sanitize(payload.model_dump(exclude={"roles"}))
+    
+    # Convert enum fields to strings for database
+    if "subscription_tier" in data and data["subscription_tier"]:
+        data["subscription_tier"] = str(data["subscription_tier"])
+    if "subscription_status" in data and data["subscription_status"]:
+        data["subscription_status"] = str(data["subscription_status"])
 
     # Step 1 — Insert contractor
     try:
@@ -630,6 +650,12 @@ def update_contractor(contractor_id: str, payload: ContractorUpdate):
     # Extract roles if provided (roles don't go to contractors table)
     roles = payload.roles
     update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"roles"}))
+    
+    # Convert enum fields to strings for database
+    if "subscription_tier" in update_data and update_data["subscription_tier"]:
+        update_data["subscription_tier"] = str(update_data["subscription_tier"])
+    if "subscription_status" in update_data and update_data["subscription_status"]:
+        update_data["subscription_status"] = str(update_data["subscription_status"])
     
     # Check for duplicate company name if company_name is being updated
     if "company_name" in update_data:
@@ -872,3 +898,104 @@ def delete_contractor(contractor_id: str):
         raise HTTPException(404, "Contractor not found")
 
     return {"status": "deleted", "id": contractor_id}
+
+
+# ============================================================
+# SYNC SUBSCRIPTION STATUS FROM STRIPE
+# ============================================================
+@router.post(
+    "/{contractor_id}/sync-subscription",
+    summary="Sync subscription status from Stripe",
+    description="""
+    Manually sync a contractor's subscription status from Stripe.
+    
+    This endpoint:
+    1. Verifies the subscription status with Stripe
+    2. Updates the contractor's `subscription_tier`, `subscription_status` fields
+    3. Returns the updated contractor data
+    
+    **Use Cases:**
+    - Manual sync when subscription changes
+    - Admin verification of subscription status
+    - Testing subscription status updates
+    
+    **Note:** For automatic updates, use the Stripe webhook endpoint instead.
+    """,
+    response_model=ContractorRead,
+    dependencies=[Depends(requires_permission("contractors:write"))],
+)
+def sync_contractor_subscription(
+    contractor_id: str,
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Sync contractor subscription status from Stripe.
+    """
+    ensure_contractor_access(current_user, contractor_id)
+    
+    client = get_supabase_client()
+    
+    # Fetch contractor
+    contractor_res = (
+        client.table("contractors")
+        .select("*")
+        .eq("id", contractor_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not contractor_res.data:
+        raise HTTPException(404, "Contractor not found")
+    
+    contractor = contractor_res.data[0]
+    stripe_customer_id = contractor.get("stripe_customer_id")
+    stripe_subscription_id = contractor.get("stripe_subscription_id")
+    
+    if not stripe_customer_id and not stripe_subscription_id:
+        raise HTTPException(
+            400,
+            "Contractor does not have a Stripe customer ID or subscription ID. Cannot sync subscription."
+        )
+    
+    # Verify subscription with Stripe
+    is_active, subscription_status, error_message = verify_contractor_subscription(
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_subscription_id
+    )
+    
+    if error_message:
+        logger.warning(f"Error syncing subscription for contractor {contractor_id}: {error_message}")
+        raise HTTPException(400, f"Failed to verify subscription: {error_message}")
+    
+    # Determine subscription tier
+    subscription_tier = "paid" if is_active else "free"
+    
+    # Update contractor with subscription info
+    update_data = {
+        "subscription_tier": subscription_tier,
+        "subscription_status": subscription_status
+    }
+    
+    try:
+        update_res = (
+            client.table("contractors")
+            .update(update_data)
+            .eq("id", contractor_id)
+            .execute()
+        )
+        
+        if not update_res.data:
+            raise HTTPException(500, "Failed to update contractor subscription status")
+        
+        updated_contractor = update_res.data[0]
+        
+        # Enrich with roles
+        updated_contractor = enrich_contractor_with_roles(updated_contractor)
+        
+        logger.info(f"Synced subscription status for contractor {contractor_id}: tier={subscription_tier}, status={subscription_status}")
+        
+        return updated_contractor
+        
+    except Exception as e:
+        from core.errors import handle_supabase_error
+        raise handle_supabase_error(e, "Failed to sync subscription status", 500)
