@@ -1,6 +1,7 @@
 # core/stripe_helpers.py
 
 from typing import Optional
+from datetime import datetime
 from fastapi import HTTPException
 from core.config import settings
 from core.logging_config import logger
@@ -232,4 +233,155 @@ def get_subscription_tier_from_stripe(
     )
     
     return "paid" if is_active else "free"
+
+
+def get_subscription_revenue(
+    stripe_subscription_id: Optional[str] = None,
+    stripe_customer_id: Optional[str] = None
+) -> dict:
+    """
+    Get revenue information for a Stripe subscription.
+    
+    Args:
+        stripe_subscription_id: Stripe subscription ID (preferred)
+        stripe_customer_id: Stripe customer ID (fallback)
+    
+    Returns:
+        Dictionary with:
+        - amount: Monthly/annual amount in cents
+        - currency: Currency code (e.g., "usd")
+        - interval: "month" or "year"
+        - status: Subscription status
+        - current_period_start: Start of current billing period
+        - current_period_end: End of current billing period
+        - error: Error message if failed
+    """
+    if not STRIPE_AVAILABLE or not settings.STRIPE_SECRET_KEY:
+        return {"error": "Stripe not configured"}
+    
+    try:
+        stripe_client = get_stripe_client()
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        
+        subscription = None
+        
+        # Get subscription by ID if provided
+        if stripe_subscription_id:
+            subscription = stripe_client.Subscription.retrieve(stripe_subscription_id)
+        elif stripe_customer_id:
+            # Get most recent subscription for customer
+            subscriptions = stripe_client.Subscription.list(
+                customer=stripe_customer_id,
+                status="all",
+                limit=1
+            )
+            if subscriptions.data:
+                subscription = subscriptions.data[0]
+        
+        if not subscription:
+            return {"error": "No subscription found"}
+        
+        # Extract revenue info
+        amount = 0
+        currency = "usd"
+        interval = "month"
+        
+        if subscription.items.data:
+            price = subscription.items.data[0].price
+            amount = price.unit_amount or 0
+            currency = price.currency or "usd"
+            interval = price.recurring.interval if price.recurring else "month"
+        
+        return {
+            "amount": amount,
+            "amount_decimal": amount / 100.0,  # Convert cents to dollars
+            "currency": currency,
+            "interval": interval,
+            "status": subscription.status,
+            "current_period_start": subscription.current_period_start,
+            "current_period_end": subscription.current_period_end,
+            "created": subscription.created,
+        }
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe API error getting subscription revenue: {e}")
+        return {"error": f"Stripe API error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error getting subscription revenue: {e}")
+        return {"error": f"Error: {str(e)}"}
+
+
+def get_total_revenue_for_period(
+    start_date: datetime,
+    end_date: datetime
+) -> dict:
+    """
+    Get total revenue from Stripe for a given time period.
+    
+    Args:
+        start_date: Start of period
+        end_date: End of period
+    
+    Returns:
+        Dictionary with:
+        - total_revenue: Total revenue in cents
+        - total_revenue_decimal: Total revenue in dollars
+        - currency: Currency code
+        - subscription_count: Number of active subscriptions
+        - error: Error message if failed
+    """
+    if not STRIPE_AVAILABLE or not settings.STRIPE_SECRET_KEY:
+        return {"error": "Stripe not configured"}
+    
+    try:
+        stripe_client = get_stripe_client()
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        
+        # Get all paid invoices in the period
+        invoices = stripe_client.Invoice.list(
+            created={
+                "gte": int(start_date.timestamp()),
+                "lte": int(end_date.timestamp())
+            },
+            status="paid",
+            limit=100  # Adjust if needed
+        )
+        
+        total_revenue = 0
+        currency = "usd"
+        
+        for invoice in invoices.data:
+            if invoice.amount_paid:
+                total_revenue += invoice.amount_paid
+                currency = invoice.currency or "usd"
+        
+        # Also get active subscriptions and their recurring revenue
+        subscriptions = stripe_client.Subscription.list(
+            status="active",
+            limit=100
+        )
+        
+        subscription_revenue = 0
+        for sub in subscriptions.data:
+            if sub.items.data:
+                price = sub.items.data[0].price
+                amount = price.unit_amount or 0
+                # Calculate prorated revenue for period
+                # This is simplified - you may want more sophisticated calculation
+                subscription_revenue += amount
+        
+        return {
+            "total_revenue": total_revenue,
+            "total_revenue_decimal": total_revenue / 100.0,
+            "subscription_revenue": subscription_revenue,
+            "subscription_revenue_decimal": subscription_revenue / 100.0,
+            "currency": currency,
+            "subscription_count": len(subscriptions.data),
+            "invoice_count": len(invoices.data),
+        }
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe API error getting total revenue: {e}")
+        return {"error": f"Stripe API error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error getting total revenue: {e}")
+        return {"error": f"Error: {str(e)}"}
 
