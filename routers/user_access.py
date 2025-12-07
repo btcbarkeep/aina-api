@@ -292,13 +292,17 @@ def list_unit_access():
                 .execute()
             )
             for unit in (all_units_result.data or []):
-                building_id = str(unit["building_id"]) if unit.get("building_id") else None  # Normalize to string
-                unit_id = str(unit["id"])  # Normalize to string
-                if building_id:  # Only add if building_id exists
+                building_id_raw = unit.get("building_id")
+                if not building_id_raw:
+                    continue  # Skip units without building_id
+                building_id = str(building_id_raw).strip().lower()  # Normalize to lowercase string
+                unit_id = str(unit["id"]).strip()  # Normalize to string
+                if building_id:
                     if building_id not in units_by_building:
                         units_by_building[building_id] = []
                     units_by_building[building_id].append(unit_id)
-            logger.debug(f"Loaded {len(units_by_building)} buildings with units. Total units: {sum(len(units) for units in units_by_building.values())}")
+            logger.info(f"Loaded {len(units_by_building)} buildings with units. Total units: {sum(len(units) for units in units_by_building.values())}")
+            logger.debug(f"Sample building IDs in units_by_building: {list(units_by_building.keys())[:5]}")
         except Exception as e:
             logger.warning(f"Failed to fetch units by building: {e}")
         
@@ -328,11 +332,12 @@ def list_unit_access():
                 .execute()
             )
             for entry in (pm_building_result.data or []):
-                company_id = str(entry["pm_company_id"])  # Normalize to string
-                building_id = str(entry["building_id"])  # Normalize to string
+                company_id = str(entry["pm_company_id"]).strip().lower()  # Normalize to lowercase string
+                building_id = str(entry["building_id"]).strip().lower()  # Normalize to lowercase string
                 if company_id not in pm_building_access:
                     pm_building_access[company_id] = []
                 pm_building_access[company_id].append(building_id)
+            logger.info(f"Loaded PM building access for {len(pm_building_access)} companies")
         except Exception as e:
             logger.warning(f"Failed to fetch PM company building access: {e}")
         
@@ -393,7 +398,9 @@ def list_unit_access():
             # Check PM company access
             pm_company_id = user_meta.get("pm_company_id")
             if pm_company_id:
-                pm_company_id = str(pm_company_id)  # Normalize to string
+                pm_company_id = str(pm_company_id).strip().lower()  # Normalize to lowercase string
+                logger.info(f"Checking PM company access for user {user_id}, PM company {pm_company_id}")
+                
                 # Add direct unit access
                 if pm_company_id in pm_unit_access:
                     for unit_id in pm_unit_access[pm_company_id]:
@@ -409,11 +416,25 @@ def list_unit_access():
                 
                 # Add units from buildings the company has access to
                 if pm_company_id in pm_building_access:
-                    logger.debug(f"User {user_id} has PM company {pm_company_id} with building access: {pm_building_access[pm_company_id]}")
+                    logger.info(f"User {user_id} has PM company {pm_company_id} with building access: {pm_building_access[pm_company_id]}")
+                    logger.info(f"Available buildings in units_by_building: {list(units_by_building.keys())[:10]}")
                     for building_id in pm_building_access[pm_company_id]:
                         # Get all units in this building
                         building_units = units_by_building.get(building_id, [])
-                        logger.debug(f"Building {building_id} has {len(building_units)} units. Units: {building_units[:5]}...")  # Log first 5
+                        logger.info(f"Building {building_id} (type: {type(building_id)}) has {len(building_units)} units. Units: {building_units[:5] if building_units else 'NONE'}...")
+                        if not building_units:
+                            # Try to find units for this building directly
+                            try:
+                                direct_units_check = (
+                                    client.table("units")
+                                    .select("id")
+                                    .eq("building_id", building_id)
+                                    .execute()
+                                )
+                                logger.info(f"Direct query for building {building_id} found {len(direct_units_check.data or [])} units")
+                            except Exception as e:
+                                logger.warning(f"Failed to directly query units for building {building_id}: {e}")
+                        
                         for unit_id in building_units:
                             # Only add if not already in direct or inherited access (avoid duplicates)
                             access_key = (user_id, unit_id)
@@ -424,8 +445,10 @@ def list_unit_access():
                                     "access_type": "inherited_pm_building"
                                 })
                                 inherited_access_set.add(access_key)
+                                logger.debug(f"Added unit {unit_id} for user {user_id} from building {building_id}")
                 else:
-                    logger.debug(f"PM company {pm_company_id} not found in pm_building_access. Available keys: {list(pm_building_access.keys())[:5]}")
+                    logger.warning(f"PM company {pm_company_id} not found in pm_building_access. Available keys: {list(pm_building_access.keys())[:10]}")
+                    logger.warning(f"User {user_id} metadata pm_company_id: {user_meta.get('pm_company_id')} (raw: {pm_company_id})")
             
             # Check Contractor access (contractors have access to all units by default)
             contractor_id = user_meta.get("contractor_id")
