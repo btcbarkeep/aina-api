@@ -79,6 +79,7 @@ POST /subscriptions/users/{user_id}/start-trial?trial_days=30&role=property_mana
 **Admin-only endpoint to grant a free trial to a specific user.**
 
 - **Admin/Super Admin only** - requires admin authentication
+- **Important:** `{user_id}` must be a user ID from `auth.users`, NOT a contractor ID
 - If `role` is not provided, automatically fetches the user's role from their metadata
 - Creates a subscription record for the specified user
 - **Admin limits:** Default trial duration is 180 days (configurable via `TRIAL_ADMIN_MAX_DAYS` environment variable)
@@ -92,6 +93,11 @@ POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial
 # Grant 180-day trial for a specific role (admin can grant longer than self-service)
 POST /subscriptions/users/7eaaa4b8-7067-4f89-975b-4ce2c85393db/start-trial?trial_days=180&role=property_manager
 ```
+
+**Note:** To find a user ID for a contractor:
+1. Use `GET /admin/users` to list all users
+2. Filter by `contractor_id` to find users linked to a specific contractor
+3. Use the user's `id` (from `auth.users`), not the contractor's `id`
 
 ## Trial Limits Configuration
 
