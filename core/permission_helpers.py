@@ -82,14 +82,17 @@ def require_admin(user: CurrentUser):
 def require_building_access(user: CurrentUser, building_id: str):
     """
     Check if user has access to a building.
-    Admins bypass. 
-    Checks organization-level access first (if user is linked to an organization/contractor):
+    Admins and contractors bypass (contractors have access to all buildings).
+    Checks organization-level access first (if user is linked to an organization):
     - AOAO organizations (aoao_organization_id)
     - PM companies (pm_company_id)
-    - Contractors (contractor_id)
     Then falls back to individual user access.
     """
     if is_admin(user):
+        return
+    
+    # Contractors have access to all buildings by default
+    if user.role in ["contractor", "contractor_staff"]:
         return
     
     client = get_supabase_client()
@@ -97,7 +100,6 @@ def require_building_access(user: CurrentUser, building_id: str):
     # Check organization-level access first (if user is linked to an organization)
     aoao_org_id = getattr(user, "aoao_organization_id", None)
     pm_company_id = getattr(user, "pm_company_id", None)
-    contractor_id = getattr(user, "contractor_id", None)
     
     if aoao_org_id:
         # Check AOAO organization building access
@@ -125,19 +127,6 @@ def require_building_access(user: CurrentUser, building_id: str):
         if company_result.data:
             return  # Company has access, user inherits it
     
-    if contractor_id:
-        # Check contractor building access
-        contractor_result = (
-            client.table("contractor_building_access")
-            .select("id")
-            .eq("contractor_id", contractor_id)
-            .eq("building_id", building_id)
-            .limit(1)
-            .execute()
-        )
-        if contractor_result.data:
-            return  # Contractor has access, user inherits it
-    
     # Fall back to individual user access
     result = (
         client.table("user_building_access")
@@ -158,14 +147,17 @@ def require_building_access(user: CurrentUser, building_id: str):
 def require_unit_access(user: CurrentUser, unit_id: str):
     """
     Check if user has access to a unit.
-    Admins bypass.
-    Checks organization-level access first (if user is linked to an organization/contractor):
+    Admins and contractors bypass (contractors have access to all units).
+    Checks organization-level access first (if user is linked to an organization):
     - AOAO organizations (aoao_organization_id)
     - PM companies (pm_company_id)
-    - Contractors (contractor_id)
     Then falls back to individual user access.
     """
     if is_admin(user):
+        return
+    
+    # Contractors have access to all units by default
+    if user.role in ["contractor", "contractor_staff"]:
         return
     
     client = get_supabase_client()
@@ -173,7 +165,6 @@ def require_unit_access(user: CurrentUser, unit_id: str):
     # Check organization-level access first (if user is linked to an organization)
     aoao_org_id = getattr(user, "aoao_organization_id", None)
     pm_company_id = getattr(user, "pm_company_id", None)
-    contractor_id = getattr(user, "contractor_id", None)
     
     if aoao_org_id:
         # Check AOAO organization unit access
@@ -200,19 +191,6 @@ def require_unit_access(user: CurrentUser, unit_id: str):
         )
         if company_result.data:
             return  # Company has access, user inherits it
-    
-    if contractor_id:
-        # Check contractor unit access
-        contractor_result = (
-            client.table("contractor_unit_access")
-            .select("id")
-            .eq("contractor_id", contractor_id)
-            .eq("unit_id", unit_id)
-            .limit(1)
-            .execute()
-        )
-        if contractor_result.data:
-            return  # Contractor has access, user inherits it
     
     # Fall back to individual user access
     result = (
@@ -355,13 +333,16 @@ def require_document_access(user: CurrentUser, document_id: str):
 def get_user_accessible_unit_ids(user: CurrentUser) -> List[str]:
     """
     Get list of unit IDs the user has access to.
-    Admins return None (all units).
-    Includes organization-level access if user is linked to an organization/contractor:
+    Admins and contractors return None (all units).
+    Includes organization-level access if user is linked to an organization:
     - AOAO organizations (aoao_organization_id)
     - PM companies (pm_company_id)
-    - Contractors (contractor_id)
     """
     if is_admin(user):
+        return None  # None means all units
+    
+    # Contractors have access to all units by default
+    if user.role in ["contractor", "contractor_staff"]:
         return None  # None means all units
     
     client = get_supabase_client()
@@ -370,7 +351,6 @@ def get_user_accessible_unit_ids(user: CurrentUser) -> List[str]:
     # Check organization-level access first
     aoao_org_id = getattr(user, "aoao_organization_id", None)
     pm_company_id = getattr(user, "pm_company_id", None)
-    contractor_id = getattr(user, "contractor_id", None)
     
     if aoao_org_id:
         org_result = (
@@ -390,15 +370,6 @@ def get_user_accessible_unit_ids(user: CurrentUser) -> List[str]:
         )
         unit_ids.update([row["unit_id"] for row in (company_result.data or [])])
     
-    if contractor_id:
-        contractor_result = (
-            client.table("contractor_unit_access")
-            .select("unit_id")
-            .eq("contractor_id", contractor_id)
-            .execute()
-        )
-        unit_ids.update([row["unit_id"] for row in (contractor_result.data or [])])
-    
     # Add individual user access
     user_result = (
         client.table("user_units_access")
@@ -414,13 +385,16 @@ def get_user_accessible_unit_ids(user: CurrentUser) -> List[str]:
 def get_user_accessible_building_ids(user: CurrentUser) -> List[str]:
     """
     Get list of building IDs the user has access to.
-    Admins return None (all buildings).
-    Includes organization-level access if user is linked to an organization/contractor:
+    Admins and contractors return None (all buildings).
+    Includes organization-level access if user is linked to an organization:
     - AOAO organizations (aoao_organization_id)
     - PM companies (pm_company_id)
-    - Contractors (contractor_id)
     """
     if is_admin(user):
+        return None  # None means all buildings
+    
+    # Contractors have access to all buildings by default
+    if user.role in ["contractor", "contractor_staff"]:
         return None  # None means all buildings
     
     client = get_supabase_client()
@@ -429,7 +403,6 @@ def get_user_accessible_building_ids(user: CurrentUser) -> List[str]:
     # Check organization-level access first
     aoao_org_id = getattr(user, "aoao_organization_id", None)
     pm_company_id = getattr(user, "pm_company_id", None)
-    contractor_id = getattr(user, "contractor_id", None)
     
     if aoao_org_id:
         org_result = (
@@ -448,15 +421,6 @@ def get_user_accessible_building_ids(user: CurrentUser) -> List[str]:
             .execute()
         )
         building_ids.update([row["building_id"] for row in (company_result.data or [])])
-    
-    if contractor_id:
-        contractor_result = (
-            client.table("contractor_building_access")
-            .select("building_id")
-            .eq("contractor_id", contractor_id)
-            .execute()
-        )
-        building_ids.update([row["building_id"] for row in (contractor_result.data or [])])
     
     # Add individual user access
     user_result = (
