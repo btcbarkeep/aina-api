@@ -192,7 +192,9 @@ async def bulk_upload_documents(
                 row_dict[col] = float(value)
             elif isinstance(value, np.bool_):
                 row_dict[col] = bool(value)
-            elif isinstance(value, (pd.Timestamp, pd.NaTType)):
+            elif isinstance(value, pd.Timestamp):
+                row_dict[col] = None
+            elif value is pd.NaT:  # Check for NaT (Not a Time) using identity check
                 row_dict[col] = None
             else:
                 row_dict[col] = value
@@ -311,7 +313,9 @@ async def bulk_upload_documents(
                 return bool(value)
             
             # Handle pandas timestamp types
-            if isinstance(value, (pd.Timestamp, pd.NaTType)):
+            if isinstance(value, pd.Timestamp):
+                return None
+            if value is pd.NaT:  # Check for NaT (Not a Time) using identity check
                 return None
             
             # Handle strings - strip and return None if empty
