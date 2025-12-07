@@ -12,7 +12,7 @@ from dependencies.auth import (
 
 router = APIRouter(
     prefix="/user-access",
-    tags=["User Access"],
+    tags=["Access Management"],
 )
 
 
@@ -52,11 +52,16 @@ class PMCompanyUnitAccessCreate(BaseModel):
 
 
 # ============================================================
-# Admin — List all building access
+# USER ACCESS — Individual User Access Management
+# ============================================================
+
+# ============================================================
+# List User Access
 # ============================================================
 @router.get(
     "/buildings",
     summary="List all user building access entries",
+    description="[User Access] List all individual user building access grants",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_building_access():
@@ -76,12 +81,10 @@ def list_building_access():
         raise HTTPException(500, f"Supabase error: {e}")
 
 
-# ============================================================
-# Admin — List all unit access
-# ============================================================
 @router.get(
     "/units",
     summary="List all user unit access entries",
+    description="[User Access] List all individual user unit access grants",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_unit_access():
@@ -99,12 +102,10 @@ def list_unit_access():
         raise HTTPException(500, f"Supabase error: {e}")
 
 
-# ============================================================
-# Admin — List all access (both building and unit)
-# ============================================================
 @router.get(
     "/",
     summary="List all user access entries (buildings and units)",
+    description="[User Access] List all individual user access grants (both buildings and units)",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_user_access():
@@ -181,11 +182,12 @@ def validate_user_and_unit(client, user_id: str, unit_id: str):
 
 
 # ============================================================
-# Admin — Grant user building access
+# Grant User Access
 # ============================================================
 @router.post(
     "/buildings",
     summary="Grant a user building access",
+    description="[User Access] Grant building access to an individual user (e.g., for owners)",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def add_building_access(payload: UserBuildingAccessCreate):
@@ -224,12 +226,10 @@ def add_building_access(payload: UserBuildingAccessCreate):
         raise HTTPException(500, f"Supabase error: {e}")
 
 
-# ============================================================
-# Admin — Grant user unit access
-# ============================================================
 @router.post(
     "/units",
     summary="Grant a user unit access",
+    description="[User Access] Grant unit access to an individual user (e.g., for owners)",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def add_unit_access(payload: UserUnitAccessCreate):
@@ -269,11 +269,12 @@ def add_unit_access(payload: UserUnitAccessCreate):
 
 
 # ============================================================
-# Admin — Remove user building access
+# Remove User Access
 # ============================================================
 @router.delete(
     "/buildings/{user_id}/{building_id}",
     summary="Remove building access for a user",
+    description="[User Access] Remove building access from an individual user",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def delete_building_access(user_id: str, building_id: str):
@@ -322,12 +323,10 @@ def delete_building_access(user_id: str, building_id: str):
         raise HTTPException(500, f"Supabase error: {e}")
 
 
-# ============================================================
-# Admin — Remove user unit access
-# ============================================================
 @router.delete(
     "/units/{user_id}/{unit_id}",
     summary="Remove unit access for a user",
+    description="[User Access] Remove unit access from an individual user",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def delete_unit_access(user_id: str, unit_id: str):
@@ -377,9 +376,13 @@ def delete_unit_access(user_id: str, unit_id: str):
 
 
 # ============================================================
-# User — View their own access (buildings and units)
+# View Own Access
 # ============================================================
-@router.get("/me", summary="Get building and unit access for the authenticated user")
+@router.get(
+    "/me",
+    summary="Get building and unit access for the authenticated user",
+    description="[User Access] Get your own building and unit access (includes inherited organization access)"
+)
 def my_access(current_user: CurrentUser = Depends(get_current_user)):
 
     # Bootstrap admin = universal access, special-case
@@ -423,13 +426,19 @@ def my_access(current_user: CurrentUser = Depends(get_current_user)):
 
 
 # ============================================================
+# ORGANIZATION ACCESS — Organization-Level Access Management
+# ============================================================
+# All users linked to an organization automatically inherit the organization's access
+# ============================================================
+
+# ============================================================
 # AOAO ORGANIZATION BUILDING ACCESS
 # ============================================================
 
 @router.post(
     "/aoao-organizations/{organization_id}/buildings",
     summary="Grant building access to an AOAO organization",
-    description="All users linked to this organization will inherit building access",
+    description="[Organization Access] Grant building access to an AOAO organization. All users with aoao_organization_id matching this organization will inherit this access.",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def add_aoao_org_building_access(
@@ -495,6 +504,7 @@ def add_aoao_org_building_access(
 @router.get(
     "/aoao-organizations/{organization_id}/buildings",
     summary="List building access for an AOAO organization",
+    description="[Organization Access] List all buildings an AOAO organization has access to",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_aoao_org_building_access(organization_id: str):
@@ -514,6 +524,7 @@ def list_aoao_org_building_access(organization_id: str):
 @router.delete(
     "/aoao-organizations/{organization_id}/buildings/{building_id}",
     summary="Remove building access from an AOAO organization",
+    description="[Organization Access] Remove building access from an AOAO organization",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def delete_aoao_org_building_access(organization_id: str, building_id: str):
@@ -559,7 +570,7 @@ def delete_aoao_org_building_access(organization_id: str, building_id: str):
 @router.post(
     "/pm-companies/{company_id}/buildings",
     summary="Grant building access to a property management company",
-    description="All users linked to this company will inherit building access",
+    description="[Organization Access] Grant building access to a property management company. All users with pm_company_id matching this company will inherit this access.",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def add_pm_company_building_access(
@@ -625,6 +636,7 @@ def add_pm_company_building_access(
 @router.get(
     "/pm-companies/{company_id}/buildings",
     summary="List building access for a property management company",
+    description="[Organization Access] List all buildings a property management company has access to",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_pm_company_building_access(company_id: str):
@@ -644,6 +656,7 @@ def list_pm_company_building_access(company_id: str):
 @router.delete(
     "/pm-companies/{company_id}/buildings/{building_id}",
     summary="Remove building access from a property management company",
+    description="[Organization Access] Remove building access from a property management company",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def delete_pm_company_building_access(company_id: str, building_id: str):
@@ -689,7 +702,7 @@ def delete_pm_company_building_access(company_id: str, building_id: str):
 @router.post(
     "/pm-companies/{company_id}/units",
     summary="Grant unit access to a property management company",
-    description="All users linked to this company will inherit unit access",
+    description="[Organization Access] Grant unit access to a property management company. All users with pm_company_id matching this company will inherit this access.",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def add_pm_company_unit_access(
@@ -755,6 +768,7 @@ def add_pm_company_unit_access(
 @router.get(
     "/pm-companies/{company_id}/units",
     summary="List unit access for a property management company",
+    description="[Organization Access] List all units a property management company has access to",
     dependencies=[Depends(requires_permission("user_access:read"))],
 )
 def list_pm_company_unit_access(company_id: str):
@@ -774,6 +788,7 @@ def list_pm_company_unit_access(company_id: str):
 @router.delete(
     "/pm-companies/{company_id}/units/{unit_id}",
     summary="Remove unit access from a property management company",
+    description="[Organization Access] Remove unit access from a property management company",
     dependencies=[Depends(requires_permission("user_access:write"))],
 )
 def delete_pm_company_unit_access(company_id: str, unit_id: str):
