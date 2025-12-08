@@ -728,6 +728,7 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
 @router.get(
     "/building/{building_id}",
     summary="Get public building information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
+    include_in_schema=False,
 )
 async def get_building_info(building_id: str):
     """
@@ -763,6 +764,7 @@ async def get_building_info(building_id: str):
 @router.get(
     "/building/{building_id}/unit/{unit_id}",
     summary="Get public unit information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info) by unit_id",
+    include_in_schema=False,
 )
 async def get_unit_info(building_id: str, unit_id: str):
     """
