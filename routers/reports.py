@@ -84,40 +84,6 @@ async def get_public_building_report(
         raise HTTPException(500, f"Failed to generate building report: {str(e)}")
 
 
-@router.get(
-    "/public/unit/{unit_id}",
-    summary="Generate public unit report (AinaReports.com)",
-    tags=["Reports - Public"],
-)
-async def get_public_unit_report(
-    unit_id: str,
-    format: str = "json"
-):
-    """
-    Generate a public unit report for AinaReports.com.
-    No authentication required.
-    Returns sanitized data (no internal notes, only public documents).
-    """
-    try:
-        # Validate format
-        if format not in ["json", "pdf"]:
-            raise HTTPException(400, "format must be 'json' or 'pdf'")
-        
-        result = await generate_unit_report(
-            unit_id=unit_id,
-            user=None,
-            context_role="public",
-            internal=False,
-            format=format
-        )
-        
-        return result.to_dict()
-    except ValueError as e:
-        raise HTTPException(404, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Failed to generate unit report: {str(e)}")
-
-
 # ============================================================
 # DASHBOARD ENDPOINTS (Auth Required)
 # ============================================================
