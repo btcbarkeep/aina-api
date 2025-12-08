@@ -438,28 +438,39 @@ def send_bulk_message(
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    Send a bulk message to multiple users (AOAO only).
+    Send a bulk message to multiple users.
     
     **Permissions:**
-    - Only AOAO users can send bulk messages
+    - AOAO users: Can send to users with access to their organization's buildings/units.
+    - Admin/Super Admin: Can send to all users (or filter by building/unit).
     
     **Recipient Types:**
-    - 'contractors': Users associated with contractors that have access to AOAO's buildings/units
-    - 'property_managers': Users associated with PM companies that have access to AOAO's buildings/units
-    - 'owners': Users with role 'owner' that have access to units in AOAO's buildings
+    - 'contractors': Users associated with contractors.
+    - 'property_managers': Users associated with PM companies.
+    - 'owners': Users with role 'owner'.
+    - Can include multiple types (e.g., ['contractors', 'owners']).
+    
+    **Filtering:**
+    - `building_id`: Optional. Filter recipients to those with access to this building.
+    - `unit_id`: Optional. Filter recipients to those with access to this unit (takes precedence over building_id).
+    - If no filters provided:
+      - AOAO: Uses all buildings/units their organization has access to.
+      - Admin: Sends to all users matching recipient types.
     
     **Additional Recipients:**
-    - All admins and super_admins automatically receive the message
+    - All admins and super_admins automatically receive the message (unless filtered out).
     
     **Note:**
-    - Replies are disabled for bulk messages (only admins can reply)
-    - Only users with access to buildings/units that the AOAO manages will receive the message
+    - Replies are disabled for bulk messages (only admins can reply).
     """
-    # Only AOAO can send bulk messages
-    if current_user.role != "aoao":
-        raise HTTPException(403, "Only AOAO users can send bulk messages")
+    client = get_supabase_client()
+    is_admin = current_user.role in ["admin", "super_admin"]
+    is_aoao = current_user.role == "aoao"
     
-    if not current_user.aoao_organization_id:
+    if not (is_admin or is_aoao):
+        raise HTTPException(403, "Only AOAO users and admins can send bulk messages")
+    
+    if is_aoao and not current_user.aoao_organization_id:
         raise HTTPException(400, "AOAO user must be associated with an AOAO organization to send bulk messages")
     
     # Validate recipient types
@@ -468,36 +479,86 @@ def send_bulk_message(
     if invalid_types:
         raise HTTPException(400, f"Invalid recipient types: {invalid_types}. Valid types: {valid_types}")
     
-    client = get_supabase_client()
-    
     try:
-        # Get buildings that the AOAO organization has access to
-        aoao_buildings_result = (
-            client.table("aoao_organization_building_access")
-            .select("building_id")
-            .eq("aoao_organization_id", current_user.aoao_organization_id)
-            .execute()
-        )
-        aoao_building_ids = [row["building_id"] for row in (aoao_buildings_result.data or [])]
+        # Determine which buildings/units to filter by
+        target_building_ids = set()
+        target_unit_ids = set()
         
-        if not aoao_building_ids:
-            raise HTTPException(400, "AOAO organization does not have access to any buildings")
-        
-        # Get all units in these buildings
-        units_result = (
-            client.table("units")
-            .select("id, building_id")
-            .in_("building_id", aoao_building_ids)
-            .execute()
-        )
-        aoao_unit_ids = [row["id"] for row in (units_result.data or [])]
-        
-        # Get users who have access to these buildings/units
-        # This includes:
-        # - Direct user building access
-        # - Direct user unit access
-        # - PM companies with building/unit access
-        # - Contractors (they have access to all buildings/units)
+        if payload.unit_id:
+            # If unit_id is provided, filter by that specific unit
+            # Validate unit exists
+            unit_result = (
+                client.table("units")
+                .select("id, building_id")
+                .eq("id", payload.unit_id)
+                .maybe_single()
+                .execute()
+            )
+            if not unit_result.data:
+                raise HTTPException(404, f"Unit {payload.unit_id} not found")
+            
+            target_unit_ids.add(payload.unit_id)
+            # Also include the building for building-level access checks
+            if unit_result.data.get("building_id"):
+                target_building_ids.add(unit_result.data["building_id"])
+        elif payload.building_id:
+            # If building_id is provided, filter by that building and its units
+            # Validate building exists
+            building_result = (
+                client.table("buildings")
+                .select("id")
+                .eq("id", payload.building_id)
+                .maybe_single()
+                .execute()
+            )
+            if not building_result.data:
+                raise HTTPException(404, f"Building {payload.building_id} not found")
+            
+            target_building_ids.add(payload.building_id)
+            
+            # Get all units in this building
+            units_result = (
+                client.table("units")
+                .select("id")
+                .eq("building_id", payload.building_id)
+                .execute()
+            )
+            target_unit_ids = set([row["id"] for row in (units_result.data or [])])
+        elif is_aoao:
+            # AOAO: Use all buildings/units their organization has access to
+            if current_user.aoao_organization_id:
+                # Get building access
+                building_access_result = (
+                    client.table("aoao_organization_building_access")
+                    .select("building_id")
+                    .eq("aoao_organization_id", current_user.aoao_organization_id)
+                    .execute()
+                )
+                target_building_ids = set([row["building_id"] for row in (building_access_result.data or [])])
+                
+                # Get unit access
+                unit_access_result = (
+                    client.table("aoao_organization_unit_access")
+                    .select("unit_id")
+                    .eq("aoao_organization_id", current_user.aoao_organization_id)
+                    .execute()
+                )
+                target_unit_ids = set([row["unit_id"] for row in (unit_access_result.data or [])])
+                
+                # Also get all units in buildings the AOAO has access to
+                if target_building_ids:
+                    units_in_buildings_result = (
+                        client.table("units")
+                        .select("id")
+                        .in_("building_id", target_building_ids)
+                        .execute()
+                    )
+                    target_unit_ids.update([row["id"] for row in (units_in_buildings_result.data or [])])
+            
+            if not target_building_ids and not target_unit_ids:
+                raise HTTPException(400, "AOAO organization has no building or unit access")
+        # For admins with no filters: target_building_ids and target_unit_ids remain empty
+        # which means "all buildings/units" in the filtering logic below
         
         recipient_ids = set()
         
@@ -528,26 +589,25 @@ def send_bulk_message(
             if user_role in ["admin", "super_admin"]:
                 recipient_ids.add(user_id)
         
-        # 2. Get users with direct building access to AOAO's buildings
-        # (These will be filtered by recipient type below)
+        # 2. Get users with building/unit access (if filters are provided)
         users_with_building_access = set()
-        if aoao_building_ids:
+        users_with_unit_access = set()
+        
+        if target_building_ids:
             user_building_access_result = (
                 client.table("user_building_access")
                 .select("user_id")
-                .in_("building_id", aoao_building_ids)
+                .in_("building_id", target_building_ids)
                 .execute()
             )
             for row in (user_building_access_result.data or []):
                 users_with_building_access.add(row["user_id"])
         
-        # 3. Get users with direct unit access to units in AOAO's buildings
-        users_with_unit_access = set()
-        if aoao_unit_ids:
+        if target_unit_ids:
             user_unit_access_result = (
                 client.table("user_unit_access")
                 .select("user_id")
-                .in_("unit_id", aoao_unit_ids)
+                .in_("unit_id", target_unit_ids)
                 .execute()
             )
             for row in (user_unit_access_result.data or []):
@@ -556,42 +616,27 @@ def send_bulk_message(
         # Combine users with access (building or unit)
         users_with_access = users_with_building_access.union(users_with_unit_access)
         
-        # 4. Get PM companies with access to AOAO's buildings/units, then get their users
-        if aoao_building_ids:
+        # 3. Get PM companies with access to target buildings/units
+        pm_company_ids_with_access = set()
+        if target_building_ids:
             pm_building_access_result = (
                 client.table("pm_company_building_access")
                 .select("pm_company_id")
-                .in_("building_id", aoao_building_ids)
+                .in_("building_id", target_building_ids)
                 .execute()
             )
-            pm_company_ids = set([row["pm_company_id"] for row in (pm_building_access_result.data or [])])
-            
-            if aoao_unit_ids:
-                pm_unit_access_result = (
-                    client.table("pm_company_unit_access")
-                    .select("pm_company_id")
-                    .in_("unit_id", aoao_unit_ids)
-                    .execute()
-                )
-                pm_company_ids.update([row["pm_company_id"] for row in (pm_unit_access_result.data or [])])
-            
-            # Get users associated with these PM companies
-            for user in all_users:
-                if hasattr(user, "id"):
-                    user_id = user.id
-                    user_meta = getattr(user, "user_metadata", {}) or {}
-                elif isinstance(user, dict):
-                    user_id = user.get("id")
-                    user_meta = user.get("user_metadata", {}) or {}
-                else:
-                    continue
-                
-                pm_company_id = user_meta.get("pm_company_id")
-                if pm_company_id and pm_company_id in pm_company_ids:
-                    if "property_managers" in payload.recipient_types:
-                        recipient_ids.add(user_id)
+            pm_company_ids_with_access.update([row["pm_company_id"] for row in (pm_building_access_result.data or [])])
         
-        # 5. Filter users by recipient types and access
+        if target_unit_ids:
+            pm_unit_access_result = (
+                client.table("pm_company_unit_access")
+                .select("pm_company_id")
+                .in_("unit_id", target_unit_ids)
+                .execute()
+            )
+            pm_company_ids_with_access.update([row["pm_company_id"] for row in (pm_unit_access_result.data or [])])
+        
+        # 4. Filter users by recipient types and access
         for user in all_users:
             if hasattr(user, "id"):
                 user_id = user.id
@@ -606,12 +651,19 @@ def send_bulk_message(
             contractor_id = user_meta.get("contractor_id")
             pm_company_id = user_meta.get("pm_company_id")
             
-            # Skip if user doesn't have access to AOAO's buildings/units (unless admin or contractor)
-            has_access = (
-                user_id in users_with_access or
-                user_role in ["admin", "super_admin"] or
-                contractor_id  # Contractors have access to all buildings
-            )
+            # For admins with no filters: include all users matching recipient types
+            # For AOAO or when filters are provided: check access
+            if is_admin and not target_building_ids and not target_unit_ids:
+                # Admin with no filters: include all users matching types
+                has_access = True
+            else:
+                # Check if user has access to target buildings/units
+                # Admins, super_admins, and contractors always have access
+                has_access = (
+                    user_id in users_with_access or
+                    user_role in ["admin", "super_admin"] or
+                    contractor_id  # Contractors have access to all buildings
+                )
             
             if not has_access:
                 continue
@@ -621,20 +673,37 @@ def send_bulk_message(
                 recipient_ids.add(user_id)
             
             if "property_managers" in payload.recipient_types and pm_company_id:
-                # Check if PM company has access to AOAO's buildings/units
-                if pm_company_id in pm_company_ids:
+                # Check if PM company has access (or admin with no filters)
+                if is_admin and not target_building_ids and not target_unit_ids:
+                    # Admin with no filters: include all PM users
+                    recipient_ids.add(user_id)
+                elif pm_company_id in pm_company_ids_with_access:
                     recipient_ids.add(user_id)
             
             if "owners" in payload.recipient_types and user_role == "owner":
-                # Owner must have unit access to be included
-                if user_id in users_with_unit_access:
+                # Owner must have unit access (or admin with no filters)
+                if is_admin and not target_building_ids and not target_unit_ids:
+                    # Admin with no filters: include all owners
+                    recipient_ids.add(user_id)
+                elif user_id in users_with_unit_access:
                     recipient_ids.add(user_id)
         
         # Remove the sender from recipients
         recipient_ids.discard(current_user.auth_user_id)
         
         if not recipient_ids:
-            raise HTTPException(400, f"No eligible recipients found for types: {payload.recipient_types} with access to AOAO's buildings")
+            filter_msg = ""
+            if payload.unit_id:
+                filter_msg = f" with access to unit {payload.unit_id}"
+            elif payload.building_id:
+                filter_msg = f" with access to building {payload.building_id}"
+            elif is_aoao:
+                filter_msg = " with access to AOAO's buildings"
+            
+            raise HTTPException(
+                400, 
+                f"No eligible recipients found for types: {payload.recipient_types}{filter_msg}"
+            )
         
         # Create messages for all recipients (with replies disabled)
         messages_to_create = []
@@ -667,9 +736,10 @@ def send_bulk_message(
                 logger.error(f"Failed to insert batch {i//batch_size + 1}: {e}")
                 errors.append(f"Batch {i//batch_size + 1}: {str(e)}")
         
+        sender_type = "AOAO" if is_aoao else "Admin"
         logger.info(
-            f"AOAO user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
-            f"(types: {payload.recipient_types})"
+            f"{sender_type} user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
+            f"(types: {payload.recipient_types}, filters: building={payload.building_id}, unit={payload.unit_id})"
         )
         
         return {
