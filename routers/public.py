@@ -77,8 +77,8 @@ def search_public(query: Optional[str] = None):
                         if name_result.data:
                             for b in name_result.data:
                                 all_buildings[b["id"]] = b
-                except:
-                    pass
+                    except:
+                        pass
                 
                 # Search by address
                 try:
