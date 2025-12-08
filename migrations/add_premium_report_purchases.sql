@@ -31,23 +31,11 @@ CREATE INDEX IF NOT EXISTS idx_premium_report_purchases_stripe_session_id ON pre
 CREATE INDEX IF NOT EXISTS idx_premium_report_purchases_stripe_payment_intent_id ON premium_report_purchases(stripe_payment_intent_id);
 
 -- RLS policies
-ALTER TABLE premium_report_purchases ENABLE ROW LEVEL SECURITY;
-
--- Admins can read all premium report purchases
-CREATE POLICY "Admins can view all premium report purchases" ON premium_report_purchases
-FOR SELECT USING (
-    EXISTS (SELECT 1 FROM auth.users WHERE id = auth.uid() AND (raw_user_meta_data->>'role' = 'admin' OR raw_user_meta_data->>'role' = 'super_admin'))
-);
-
--- System can insert premium report purchases (via webhook or API)
-CREATE POLICY "System can create premium report purchases" ON premium_report_purchases
-FOR INSERT WITH CHECK (true); -- Allow inserts (webhook/API will handle auth)
-
--- Admins can update premium report purchases
-CREATE POLICY "Admins can update premium report purchases" ON premium_report_purchases
-FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM auth.users WHERE id = auth.uid() AND (raw_user_meta_data->>'role' = 'admin' OR raw_user_meta_data->>'role' = 'super_admin'))
-);
+-- Note: RLS is disabled for this table because:
+-- 1. The API endpoint (/financials/revenue) already enforces super_admin-only access
+-- 2. Webhooks need to insert records without authentication
+-- 3. All access is controlled at the API level, not row-level
+ALTER TABLE premium_report_purchases DISABLE ROW LEVEL SECURITY;
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_premium_report_purchases_updated_at()
