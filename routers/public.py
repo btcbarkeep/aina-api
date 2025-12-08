@@ -65,8 +65,8 @@ def search_public(query: Optional[str] = None):
                 # Make multiple queries and combine results
                 all_buildings = {}
                 for word in building_name_words:
-                # Search by name
-                try:
+                    # Search by name
+                    try:
                     name_result = (
                         client.table("buildings")
                         .select("id, name, address, city, state, zip, slug")
