@@ -182,6 +182,40 @@ def get_revenue(
                 "note": "Stripe integration may not be configured or there was an error fetching revenue data"
             }
         
+        # Fetch premium report purchase revenue
+        premium_reports_result = (
+            client.table("premium_report_purchases")
+            .select("amount_cents, amount_decimal, currency, payment_status, purchased_at")
+            .eq("payment_status", "paid")
+            .gte("purchased_at", start_dt.isoformat())
+            .lte("purchased_at", end_dt.isoformat())
+            .execute()
+        )
+        
+        premium_reports_total_cents = 0
+        premium_reports_total_decimal = 0.0
+        premium_reports_count = 0
+        
+        for purchase in (premium_reports_result.data or []):
+            premium_reports_total_cents += purchase.get("amount_cents", 0)
+            premium_reports_total_decimal += purchase.get("amount_decimal", 0.0)
+            premium_reports_count += 1
+        
+        revenue_data["premium_reports"] = {
+            "total_revenue_cents": premium_reports_total_cents,
+            "total_revenue_decimal": round(premium_reports_total_decimal, 2),
+            "purchase_count": premium_reports_count,
+            "currency": "usd"  # Assuming USD for now
+        }
+        
+        # Add premium reports to summary
+        revenue_data["summary"]["total_revenue_cents"] = (
+            revenue_data.get("stripe", {}).get("total_revenue", 0) + premium_reports_total_cents
+        )
+        revenue_data["summary"]["total_revenue_decimal"] = round(
+            revenue_data.get("stripe", {}).get("total_revenue_decimal", 0.0) + premium_reports_total_decimal, 2
+        )
+        
         return revenue_data
     except HTTPException:
         raise
@@ -350,4 +384,98 @@ def get_subscription_breakdown(
     except Exception as e:
         logger.error(f"Failed to get subscription breakdown: {e}")
         raise HTTPException(500, f"Failed to get subscription breakdown: {str(e)}")
+
+
+@router.get("/premium-reports/breakdown")
+def get_premium_reports_breakdown(
+    start_date: Optional[str] = Query(None, description="Start date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format)"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Get detailed premium report purchase breakdown (Super Admin only).
+    
+    Returns list of all premium report purchases with revenue information.
+    """
+    if current_user.role != "super_admin":
+        raise HTTPException(403, "Only super admins can view financial data")
+    
+    client = get_supabase_client()
+    
+    try:
+        # Parse dates
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            except:
+                raise HTTPException(400, "Invalid start_date format. Use ISO format.")
+        else:
+            start_dt = datetime.now() - timedelta(days=30)  # Default to last 30 days
+        
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            except:
+                raise HTTPException(400, "Invalid end_date format. Use ISO format.")
+        else:
+            end_dt = datetime.now()
+        
+        # Fetch premium report purchases
+        query = (
+            client.table("premium_report_purchases")
+            .select("*")
+            .eq("payment_status", "paid")
+            .gte("purchased_at", start_dt.isoformat())
+            .lte("purchased_at", end_dt.isoformat())
+            .order("purchased_at", desc=True)
+        )
+        
+        result = query.execute()
+        purchases = result.data or []
+        
+        # Calculate totals
+        total_revenue_cents = 0
+        total_revenue_decimal = 0.0
+        report_type_counts = {}
+        
+        for purchase in purchases:
+            amount_cents = purchase.get("amount_cents", 0)
+            amount_decimal = purchase.get("amount_decimal", 0.0)
+            report_type = purchase.get("report_type", "unknown")
+            
+            total_revenue_cents += amount_cents
+            total_revenue_decimal += amount_decimal
+            
+            if report_type not in report_type_counts:
+                report_type_counts[report_type] = {"count": 0, "revenue_cents": 0, "revenue_decimal": 0.0}
+            
+            report_type_counts[report_type]["count"] += 1
+            report_type_counts[report_type]["revenue_cents"] += amount_cents
+            report_type_counts[report_type]["revenue_decimal"] += amount_decimal
+        
+        # Round decimal values
+        total_revenue_decimal = round(total_revenue_decimal, 2)
+        for report_type in report_type_counts:
+            report_type_counts[report_type]["revenue_decimal"] = round(
+                report_type_counts[report_type]["revenue_decimal"], 2
+            )
+        
+        return {
+            "success": True,
+            "period": {
+                "start_date": start_dt.isoformat(),
+                "end_date": end_dt.isoformat()
+            },
+            "total_purchases": len(purchases),
+            "total_revenue_cents": total_revenue_cents,
+            "total_revenue_decimal": total_revenue_decimal,
+            "currency": "usd",
+            "report_type_breakdown": report_type_counts,
+            "purchases": purchases
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get premium reports breakdown: {e}")
+        raise HTTPException(500, f"Failed to get premium reports breakdown: {str(e)}")
 
