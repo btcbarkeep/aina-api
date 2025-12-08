@@ -416,7 +416,7 @@ async def bulk_upload_documents(
             "source": source if source else None,  # Apply source to all documents if provided
             "is_public": True,  # All bulk upload documents are public
             "uploaded_by": str(current_user.id),
-            "uploaded_by_role": current_user.role,  # Denormalized for performance
+            "uploaded_by_role": "admin" if current_user.role in ["admin", "super_admin"] else current_user.role,  # Denormalized for performance (normalize admin roles)
         }
 
         sanitized = sanitize(doc_data)
