@@ -25,6 +25,8 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     """
     # Get PM companies with building/unit access
     try:
+        pm_company_ids = set()
+        
         if unit_number:
             # First, find the unit_id for this unit_number and building_id
             unit_result = (
@@ -48,15 +50,42 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                 .eq("unit_id", unit_id)
                 .execute()
             )
+            
+            pm_company_ids = {access["pm_company_id"] for access in (pm_access_result.data or [])}
         else:
-            pm_access_result = (
+            # Building level: get both building-level and unit-level access
+            # 1. Get PM companies with building-level access
+            pm_building_access = (
                 client.table("pm_company_building_access")
                 .select("pm_company_id")
                 .eq("building_id", building_id)
                 .execute()
             )
+            pm_company_ids = {access["pm_company_id"] for access in (pm_building_access.data or [])}
+            
+            # 2. Get all units for this building
+            units_result = (
+                client.table("units")
+                .select("id")
+                .eq("building_id", building_id)
+                .execute()
+            )
+            
+            if units_result.data:
+                unit_ids = [unit["id"] for unit in units_result.data]
+                
+                # 3. Get PM companies with unit-level access for any unit in this building
+                if unit_ids:
+                    pm_unit_access = (
+                        client.table("pm_company_unit_access")
+                        .select("pm_company_id")
+                        .in_("unit_id", unit_ids)
+                        .execute()
+                    )
+                    
+                    unit_pm_ids = {access["pm_company_id"] for access in (pm_unit_access.data or [])}
+                    pm_company_ids = pm_company_ids.union(unit_pm_ids)
         
-        pm_company_ids = {access["pm_company_id"] for access in (pm_access_result.data or [])}
         print(f"DEBUG: Found {len(pm_company_ids)} PM companies with access for building {building_id}")
     except Exception as e:
         print(f"DEBUG: Error querying PM access tables: {e}")
@@ -196,6 +225,8 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     """
     # Get AOAO organizations with building/unit access
     try:
+        aoao_org_ids = set()
+        
         if unit_number:
             # First, find the unit_id for this unit_number and building_id
             unit_result = (
@@ -219,15 +250,42 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
                 .eq("unit_id", unit_id)
                 .execute()
             )
+            
+            aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
         else:
-            aoao_access_result = (
+            # Building level: get both building-level and unit-level access
+            # 1. Get AOAO organizations with building-level access
+            aoao_building_access = (
                 client.table("aoao_organization_building_access")
                 .select("aoao_organization_id")
                 .eq("building_id", building_id)
                 .execute()
             )
+            aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_building_access.data or [])}
+            
+            # 2. Get all units for this building
+            units_result = (
+                client.table("units")
+                .select("id")
+                .eq("building_id", building_id)
+                .execute()
+            )
+            
+            if units_result.data:
+                unit_ids = [unit["id"] for unit in units_result.data]
+                
+                # 3. Get AOAO organizations with unit-level access for any unit in this building
+                if unit_ids:
+                    aoao_unit_access = (
+                        client.table("aoao_organization_unit_access")
+                        .select("aoao_organization_id")
+                        .in_("unit_id", unit_ids)
+                        .execute()
+                    )
+                    
+                    unit_aoao_ids = {access["aoao_organization_id"] for access in (aoao_unit_access.data or [])}
+                    aoao_org_ids = aoao_org_ids.union(unit_aoao_ids)
         
-        aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
         print(f"DEBUG: Found {len(aoao_org_ids)} AOAO organizations with access for building {building_id}")
     except Exception as e:
         print(f"DEBUG: Error querying AOAO access tables: {e}")
