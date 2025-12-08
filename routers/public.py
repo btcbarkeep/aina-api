@@ -5,6 +5,10 @@ from typing import Optional
 from datetime import datetime
 
 from core.supabase_client import get_supabase_client
+from services.report_generator import (
+    generate_building_report,
+    generate_unit_report,
+)
 
 router = APIRouter(
     prefix="/reports/public",
@@ -725,174 +729,31 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     "/building/{building_id}",
     summary="Get public building information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
 )
-def get_building_info(building_id: str):
+async def get_building_info(building_id: str):
     """
-    Public endpoint to get free information about a building:
-    - Last 5 documents
-    - Last 5 events
-    - Top 5 property managers (by event count)
-    - Top 5 contractors (by event count)
-    - AOAO organizations (only organizations tied to the building)
+    Public endpoint to get free information about a building.
+    Uses the same data logic as the report generator (public context).
     """
-    client = get_supabase_client()
-    
-    # Verify building exists
     try:
-        building = (
-            client.table("buildings")
-            .select("*")
-            .eq("id", building_id)
-            .single()
-            .execute()
-        ).data
+        report = await generate_building_report(
+            building_id=building_id,
+            user=None,
+            context_role="public",
+            internal=False,
+            format="json",
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     except Exception as e:
-        raise HTTPException(404, f"Building not found: {str(e)}")
+        raise HTTPException(500, f"Failed to generate building info: {str(e)}")
     
-    if not building:
-        raise HTTPException(404, "Building not found")
-    
-    # Get last 5 documents (ONLY public documents - is_public = true)
-    try:
-        documents = (
-            client.table("documents")
-            .select("*")
-            .eq("building_id", building_id)
-            .eq("is_public", True)
-            .order("created_at", desc=True)
-            .limit(5)
-            .execute()
-        ).data or []
-    except Exception as e:
-        documents = []
-    
-    # Get all units for this building
-    try:
-        units = (
-            client.table("units")
-            .select("*")
-            .eq("building_id", building_id)
-            .order("unit_number", desc=False)
-            .execute()
-        ).data or []
-        unit_count = len(units)
-    except Exception as e:
-        units = []
-        # Fallback: try to get from events if units table doesn't exist
-        try:
-            units_from_events = (
-                client.table("events")
-                .select("unit_number")
-                .eq("building_id", building_id)
-                .not_.is_("unit_number", "null")
-                .execute()
-            )
-            unit_count = len(set(e.get("unit_number") for e in (units_from_events.data or []) if e.get("unit_number")))
-        except Exception:
-            unit_count = None
-    
-    # Get last 5 events with their comments
-    try:
-        events = (
-            client.table("events")
-            .select("*")
-            .eq("building_id", building_id)
-            .order("occurred_at", desc=True)
-            .limit(5)
-            .execute()
-        ).data or []
-        
-        # Get comments for each event
-        if events:
-            event_ids = [e["id"] for e in events]
-            try:
-                comments = (
-                    client.table("event_comments")
-                    .select("*")
-                    .in_("event_id", event_ids)
-                    .order("created_at", desc=False)
-                    .execute()
-                ).data or []
-                
-                # Group comments by event_id
-                comments_by_event = {}
-                for comment in comments:
-                    event_id = comment.get("event_id")
-                    if event_id:
-                        if event_id not in comments_by_event:
-                            comments_by_event[event_id] = []
-                        comments_by_event[event_id].append(comment)
-                
-                # Add comments to each event
-                for event in events:
-                    event["comments"] = comments_by_event.get(event["id"], [])
-            except Exception:
-                # If comments table doesn't exist or error, just add empty array
-                for event in events:
-                    event["comments"] = []
-    except Exception as e:
-        events = []
-    
-    # Get top 5 property managers
-    try:
-        property_managers = get_top_property_managers(client, building_id, limit=5)
-    except Exception as e:
-        import traceback
-        print(f"Error getting property managers: {e}")
-        traceback.print_exc()
-        property_managers = []
-    
-    # Get top 5 contractors
-    try:
-        contractors = get_top_contractors(client, building_id, limit=5)
-    except Exception as e:
-        import traceback
-        print(f"Error getting contractors: {e}")
-        traceback.print_exc()
-        contractors = []
-    
-    # Get AOAO organizations (only organizations, not individual users)
-    try:
-        aoao_organizations = get_aoao_info(client, building_id)
-    except Exception as e:
-        import traceback
-        print(f"Error getting AOAO organizations: {e}")
-        traceback.print_exc()
-        aoao_organizations = []
-    
+    data = report.data or {}
+    # Keep backward-compatible top-level fields where possible
     return {
         "success": True,
         "building_id": building_id,
-        "building": {
-            "id": building["id"],
-            "name": building.get("name"),
-            "address": building.get("address"),
-            "city": building.get("city"),
-            "state": building.get("state"),
-            "zip": building.get("zip"),
-            "tmk": building.get("tmk"),
-            "unit_count": unit_count,
-            "floors": building.get("floors"),
-            "year_built": building.get("year_built"),
-            "zoning": building.get("zoning"),
-            "description": building.get("description"),
-            "slug": building.get("slug"),
-            "metadata": building.get("metadata"),
-            "created_at": building.get("created_at"),
-            "updated_at": building.get("updated_at"),
-        },
-        "units": [
-            {
-                # Include all unit fields from database
-                **unit
-            }
-            for unit in units
-        ],
-        "documents": documents,
-        "events": events,
-        "property_managers": property_managers,
-        "contractors": contractors,
-        "aoao_organizations": aoao_organizations,
-        "generated_at": datetime.utcnow().isoformat(),
+        **data,
+        "generated_at": data.get("generated_at", datetime.utcnow().isoformat()),
     }
 
 
@@ -903,173 +764,45 @@ def get_building_info(building_id: str):
     "/building/{building_id}/unit/{unit_number}",
     summary="Get public unit information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
 )
-def get_unit_info(building_id: str, unit_number: str):
+async def get_unit_info(building_id: str, unit_number: str):
     """
-    Public endpoint to get free information about a specific unit:
-    - Last 5 documents (for this unit)
-    - Last 5 events (for this unit)
-    - Top 5 property managers (by event count for this unit)
-    - Top 5 contractors (by event count for this unit)
-    - AOAO organizations (only organizations tied to the building for this unit)
+    Public endpoint to get free information about a specific unit.
+    Uses the same data logic as the report generator (public context).
     """
-    client = get_supabase_client()
-    
-    # Get building details (all fields from database)
     try:
-        building = (
-            client.table("buildings")
-            .select("*")
-            .eq("id", building_id)
-            .single()
-            .execute()
-        ).data
-    except Exception as e:
-        raise HTTPException(404, f"Building not found: {str(e)}")
-    
-    if not building:
-        raise HTTPException(404, "Building not found")
-    
-    # Calculate unit count from units table
-    try:
-        units_result = (
+        # generate_unit_report expects unit_id; look up by building+unit_number first
+        client = get_supabase_client()
+        unit_result = (
             client.table("units")
             .select("id")
             .eq("building_id", building_id)
+            .eq("unit_number", unit_number)
+            .single()
             .execute()
         )
-        unit_count = len(units_result.data or [])
-    except Exception:
-        # Fallback: try to get from events if units table doesn't exist
-        try:
-            units_from_events = (
-                client.table("events")
-                .select("unit_number")
-                .eq("building_id", building_id)
-                .not_.is_("unit_number", "null")
-                .execute()
-            )
-            unit_count = len(set(e.get("unit_number") for e in (units_from_events.data or []) if e.get("unit_number")))
-        except Exception:
-            unit_count = None
-    
-    # Get last 5 documents for this unit
-    # Documents are linked to events, so we get documents via unit events
-    try:
-        # First get events for this unit
-        unit_events = (
-            client.table("events")
-            .select("id")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
-            .execute()
-        ).data or []
+        if not unit_result.data:
+            raise HTTPException(404, "Unit not found")
+        unit_id = unit_result.data.get("id")
         
-        event_ids = [e["id"] for e in unit_events]
-        
-        if event_ids:
-            # Get documents linked to these events (ONLY public documents - is_public = true)
-            documents = (
-                client.table("documents")
-                .select("*")
-                .in_("event_id", event_ids)
-                .eq("is_public", True)
-                .order("created_at", desc=True)
-                .limit(5)
-                .execute()
-            ).data or []
-        else:
-            # No events for this unit, so no documents
-            documents = []
+        report = await generate_unit_report(
+            unit_id=unit_id,
+            user=None,
+            context_role="public",
+            internal=False,
+            format="json",
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     except Exception as e:
-        documents = []
+        raise HTTPException(500, f"Failed to generate unit info: {str(e)}")
     
-    # Get last 5 events for this unit with their comments
-    try:
-        events = (
-            client.table("events")
-            .select("*")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
-            .order("occurred_at", desc=True)
-            .limit(5)
-            .execute()
-        ).data or []
-        
-        # Get comments for each event
-        if events:
-            event_ids = [e["id"] for e in events]
-            try:
-                comments = (
-                    client.table("event_comments")
-                    .select("*")
-                    .in_("event_id", event_ids)
-                    .order("created_at", desc=False)
-                    .execute()
-                ).data or []
-                
-                # Group comments by event_id
-                comments_by_event = {}
-                for comment in comments:
-                    event_id = comment.get("event_id")
-                    if event_id:
-                        if event_id not in comments_by_event:
-                            comments_by_event[event_id] = []
-                        comments_by_event[event_id].append(comment)
-                
-                # Add comments to each event
-                for event in events:
-                    event["comments"] = comments_by_event.get(event["id"], [])
-            except Exception:
-                # If comments table doesn't exist or error, just add empty array
-                for event in events:
-                    event["comments"] = []
-    except Exception as e:
-        events = []
-    
-    # Get top 5 property managers for this unit
-    try:
-        property_managers = get_top_property_managers(client, building_id, unit_number=unit_number, limit=5)
-    except Exception as e:
-        property_managers = []
-    
-    # Get top 5 contractors for this unit
-    try:
-        contractors = get_top_contractors(client, building_id, unit_number=unit_number, limit=5)
-    except Exception as e:
-        contractors = []
-    
-    # Get AOAO organizations for this unit (only organizations, not individual users)
-    try:
-        aoao_organizations = get_aoao_info(client, building_id, unit_number=unit_number)
-    except Exception as e:
-        aoao_organizations = []
-    
+    data = report.data or {}
     return {
         "success": True,
         "building_id": building_id,
         "unit_number": unit_number,
-        "building": {
-            "id": building["id"],
-            "name": building.get("name"),
-            "address": building.get("address"),
-            "city": building.get("city"),
-            "state": building.get("state"),
-            "zip": building.get("zip"),
-            "tmk": building.get("tmk"),
-            "unit_count": unit_count,
-            "floors": building.get("floors"),
-            "year_built": building.get("year_built"),
-            "zoning": building.get("zoning"),
-            "description": building.get("description"),
-            "slug": building.get("slug"),
-            "metadata": building.get("metadata"),
-            "created_at": building.get("created_at"),
-            "updated_at": building.get("updated_at"),
-        },
-        "documents": documents,
-        "events": events,
-        "property_managers": property_managers,
-        "contractors": contractors,
-        "aoao_organizations": aoao_organizations,
-        "generated_at": datetime.utcnow().isoformat(),
+        **data,
+        "generated_at": data.get("generated_at", datetime.utcnow().isoformat()),
     }
