@@ -20,10 +20,22 @@ from routers.signup import router as signup_router
 from routers.user_access import router as user_access_router
 
 from routers.buildings import router as buildings_router
+from routers.units import router as units_router
 from routers.events import router as events_router
 from routers.documents import router as documents_router
+from routers.documents_bulk import router as documents_bulk_router
+from routers.document_email import router as document_email_router
 from routers.contractors import router as contractors_router
 from routers.contractor_events import router as contractor_events_router
+from routers.pm_companies import router as pm_companies_router
+from routers.aoao_organizations import router as aoao_organizations_router
+from routers.requests import router as requests_router
+from routers.messages import router as messages_router
+from routers.financials import router as financials_router
+from routers.reports import router as reports_router
+from routers.subscriptions import router as subscriptions_router
+from routers.stripe_webhooks import router as stripe_webhooks_router
+from routers.manual_redact import router as manual_redact_router
 
 from routers.uploads import router as uploads_router
 from routers.health import router as health_router
@@ -104,8 +116,18 @@ def create_app() -> FastAPI:
     app.include_router(buildings_router)
     app.include_router(events_router)
     app.include_router(documents_router)
+    app.include_router(documents_bulk_router)
+    app.include_router(document_email_router)
     app.include_router(contractors_router)
     app.include_router(contractor_events_router)
+    app.include_router(units_router)
+    app.include_router(pm_companies_router)
+    app.include_router(aoao_organizations_router)
+    app.include_router(requests_router)
+    app.include_router(messages_router)
+    app.include_router(reports_router)
+    app.include_router(financials_router)
+    app.include_router(subscriptions_router)
 
     # Admin
     app.include_router(admin_router)
@@ -116,6 +138,8 @@ def create_app() -> FastAPI:
 
     # Uploads
     app.include_router(uploads_router)
+    app.include_router(stripe_webhooks_router)
+    app.include_router(manual_redact_router)
 
     # Health
     app.include_router(health_router)
