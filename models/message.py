@@ -1,6 +1,6 @@
 # models/message.py
 
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,16 @@ class MessageCreate(MessageBase):
 class MessageUpdate(BaseModel):
     """Update message model - for marking as read."""
     is_read: Optional[bool] = None
+
+
+class BulkMessageCreate(BaseModel):
+    """Bulk message model for AOAO users."""
+    recipient_types: List[str] = Field(
+        ..., 
+        description="List of recipient types: 'contractors', 'property_managers', 'owners'"
+    )
+    subject: str = Field(..., description="Message subject")
+    body: str = Field(..., description="Message body")
 
 
 class MessageRead(MessageBase):
