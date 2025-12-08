@@ -425,7 +425,8 @@ async def generate_building_report(
     # This will be handled by the custom report function
     
     events_result = events_query.order("occurred_at", desc=True).execute()
-    events = events_result.data or []
+    events_raw = events_result.data or []
+    events = events_raw.copy()
     
     # Filter events by unit access if needed
     if user and not is_admin(user) and internal:
@@ -440,6 +441,8 @@ async def generate_building_report(
             )
             accessible_event_ids = {row["event_id"] for row in (event_units_result.data or [])}
             events = [e for e in events if e["id"] in accessible_event_ids]
+    
+    events_for_counts = events.copy()
     
     # Sanitize events based on role
     sanitized_events = []
@@ -520,7 +523,14 @@ async def generate_building_report(
         .eq("events.building_id", building_id)
         .execute()
     )
-    contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or [])]))
+    contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or []) if row.get("contractor_id")]))
+    
+    # Count events per contractor
+    contractor_event_counts = {}
+    for row in (event_contractors_result.data or []):
+        cid = row.get("contractor_id")
+        if cid:
+            contractor_event_counts[cid] = contractor_event_counts.get(cid, 0) + 1
     
     contractors = []
     if contractor_ids:
@@ -535,24 +545,10 @@ async def generate_building_report(
         # Batch enrich contractors with roles (prevents N+1 queries)
         from core.contractor_helpers import batch_enrich_contractors_with_roles
         contractors = batch_enrich_contractors_with_roles(contractors)
-    
-    # Get AOAO organizations assigned to this building
-    aoao_orgs = []
-    aoao_building_access_result = (
-        client.table("aoao_organization_building_access")
-        .select("aoao_organization_id")
-        .eq("building_id", building_id)
-        .execute()
-    )
-    aoao_org_ids = [row["aoao_organization_id"] for row in (aoao_building_access_result.data or [])]
-    if aoao_org_ids:
-        aoao_orgs_result = (
-            client.table("aoao_organizations")
-            .select("*")
-            .in_("id", aoao_org_ids)
-            .execute()
-        )
-        aoao_orgs = aoao_orgs_result.data or []
+        
+        for contractor in contractors:
+            cid = contractor.get("id")
+            contractor["event_count"] = contractor_event_counts.get(cid, 0)
     
     # Get property management companies assigned to this building
     pm_building_access_result = (
@@ -587,6 +583,83 @@ async def generate_building_report(
             .execute()
         )
         pm_companies = pm_companies_result.data or []
+    
+    # Build quick lookup for event creators to PM/AOAO org names (for event counts)
+    def _norm_name(val: Optional[str]) -> Optional[str]:
+        return val.strip().lower() if isinstance(val, str) else None
+    
+    created_by_ids = {e.get("created_by") for e in (events_for_counts or []) if e.get("created_by")}
+    user_to_pm_name = {}
+    user_to_aoao_name = {}
+    for uid in created_by_ids:
+        try:
+            user_resp = client.auth.admin.get_user_by_id(uid)
+            if user_resp and user_resp.user:
+                metadata = user_resp.user.user_metadata or {}
+                role = (metadata.get("role") or "").lower()
+                org_name = metadata.get("organization_name")
+                if org_name:
+                    norm_org = _norm_name(org_name)
+                    if role == "property_manager":
+                        user_to_pm_name[uid] = norm_org
+                    if role in ["hoa", "hoa_staff"]:
+                        user_to_aoao_name[uid] = norm_org
+        except Exception:
+            continue
+    
+    # Get AOAO organizations assigned to this building
+    aoao_orgs = []
+    aoao_building_access_result = (
+        client.table("aoao_organization_building_access")
+        .select("aoao_organization_id")
+        .eq("building_id", building_id)
+        .execute()
+    )
+    aoao_org_ids = [row["aoao_organization_id"] for row in (aoao_building_access_result.data or [])]
+    if aoao_org_ids:
+        aoao_orgs_result = (
+            client.table("aoao_organizations")
+            .select("*")
+            .in_("id", aoao_org_ids)
+            .execute()
+        )
+        aoao_orgs = aoao_orgs_result.data or []
+    
+    # Count events per AOAO organization by matching organization_name
+    aoao_name_to_id = {}
+    for org in aoao_orgs:
+        name = _norm_name(org.get("name") or org.get("organization_name"))
+        if name:
+            aoao_name_to_id[name] = org.get("id")
+    
+    aoao_event_counts = {}
+    for event in (events_for_counts or []):
+        uid = event.get("created_by")
+        aoao_name = user_to_aoao_name.get(uid)
+        if aoao_name and aoao_name in aoao_name_to_id:
+            aoao_id = aoao_name_to_id[aoao_name]
+            aoao_event_counts[aoao_id] = aoao_event_counts.get(aoao_id, 0) + 1
+    
+    for org in aoao_orgs:
+        org["event_count"] = aoao_event_counts.get(org.get("id"), 0)
+    
+    # Count events per PM company by matching organization_name
+    pm_name_to_id = {}
+    for pm in pm_companies:
+        name = _norm_name(pm.get("name") or pm.get("company_name"))
+        if name:
+            pm_name_to_id[name] = pm.get("id")
+    
+    pm_event_counts = {}
+    for event in (events_for_counts or []):
+        uid = event.get("created_by")
+        pm_name = user_to_pm_name.get(uid)
+        if pm_name and pm_name in pm_name_to_id:
+            pm_id = pm_name_to_id[pm_name]
+            pm_event_counts[pm_id] = pm_event_counts.get(pm_id, 0) + 1
+    
+    for pm in pm_companies:
+        pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
     # Calculate statistics
     stats = {
@@ -705,6 +778,7 @@ async def generate_unit_report(
     event_ids = [row["event_id"] for row in (event_units_result.data or [])]
     
     events = []
+    events_raw = []
     if event_ids:
         events_result = (
             client.table("events")
@@ -713,9 +787,11 @@ async def generate_unit_report(
             .order("occurred_at", desc=True)
             .execute()
         )
-        events = events_result.data or []
+        events_raw = events_result.data or []
+        events = events_raw.copy()
     
     # Sanitize events based on role
+    events_for_counts = events.copy()
     sanitized_events = []
     for event in events:
         sanitized = sanitize_event_for_role(event, context_role)
@@ -759,7 +835,14 @@ async def generate_unit_report(
             .in_("event_id", event_ids)
             .execute()
         )
-        contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or [])]))
+        contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or []) if row.get("contractor_id")]))
+        
+        # Count events per contractor
+        contractor_event_counts = {}
+        for row in (event_contractors_result.data or []):
+            cid = row.get("contractor_id")
+            if cid:
+                contractor_event_counts[cid] = contractor_event_counts.get(cid, 0) + 1
         
         if contractor_ids:
             contractors_result = (
@@ -773,6 +856,8 @@ async def generate_unit_report(
             # Enrich contractors with roles
             for i, contractor in enumerate(contractors):
                 contractors[i] = enrich_contractor_with_roles(contractor)
+                cid = contractors[i].get("id")
+                contractors[i]["event_count"] = contractor_event_counts.get(cid, 0)
     
     # Get property management companies assigned to this unit
     pm_companies = []
@@ -792,12 +877,89 @@ async def generate_unit_report(
         )
         pm_companies = pm_companies_result.data or []
     
+    # Build quick lookup for event creators to PM/AOAO org names (for event counts)
+    def _norm_name(val: Optional[str]) -> Optional[str]:
+        return val.strip().lower() if isinstance(val, str) else None
+    
+    created_by_ids = {e.get("created_by") for e in (events_for_counts or []) if e.get("created_by")}
+    user_to_pm_name = {}
+    user_to_aoao_name = {}
+    for uid in created_by_ids:
+        try:
+            user_resp = client.auth.admin.get_user_by_id(uid)
+            if user_resp and user_resp.user:
+                metadata = user_resp.user.user_metadata or {}
+                role = (metadata.get("role") or "").lower()
+                org_name = metadata.get("organization_name")
+                if org_name:
+                    norm_org = _norm_name(org_name)
+                    if role == "property_manager":
+                        user_to_pm_name[uid] = norm_org
+                    if role in ["hoa", "hoa_staff"]:
+                        user_to_aoao_name[uid] = norm_org
+        except Exception:
+            continue
+    
+    # Count events per PM company by matching organization_name
+    pm_name_to_id = {}
+    for pm in pm_companies:
+        name = _norm_name(pm.get("name") or pm.get("company_name"))
+        if name:
+            pm_name_to_id[name] = pm.get("id")
+    
+    pm_event_counts = {}
+    for event in (events_for_counts or []):
+        uid = event.get("created_by")
+        pm_name = user_to_pm_name.get(uid)
+        if pm_name and pm_name in pm_name_to_id:
+            pm_id = pm_name_to_id[pm_name]
+            pm_event_counts[pm_id] = pm_event_counts.get(pm_id, 0) + 1
+    
+    for pm in pm_companies:
+        pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
+    
+    # Get AOAO organizations assigned to this unit
+    aoao_orgs = []
+    aoao_access_result = (
+        client.table("aoao_organization_unit_access")
+        .select("aoao_organization_id")
+        .eq("unit_id", unit_id)
+        .execute()
+    )
+    aoao_org_ids = [row["aoao_organization_id"] for row in (aoao_access_result.data or [])]
+    if aoao_org_ids:
+        aoao_orgs_result = (
+            client.table("aoao_organizations")
+            .select("*")
+            .in_("id", aoao_org_ids)
+            .execute()
+        )
+        aoao_orgs = aoao_orgs_result.data or []
+    
+    aoao_name_to_id = {}
+    for org in aoao_orgs:
+        name = _norm_name(org.get("name") or org.get("organization_name"))
+        if name:
+            aoao_name_to_id[name] = org.get("id")
+    
+    aoao_event_counts = {}
+    for event in (events_for_counts or []):
+        uid = event.get("created_by")
+        aoao_name = user_to_aoao_name.get(uid)
+        if aoao_name and aoao_name in aoao_name_to_id:
+            aoao_id = aoao_name_to_id[aoao_name]
+            aoao_event_counts[aoao_id] = aoao_event_counts.get(aoao_id, 0) + 1
+    
+    for org in aoao_orgs:
+        org["event_count"] = aoao_event_counts.get(org.get("id"), 0)
+    
     # Calculate statistics
     stats = {
         "total_events": len(events),
         "total_documents": len(documents),
         "total_contractors": len(contractors),
         "total_pm_companies": len(pm_companies),
+        "total_aoao_organizations": len(aoao_orgs),
     }
     
     # Build report data
@@ -808,6 +970,7 @@ async def generate_unit_report(
         "documents": documents,
         "contractors": contractors,
         "property_management_companies": pm_companies,
+        "aoao_organizations": aoao_orgs,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
