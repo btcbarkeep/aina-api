@@ -68,13 +68,15 @@ def search_public(query: Optional[str] = None):
                 building_conditions.append(f"city.ilike.*{word}*")
                 building_conditions.append(f"state.ilike.*{word}*")
             
-            result = (
+            query = (
                 client.table("buildings")
                 .select("id, name, address, city, state, zip, slug")
-                .or(",".join(building_conditions))
-                .limit(10)
-                .execute()
             )
+            
+            if building_conditions:
+                query = query.or(",".join(building_conditions))
+            
+            result = query.limit(10).execute()
             buildings = result.data or []
             buildings_error = result.error
             
@@ -82,13 +84,15 @@ def search_public(query: Optional[str] = None):
             # Only building name words - prioritize building name matches
             # First, try matching building names only
             name_conditions = [f"name.ilike.*{word}*" for word in building_name_words]
-            name_result = (
+            query = (
                 client.table("buildings")
                 .select("id, name, address, city, state, zip, slug")
-                .or(",".join(name_conditions))
-                .limit(10)
-                .execute()
             )
+            
+            if name_conditions:
+                query = query.or(",".join(name_conditions))
+            
+            name_result = query.limit(10).execute()
             
             buildings = name_result.data or []
             buildings_error = name_result.error
@@ -99,13 +103,15 @@ def search_public(query: Optional[str] = None):
                 # Search addresses only (not city/state) to be more precise
                 address_conditions = [f"address.ilike.*{word}*" for word in building_name_words]
                 
-                address_result = (
+                query = (
                     client.table("buildings")
                     .select("id, name, address, city, state, zip, slug")
-                    .or(",".join(address_conditions))
-                    .limit(20)  # Get more to filter
-                    .execute()
                 )
+                
+                if address_conditions:
+                    query = query.or(",".join(address_conditions))
+                
+                address_result = query.limit(20).execute()  # Get more to filter
                 
                 if not address_result.error and address_result.data:
                     # Double-check: filter to ensure the word actually appears in the address
@@ -126,13 +132,15 @@ def search_public(query: Optional[str] = None):
             
             # For multi-word queries, filter results to ensure all words are present
             if len(query_words) > 1:
-                result = (
+                query = (
                     client.table("buildings")
                     .select("id, name, address, city, state, zip, slug")
-                    .or(",".join(building_conditions))
-                    .limit(20)  # Get more results to filter
-                    .execute()
                 )
+                
+                if building_conditions:
+                    query = query.or(",".join(building_conditions))
+                
+                result = query.limit(20).execute()  # Get more results to filter
                 
                 if not result.error and result.data:
                     # Filter to only include buildings where ALL words match
@@ -148,13 +156,15 @@ def search_public(query: Optional[str] = None):
                     buildings_error = result.error
             else:
                 # Single word query - use simple OR
-                result = (
+                query = (
                     client.table("buildings")
                     .select("id, name, address, city, state, zip, slug")
-                    .or(",".join(building_conditions))
-                    .limit(10)
-                    .execute()
                 )
+                
+                if building_conditions:
+                    query = query.or(",".join(building_conditions))
+                
+                result = query.limit(10).execute()
                 buildings = result.data or []
                 buildings_error = result.error
                 
@@ -187,7 +197,8 @@ def search_public(query: Optional[str] = None):
         # If we have a unit number in the query, filter by it
         if has_unit_number:
             unit_number_conditions = [f"unit_number.ilike.*{word}*" for word in unit_number_words]
-            units_by_building_query = units_by_building_query.or(",".join(unit_number_conditions))
+            if unit_number_conditions:
+                units_by_building_query = units_by_building_query.or(",".join(unit_number_conditions))
         
         units_by_building_result = units_by_building_query.execute()
         
@@ -227,13 +238,15 @@ def search_public(query: Optional[str] = None):
             building_text_conditions.append(f"city.ilike.*{word}*")
             building_text_conditions.append(f"state.ilike.*{word}*")
         
-        buildings_by_text_result = (
+        query = (
             client.table("buildings")
             .select("id")
-            .or(",".join(building_text_conditions))
-            .limit(20)
-            .execute()
         )
+        
+        if building_text_conditions:
+            query = query.or(",".join(building_text_conditions))
+        
+        buildings_by_text_result = query.limit(20).execute()
         
         if buildings_by_text_result.data:
             building_ids_from_text = [b["id"] for b in buildings_by_text_result.data]
@@ -248,7 +261,8 @@ def search_public(query: Optional[str] = None):
             # If we have unit numbers, filter by them
             if has_unit_number:
                 unit_number_conditions = [f"unit_number.ilike.*{word}*" for word in unit_number_words]
-                units_by_building_text_query = units_by_building_text_query.or(",".join(unit_number_conditions))
+                if unit_number_conditions:
+                    units_by_building_text_query = units_by_building_text_query.or(",".join(unit_number_conditions))
             
             units_by_building_text_result = units_by_building_text_query.execute()
             
