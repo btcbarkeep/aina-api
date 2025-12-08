@@ -133,19 +133,19 @@ def search_public(query: Optional[str] = None):
                 # First, try matching building names only
                 all_buildings = {}
                 for word in building_name_words:
-                try:
-                    name_result = (
-                        client.table("buildings")
-                        .select("id, name, address, city, state, zip, slug")
-                        .ilike("name", f"%{word}%")
-                        .limit(10)
-                        .execute()
-                    )
-                    if name_result.data:
-                        for b in name_result.data:
-                            all_buildings[b["id"]] = b
-                except Exception as e:
-                    buildings_error = e
+                    try:
+                        name_result = (
+                            client.table("buildings")
+                            .select("id, name, address, city, state, zip, slug")
+                            .ilike("name", f"%{word}%")
+                            .limit(10)
+                            .execute()
+                        )
+                        if name_result.data:
+                            for b in name_result.data:
+                                all_buildings[b["id"]] = b
+                    except Exception as e:
+                        buildings_error = e
                 
                 buildings = list(all_buildings.values())[:10]
                 buildings_error = None
@@ -176,99 +176,99 @@ def search_public(query: Optional[str] = None):
                         if any(word in (b.get("address") or "").lower() for word in building_name_words)
                     ][:10]
             else:
-            # No building name words (only numbers) - match all words
-            # But require ALL words to match (not just any word)
-            all_buildings = {}
-            for word in query_words:
-                # Search by name
-                try:
-                    name_result = (
-                        client.table("buildings")
-                        .select("id, name, address, city, state, zip, slug")
-                        .ilike("name", f"%{word}%")
-                        .limit(20)
-                        .execute()
-                    )
-                    if name_result.data:
-                        for b in name_result.data:
-                            all_buildings[b["id"]] = b
-                except:
-                    pass
+                # No building name words (only numbers) - match all words
+                # But require ALL words to match (not just any word)
+                all_buildings = {}
+                for word in query_words:
+                    # Search by name
+                    try:
+                        name_result = (
+                            client.table("buildings")
+                            .select("id, name, address, city, state, zip, slug")
+                            .ilike("name", f"%{word}%")
+                            .limit(20)
+                            .execute()
+                        )
+                        if name_result.data:
+                            for b in name_result.data:
+                                all_buildings[b["id"]] = b
+                    except:
+                        pass
+                    
+                    # Search by address
+                    try:
+                        addr_result = (
+                            client.table("buildings")
+                            .select("id, name, address, city, state, zip, slug")
+                            .ilike("address", f"%{word}%")
+                            .limit(20)
+                            .execute()
+                        )
+                        if addr_result.data:
+                            for b in addr_result.data:
+                                all_buildings[b["id"]] = b
+                    except:
+                        pass
+                    
+                    # Search by city
+                    try:
+                        city_result = (
+                            client.table("buildings")
+                            .select("id, name, address, city, state, zip, slug")
+                            .ilike("city", f"%{word}%")
+                            .limit(20)
+                            .execute()
+                        )
+                        if city_result.data:
+                            for b in city_result.data:
+                                all_buildings[b["id"]] = b
+                    except:
+                        pass
+                    
+                    # Search by state
+                    try:
+                        state_result = (
+                            client.table("buildings")
+                            .select("id, name, address, city, state, zip, slug")
+                            .ilike("state", f"%{word}%")
+                            .limit(20)
+                            .execute()
+                        )
+                        if state_result.data:
+                            for b in state_result.data:
+                                all_buildings[b["id"]] = b
+                    except:
+                        pass
+                    
+                    # Search by zip
+                    try:
+                        zip_result = (
+                            client.table("buildings")
+                            .select("id, name, address, city, state, zip, slug")
+                            .ilike("zip", f"%{word}%")
+                            .limit(20)
+                            .execute()
+                        )
+                        if zip_result.data:
+                            for b in zip_result.data:
+                                all_buildings[b["id"]] = b
+                    except:
+                        pass
                 
-                # Search by address
-                try:
-                    addr_result = (
-                        client.table("buildings")
-                        .select("id, name, address, city, state, zip, slug")
-                        .ilike("address", f"%{word}%")
-                        .limit(20)
-                        .execute()
-                    )
-                    if addr_result.data:
-                        for b in addr_result.data:
-                            all_buildings[b["id"]] = b
-                except:
-                    pass
+                # For multi-word queries, filter results to ensure all words are present
+                if len(query_words) > 1:
+                    # Filter to only include buildings where ALL words match
+                    buildings = [
+                        b for b in all_buildings.values()
+                        if all(
+                            word in f"{b.get('name', '')} {b.get('address', '')} {b.get('city', '')} {b.get('state', '')} {b.get('zip', '')}".lower()
+                            for word in query_words
+                        )
+                    ][:10]
+                else:
+                    buildings = list(all_buildings.values())[:10]
                 
-                # Search by city
-                try:
-                    city_result = (
-                        client.table("buildings")
-                        .select("id, name, address, city, state, zip, slug")
-                        .ilike("city", f"%{word}%")
-                        .limit(20)
-                        .execute()
-                    )
-                    if city_result.data:
-                        for b in city_result.data:
-                            all_buildings[b["id"]] = b
-                except:
-                    pass
-                
-                # Search by state
-                try:
-                    state_result = (
-                        client.table("buildings")
-                        .select("id, name, address, city, state, zip, slug")
-                        .ilike("state", f"%{word}%")
-                        .limit(20)
-                        .execute()
-                    )
-                    if state_result.data:
-                        for b in state_result.data:
-                            all_buildings[b["id"]] = b
-                except:
-                    pass
-                
-                # Search by zip
-                try:
-                    zip_result = (
-                        client.table("buildings")
-                        .select("id, name, address, city, state, zip, slug")
-                        .ilike("zip", f"%{word}%")
-                        .limit(20)
-                        .execute()
-                    )
-                    if zip_result.data:
-                        for b in zip_result.data:
-                            all_buildings[b["id"]] = b
-                except:
-                    pass
-            
-            # For multi-word queries, filter results to ensure all words are present
-            if len(query_words) > 1:
-                # Filter to only include buildings where ALL words match
-                buildings = [
-                    b for b in all_buildings.values()
-                    if all(
-                        word in f"{b.get('name', '')} {b.get('address', '')} {b.get('city', '')} {b.get('state', '')} {b.get('zip', '')}".lower()
-                        for word in query_words
-                    )
-                ][:10]
-            else:
-                buildings = list(all_buildings.values())[:10]
-            
-            buildings_error = None
+                buildings_error = None
                 
         except Exception as e:
             print(f"Error searching buildings: {e}")
@@ -413,42 +413,42 @@ def search_public(query: Optional[str] = None):
                     pass
             
             if all_text_buildings:
-            building_ids_from_text = list(all_text_buildings.keys())
-            
-            # Get units from these buildings
-            units_by_building_text_query = (
-                client.table("units")
-                .select("id, unit_number, building_id")
-                .in_("building_id", building_ids_from_text)
-            )
-            
-            # If we have unit numbers, filter by them
-            if has_unit_number:
-                # Make separate queries for each unit number word
-                filtered_text_units = []
-                for word in unit_number_words:
+                building_ids_from_text = list(all_text_buildings.keys())
+                
+                # Get units from these buildings
+                units_by_building_text_query = (
+                    client.table("units")
+                    .select("id, unit_number, building_id")
+                    .in_("building_id", building_ids_from_text)
+                )
+                
+                # If we have unit numbers, filter by them
+                if has_unit_number:
+                    # Make separate queries for each unit number word
+                    filtered_text_units = []
+                    for word in unit_number_words:
+                        try:
+                            unit_result = (
+                                client.table("units")
+                                .select("id, unit_number, building_id")
+                                .in_("building_id", building_ids_from_text)
+                                .ilike("unit_number", f"%{word}%")
+                                .execute()
+                            )
+                            if unit_result.data:
+                                filtered_text_units.extend(unit_result.data)
+                        except:
+                            pass
+                    # Remove duplicates
+                    unique_text_units = {u["id"]: u for u in filtered_text_units}
+                    units.extend(list(unique_text_units.values()))
+                else:
                     try:
-                        unit_result = (
-                            client.table("units")
-                            .select("id, unit_number, building_id")
-                            .in_("building_id", building_ids_from_text)
-                            .ilike("unit_number", f"%{word}%")
-                            .execute()
-                        )
-                        if unit_result.data:
-                            filtered_text_units.extend(unit_result.data)
-                    except:
-                        pass
-                # Remove duplicates
-                unique_text_units = {u["id"]: u for u in filtered_text_units}
-                units.extend(list(unique_text_units.values()))
-            else:
-                try:
-                    units_by_building_text_result = units_by_building_text_query.execute()
-                    if units_by_building_text_result.data:
-                        units.extend(units_by_building_text_result.data)
-                except Exception as e:
-                    print(f"Error fetching units by building text: {e}")
+                        units_by_building_text_result = units_by_building_text_query.execute()
+                        if units_by_building_text_result.data:
+                            units.extend(units_by_building_text_result.data)
+                    except Exception as e:
+                        print(f"Error fetching units by building text: {e}")
         
         # 4) REMOVE DUPLICATES and FETCH BUILDING INFO
         unique_units_dict = {}
