@@ -38,6 +38,7 @@ class MessageRead(MessageBase):
     to_user_id: Optional[str] = None
     is_read: bool
     read_at: Optional[datetime] = None
+    replies_disabled: bool = Field(default=False, description="If true, only admins can reply (used for bulk announcements)")
     created_at: datetime
     updated_at: datetime
     
