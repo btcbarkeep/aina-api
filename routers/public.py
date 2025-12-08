@@ -33,16 +33,17 @@ def search_public(query: Optional[str] = None):
     
     Query parameter is optional - if not provided or too short (< 2 chars), returns empty results.
     """
-    client = get_supabase_client()
-    
-    # Handle empty or missing query
-    if not query or len(query.strip()) < 2:
-        return {
-            "buildings": [],
-            "units": [],
-        }
-    
-    q = query.strip()
+    try:
+        client = get_supabase_client()
+        
+        # Handle empty or missing query
+        if not query or len(query.strip()) < 2:
+            return {
+                "buildings": [],
+                "units": [],
+            }
+        
+        q = query.strip()
     
     # Separate building name words (non-numeric) from unit numbers (numeric)
     query_words = [w for w in q.lower().split() if len(w) > 0]
@@ -316,11 +317,12 @@ def search_public(query: Optional[str] = None):
             unique_filtered_units = {u["id"]: u for u in filtered_units}
             units.extend(list(unique_filtered_units.values()))
         else:
-            units_by_building_result = units_by_building_query.execute()
-            if units_by_building_result.error:
-                print(f"Error fetching units by building: {units_by_building_result.error}")
-            elif units_by_building_result.data:
-                units.extend(units_by_building_result.data)
+            try:
+                units_by_building_result = units_by_building_query.execute()
+                if units_by_building_result.data:
+                    units.extend(units_by_building_result.data)
+            except Exception as e:
+                print(f"Error fetching units by building: {e}")
     
     # 2) GET UNITS DIRECTLY MATCHING UNIT NUMBER
     # If we have building matches, only include units from those buildings
@@ -336,10 +338,12 @@ def search_public(query: Optional[str] = None):
             if matched_building_ids:
                 units_by_number_query = units_by_number_query.in_("building_id", list(matched_building_ids))
             
-            units_by_number_result = units_by_number_query.execute()
-            
-            if not units_by_number_result.error and units_by_number_result.data:
-                units.extend(units_by_number_result.data)
+            try:
+                units_by_number_result = units_by_number_query.execute()
+                if units_by_number_result.data:
+                    units.extend(units_by_number_result.data)
+            except Exception as e:
+                print(f"Error fetching units by number: {e}")
     
     # 3) GET UNITS BY BUILDING TEXT (only if no building matches yet)
     # This helps find buildings that weren't found in the initial building search
@@ -439,9 +443,12 @@ def search_public(query: Optional[str] = None):
                 unique_text_units = {u["id"]: u for u in filtered_text_units}
                 units.extend(list(unique_text_units.values()))
             else:
-                units_by_building_text_result = units_by_building_text_query.execute()
-                if not units_by_building_text_result.error and units_by_building_text_result.data:
-                    units.extend(units_by_building_text_result.data)
+                try:
+                    units_by_building_text_result = units_by_building_text_query.execute()
+                    if units_by_building_text_result.data:
+                        units.extend(units_by_building_text_result.data)
+                except Exception as e:
+                    print(f"Error fetching units by building text: {e}")
     
     # 4) REMOVE DUPLICATES and FETCH BUILDING INFO
     unique_units_dict = {}
@@ -479,10 +486,19 @@ def search_public(query: Optional[str] = None):
         else:
             units = []
     
-    return {
-        "buildings": buildings or [],
-        "units": units,
-    }
+        return {
+            "buildings": buildings or [],
+            "units": units,
+        }
+    except Exception as e:
+        print(f"Error in search_public: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return empty results on error rather than crashing
+        return {
+            "buildings": [],
+            "units": [],
+        }
 
 
 # ============================================================
