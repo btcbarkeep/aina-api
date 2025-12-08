@@ -607,8 +607,21 @@ def get_building_info(building_id: str):
             .order("unit_number", desc=False)
             .execute()
         ).data or []
+        unit_count = len(units)
     except Exception as e:
         units = []
+        # Fallback: try to get from events if units table doesn't exist
+        try:
+            units_from_events = (
+                client.table("events")
+                .select("unit_number")
+                .eq("building_id", building_id)
+                .not_.is_("unit_number", "null")
+                .execute()
+            )
+            unit_count = len(set(e.get("unit_number") for e in (units_from_events.data or []) if e.get("unit_number")))
+        except Exception:
+            unit_count = None
     
     # Get last 5 events with their comments
     try:
