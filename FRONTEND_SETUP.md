@@ -659,24 +659,26 @@ Authorization: Bearer <access_token>
 - **Request:**
   ```json
   {
-    "recipient_types": ["contractors", "property_managers", "owners"],
+    "recipient_types": ["contractors", "property_managers", "owners", "aoao"],
     "subject": "Bulk announcement",
     "body": "Message content",
-    "building_id": "uuid",  // Optional: Filter by building
-    "unit_id": "uuid"       // Optional: Filter by unit (takes precedence over building_id)
+    "building_id": "uuid",  // Optional: Filter by building (or null/omit)
+    "unit_id": "uuid"       // Optional: Filter by unit (takes precedence over building_id, or null/omit)
   }
   ```
 - **Recipient Types:**
   - `"contractors"`: Users associated with contractors
   - `"property_managers"`: Users associated with PM companies
   - `"owners"`: Users with role 'owner'
-  - Can include multiple types (e.g., `["contractors", "owners"]`)
+  - `"aoao"`: Users with role 'aoao' (**Admin/Super Admin only** - AOAO users cannot include this)
+  - Can include multiple types (e.g., `["contractors", "owners", "aoao"]`)
+  - **Important:** `recipient_types` must be an array of separate strings: `["property_managers", "owners"]` (not `["property_managers, owners"]`)
 - **Filtering:**
-  - `building_id`: Optional. Filter recipients to those with access to this building
-  - `unit_id`: Optional. Filter recipients to those with access to this unit
-  - If no filters:
+  - `building_id`: Optional. Filter recipients to those with access to this building. Set to `null` or omit to send to all.
+  - `unit_id`: Optional. Filter recipients to those with access to this unit. Set to `null` or omit to send to all.
+  - If no filters provided:
     - AOAO: Uses all buildings/units their organization has access to
-    - Admin: Sends to all users matching recipient types
+    - Admin: Sends to all users matching recipient types (no building/unit filtering)
 - **Response:**
   ```json
   {
@@ -687,7 +689,10 @@ Authorization: Bearer <access_token>
     "errors": null
   }
   ```
-- **Note:** Replies are disabled for bulk messages (only admins can reply)
+- **Notes:**
+  - Replies are disabled for bulk messages (only admins can reply)
+  - All bulk messages are automatically marked with `is_bulk: true` for UI display
+  - Placeholder values like `"string"` for `building_id`/`unit_id` are automatically converted to `null`
 
 ---
 
@@ -1033,6 +1038,7 @@ interface Message {
   is_read: boolean;
   read_at?: string;
   replies_disabled: boolean;  // If true, only admins can reply (bulk announcements)
+  is_bulk: boolean;  // If true, this is a bulk message/announcement (use for UI announcement bar)
   created_at: string;
   updated_at: string;
 }
@@ -1920,7 +1926,9 @@ When uploading documents, use `category_id` and `subcategory_id` from these tabl
 - **Regular users** cannot reply to bulk announcements (replies_disabled=true)
 - **Admins** can message any user
 - **AOAO users and Admins** can send bulk messages
+- **Admins/Super Admins** can include `"aoao"` in `recipient_types` for bulk messages (AOAO users cannot)
 - Bulk messages can be filtered by `building_id` or `unit_id` to target specific recipients
+- All bulk messages have `is_bulk: true` - use this to display an "ANNOUNCEMENT" bar in your UI
 - Use `GET /messages/eligible-recipients` to show users the current user can message
 
 ### Document Email
@@ -1982,6 +1990,27 @@ The following features were removed from the backend and need to be implemented 
 - **Status:** Removed (migration not applied)
 - **Action Required:** None - Contractors have access to ALL buildings/units by default
 - **Note:** No explicit access management needed for contractors
+
+---
+
+## Recent Updates (December 2025)
+
+### New Features Added
+
+1. **Bulk Message Announcement Flag (`is_bulk`)**
+   - **Migration Required:** `migrations/add_is_bulk_to_messages.sql`
+   - **Purpose:** Marks bulk messages/announcements for UI display
+   - **Usage:** Check `message.is_bulk === true` to display an "ANNOUNCEMENT" bar in your UI
+   - **Details:** All messages sent via `POST /messages/bulk` automatically have `is_bulk: true`
+
+2. **AOAO Recipient Type for Bulk Messages**
+   - **Feature:** Admins/Super Admins can now include `"aoao"` in `recipient_types` when sending bulk messages
+   - **Restriction:** AOAO users themselves cannot include `"aoao"` as a recipient type
+   - **Usage:** `{"recipient_types": ["contractors", "property_managers", "owners", "aoao"]}`
+
+3. **Placeholder Value Handling**
+   - **Improvement:** Bulk message endpoint now automatically converts placeholder `"string"` values for `building_id`/`unit_id` to `null`
+   - **Impact:** Frontend can send `null` or omit these fields instead of placeholder strings
 
 ---
 
