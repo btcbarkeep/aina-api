@@ -21,30 +21,14 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     - Individual property manager users (not tied to an organization)
     - Property manager organizations (excluding individual users tied to those orgs)
     Ranked by number of events they created.
+    Only includes property managers who have building access.
     """
-    # First, get all users who have access to this building
-    access_result = (
-        client.table("user_building_access")
-        .select("user_id")
-        .eq("building_id", building_id)
-        .execute()
-    )
-    
-    if not access_result.data:
-        return []
-    
-    user_ids = [access["user_id"] for access in access_result.data]
-    
-    if not user_ids:
-        return []
-    
-    # Get events for these users
+    # Get all events for the building/unit
     query = (
         client.table("events")
         .select("created_by")
         .eq("building_id", building_id)
         .not_.is_("created_by", None)
-        .in_("created_by", user_ids)
     )
     
     if unit_number:
@@ -55,16 +39,34 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     if not events_result.data:
         return []
     
-    # Count events by created_by
+    # Get all users who have access to this building
+    access_result = (
+        client.table("user_building_access")
+        .select("user_id")
+        .eq("building_id", building_id)
+        .execute()
+    )
+    
+    user_ids_with_access = set()
+    if access_result.data:
+        user_ids_with_access = {access["user_id"] for access in access_result.data}
+    
+    if not user_ids_with_access:
+        return []
+    
+    # Count events by created_by, but only for users with building access
     user_event_counts = {}
     for event in events_result.data:
         user_id = event["created_by"]
-        user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
+        if user_id in user_ids_with_access:
+            user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
+    
+    if not user_event_counts:
+        return []
     
     # Get user details and separate into individuals and organizations
     individual_managers = []  # Users without organization
     org_event_counts = {}    # organization_name -> total event count
-    org_user_ids = {}        # organization_name -> set of user_ids (to exclude from individuals)
     
     for user_id, event_count in user_event_counts.items():
         try:
@@ -83,9 +85,6 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                     # User belongs to an organization
                     org_name = org_name.strip()
                     org_event_counts[org_name] = org_event_counts.get(org_name, 0) + event_count
-                    if org_name not in org_user_ids:
-                        org_user_ids[org_name] = set()
-                    org_user_ids[org_name].add(user_id)
                 else:
                     # Individual property manager (no organization)
                     individual_managers.append({
@@ -124,30 +123,14 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     """
     Get AOAO organizations for a building (only organizations, not individual users).
     Groups AOAO users by organization_name and returns organizations with event counts.
+    Only includes AOAO organizations that have building access.
     """
-    # Get all users who have access to this building
-    access_result = (
-        client.table("user_building_access")
-        .select("user_id")
-        .eq("building_id", building_id)
-        .execute()
-    )
-    
-    if not access_result.data:
-        return []
-    
-    user_ids = [access["user_id"] for access in access_result.data]
-    
-    if not user_ids:
-        return []
-    
-    # Get events for these users
+    # Get all events for the building/unit
     query = (
         client.table("events")
         .select("created_by")
         .eq("building_id", building_id)
         .not_.is_("created_by", None)
-        .in_("created_by", user_ids)
     )
     
     if unit_number:
@@ -158,11 +141,30 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     if not events_result.data:
         return []
     
-    # Count events by created_by
+    # Get all users who have access to this building
+    access_result = (
+        client.table("user_building_access")
+        .select("user_id")
+        .eq("building_id", building_id)
+        .execute()
+    )
+    
+    user_ids_with_access = set()
+    if access_result.data:
+        user_ids_with_access = {access["user_id"] for access in access_result.data}
+    
+    if not user_ids_with_access:
+        return []
+    
+    # Count events by created_by, but only for users with building access
     user_event_counts = {}
     for event in events_result.data:
         user_id = event["created_by"]
-        user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
+        if user_id in user_ids_with_access:
+            user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
+    
+    if not user_event_counts:
+        return []
     
     # Group by organization_name (only include users with organization_name)
     org_event_counts = {}    # organization_name -> total event count
