@@ -22,9 +22,15 @@ def create_access_request(
     current_user: CurrentUser = Depends(get_current_user)
 ):
     """
-    Create an access request (e.g., PM requesting to manage a building/unit).
+    Create an access request.
     
-    Users can request access to buildings or units they don't currently have access to.
+    **For Organizations:**
+    - PM companies or AOAO organizations can request access to buildings/units they don't currently manage.
+    - Organization info can be provided in payload or will be inferred from current user's organization.
+    
+    **For Individual Users (Owners):**
+    - Individual users (e.g., owners) can request access to their own units.
+    - No organization_type or organization_id needed - leave them null/empty.
     """
     client = get_supabase_client()
     
@@ -257,88 +263,138 @@ def update_access_request(
         # If approved, grant the requested access
         if payload.status == "approved":
             try:
+                requester_user_id = updated_request["requester_user_id"]
+                organization_type = updated_request.get("organization_type")
+                organization_id = updated_request.get("organization_id")
+                
                 if updated_request["request_type"] == "building":
-                    # Grant building access to the organization
-                    if updated_request["organization_type"] == "pm_company":
-                        # Check if access already exists
-                        existing_access = (
-                            client.table("pm_company_building_access")
-                            .select("id")
-                            .eq("pm_company_id", updated_request["organization_id"])
-                            .eq("building_id", updated_request["building_id"])
-                            .limit(1)
-                            .execute()
-                        )
-                        if not existing_access.data:
-                            (
+                    building_id = updated_request["building_id"]
+                    
+                    if organization_type and organization_id:
+                        # Grant building access to the organization
+                        if organization_type == "pm_company":
+                            # Check if access already exists
+                            existing_access = (
                                 client.table("pm_company_building_access")
-                                .insert({
-                                    "pm_company_id": updated_request["organization_id"],
-                                    "building_id": updated_request["building_id"]
-                                })
+                                .select("id")
+                                .eq("pm_company_id", organization_id)
+                                .eq("building_id", building_id)
+                                .limit(1)
                                 .execute()
                             )
-                            logger.info(f"Granted building {updated_request['building_id']} access to PM company {updated_request['organization_id']}")
-                    elif updated_request["organization_type"] == "aoao_organization":
+                            if not existing_access.data:
+                                (
+                                    client.table("pm_company_building_access")
+                                    .insert({
+                                        "pm_company_id": organization_id,
+                                        "building_id": building_id
+                                    })
+                                    .execute()
+                                )
+                                logger.info(f"Granted building {building_id} access to PM company {organization_id}")
+                        elif organization_type == "aoao_organization":
+                            existing_access = (
+                                client.table("aoao_organization_building_access")
+                                .select("id")
+                                .eq("aoao_organization_id", organization_id)
+                                .eq("building_id", building_id)
+                                .limit(1)
+                                .execute()
+                            )
+                            if not existing_access.data:
+                                (
+                                    client.table("aoao_organization_building_access")
+                                    .insert({
+                                        "aoao_organization_id": organization_id,
+                                        "building_id": building_id
+                                    })
+                                    .execute()
+                                )
+                                logger.info(f"Granted building {building_id} access to AOAO organization {organization_id}")
+                    else:
+                        # Individual user request - grant direct building access
                         existing_access = (
-                            client.table("aoao_organization_building_access")
+                            client.table("user_building_access")
                             .select("id")
-                            .eq("aoao_organization_id", updated_request["organization_id"])
-                            .eq("building_id", updated_request["building_id"])
+                            .eq("user_id", requester_user_id)
+                            .eq("building_id", building_id)
                             .limit(1)
                             .execute()
                         )
                         if not existing_access.data:
                             (
-                                client.table("aoao_organization_building_access")
+                                client.table("user_building_access")
                                 .insert({
-                                    "aoao_organization_id": updated_request["organization_id"],
-                                    "building_id": updated_request["building_id"]
+                                    "user_id": requester_user_id,
+                                    "building_id": building_id
                                 })
                                 .execute()
                             )
-                            logger.info(f"Granted building {updated_request['building_id']} access to AOAO organization {updated_request['organization_id']}")
+                            logger.info(f"Granted building {building_id} access to individual user {requester_user_id}")
                 
                 elif updated_request["request_type"] == "unit":
-                    # Grant unit access to the organization
-                    if updated_request["organization_type"] == "pm_company":
-                        existing_access = (
-                            client.table("pm_company_unit_access")
-                            .select("id")
-                            .eq("pm_company_id", updated_request["organization_id"])
-                            .eq("unit_id", updated_request["unit_id"])
-                            .limit(1)
-                            .execute()
-                        )
-                        if not existing_access.data:
-                            (
+                    unit_id = updated_request["unit_id"]
+                    
+                    if organization_type and organization_id:
+                        # Grant unit access to the organization
+                        if organization_type == "pm_company":
+                            existing_access = (
                                 client.table("pm_company_unit_access")
-                                .insert({
-                                    "pm_company_id": updated_request["organization_id"],
-                                    "unit_id": updated_request["unit_id"]
-                                })
+                                .select("id")
+                                .eq("pm_company_id", organization_id)
+                                .eq("unit_id", unit_id)
+                                .limit(1)
                                 .execute()
                             )
-                            logger.info(f"Granted unit {updated_request['unit_id']} access to PM company {updated_request['organization_id']}")
-                    elif updated_request["organization_type"] == "aoao_organization":
+                            if not existing_access.data:
+                                (
+                                    client.table("pm_company_unit_access")
+                                    .insert({
+                                        "pm_company_id": organization_id,
+                                        "unit_id": unit_id
+                                    })
+                                    .execute()
+                                )
+                                logger.info(f"Granted unit {unit_id} access to PM company {organization_id}")
+                        elif organization_type == "aoao_organization":
+                            existing_access = (
+                                client.table("aoao_organization_unit_access")
+                                .select("id")
+                                .eq("aoao_organization_id", organization_id)
+                                .eq("unit_id", unit_id)
+                                .limit(1)
+                                .execute()
+                            )
+                            if not existing_access.data:
+                                (
+                                    client.table("aoao_organization_unit_access")
+                                    .insert({
+                                        "aoao_organization_id": organization_id,
+                                        "unit_id": unit_id
+                                    })
+                                    .execute()
+                                )
+                                logger.info(f"Granted unit {unit_id} access to AOAO organization {organization_id}")
+                    else:
+                        # Individual user request - grant direct unit access
                         existing_access = (
-                            client.table("aoao_organization_unit_access")
+                            client.table("user_unit_access")
                             .select("id")
-                            .eq("aoao_organization_id", updated_request["organization_id"])
-                            .eq("unit_id", updated_request["unit_id"])
+                            .eq("user_id", requester_user_id)
+                            .eq("unit_id", unit_id)
                             .limit(1)
                             .execute()
                         )
                         if not existing_access.data:
                             (
-                                client.table("aoao_organization_unit_access")
+                                client.table("user_unit_access")
                                 .insert({
-                                    "aoao_organization_id": updated_request["organization_id"],
-                                    "unit_id": updated_request["unit_id"]
+                                    "user_id": requester_user_id,
+                                    "unit_id": unit_id
                                 })
                                 .execute()
                             )
-                            logger.info(f"Granted unit {updated_request['unit_id']} access to AOAO organization {updated_request['organization_id']}")
+                            logger.info(f"Granted unit {unit_id} access to individual user {requester_user_id}")
             except Exception as e:
                 logger.error(f"Failed to grant access after approval: {e}")
                 # Don't fail the request update, just log the error
