@@ -34,28 +34,39 @@ def create_access_request(
     """
     client = get_supabase_client()
     
-    # Validate request type and IDs
-    if payload.request_type == "building" and not payload.building_id:
-        raise HTTPException(400, "building_id is required for building requests")
-    if payload.request_type == "unit" and not payload.unit_id:
-        raise HTTPException(400, "unit_id is required for unit requests")
+    # Clean up placeholder values ("string", empty strings, etc.)
+    building_id = payload.building_id
+    if building_id and (building_id.lower() == "string" or building_id.strip() == ""):
+        building_id = None
     
-    # Clean up unit_id if it's "string" or invalid
     unit_id = payload.unit_id
     if unit_id and (unit_id.lower() == "string" or unit_id.strip() == ""):
         unit_id = None
     
+    organization_type = payload.organization_type
+    organization_id = payload.organization_id
+    if organization_id and (organization_id.lower() == "string" or organization_id.strip() == ""):
+        organization_id = None
+        # If organization_id is invalid, also clear organization_type
+        organization_type = None
+    
+    # Validate request type and IDs
+    if payload.request_type == "building" and not building_id:
+        raise HTTPException(400, "building_id is required for building requests")
+    if payload.request_type == "unit" and not unit_id:
+        raise HTTPException(400, "unit_id is required for unit requests")
+    
     # Validate building/unit exists
-    if payload.building_id:
+    if building_id:
         building_result = (
             client.table("buildings")
             .select("id")
-            .eq("id", payload.building_id)
+            .eq("id", building_id)
             .limit(1)
             .execute()
         )
         if not building_result.data:
-            raise HTTPException(404, f"Building {payload.building_id} not found")
+            raise HTTPException(404, f"Building {building_id} not found")
     
     if unit_id:
         unit_result = (
@@ -68,11 +79,7 @@ def create_access_request(
         if not unit_result.data:
             raise HTTPException(404, f"Unit {unit_id} not found")
     
-    # Determine organization info - use payload if provided, otherwise from current user
-    organization_type = payload.organization_type
-    organization_id = payload.organization_id
-    
-    # If not provided in payload, try to get from current user
+    # If organization info not provided (or was cleaned), try to get from current user
     if not organization_type or not organization_id:
         if current_user.pm_company_id:
             organization_type = "pm_company"
@@ -105,12 +112,12 @@ def create_access_request(
                 raise HTTPException(404, f"AOAO organization {organization_id} not found")
     
     request_data = {
-        "requester_user_id": current_user.auth_user_id,
+        "requester_user_id": current_user.auth_user_id,  # Automatically set from authenticated user
         "request_type": payload.request_type,
-        "building_id": payload.building_id,
+        "building_id": building_id,  # Use cleaned building_id
         "unit_id": unit_id,  # Use cleaned unit_id
-        "organization_type": organization_type,
-        "organization_id": organization_id,
+        "organization_type": organization_type,  # Use cleaned organization_type
+        "organization_id": organization_id,  # Use cleaned organization_id
         "notes": payload.notes,
         "status": "pending",
     }
@@ -127,7 +134,7 @@ def create_access_request(
         
         logger.info(
             f"User {current_user.auth_user_id} created {payload.request_type} access request "
-            f"for {payload.building_id or payload.unit_id}"
+            f"for {building_id or unit_id}"
         )
         return result.data[0]
     except Exception as e:
