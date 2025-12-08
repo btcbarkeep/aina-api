@@ -63,10 +63,10 @@ def search_public(query: Optional[str] = None):
             # Only match buildings on building name words (ignore numbers in addresses/zip)
             building_conditions = []
             for word in building_name_words:
-                building_conditions.append(f"name.ilike.%{word}%")
-                building_conditions.append(f"address.ilike.%{word}%")
-                building_conditions.append(f"city.ilike.%{word}%")
-                building_conditions.append(f"state.ilike.%{word}%")
+                building_conditions.append(f"name.ilike.*{word}*")
+                building_conditions.append(f"address.ilike.*{word}*")
+                building_conditions.append(f"city.ilike.*{word}*")
+                building_conditions.append(f"state.ilike.*{word}*")
             
             result = (
                 client.table("buildings")
@@ -81,7 +81,7 @@ def search_public(query: Optional[str] = None):
         elif has_building_name:
             # Only building name words - prioritize building name matches
             # First, try matching building names only
-            name_conditions = [f"name.ilike.%{word}%" for word in building_name_words]
+            name_conditions = [f"name.ilike.*{word}*" for word in building_name_words]
             name_result = (
                 client.table("buildings")
                 .select("id, name, address, city, state, zip, slug")
@@ -97,7 +97,7 @@ def search_public(query: Optional[str] = None):
             # This prevents "Aina" from matching all buildings with "Aina" in addresses
             if len(buildings) == 0 and not buildings_error:
                 # Search addresses only (not city/state) to be more precise
-                address_conditions = [f"address.ilike.%{word}%" for word in building_name_words]
+                address_conditions = [f"address.ilike.*{word}*" for word in building_name_words]
                 
                 address_result = (
                     client.table("buildings")
@@ -118,11 +118,11 @@ def search_public(query: Optional[str] = None):
             # But require ALL words to match (not just any word)
             building_conditions = []
             for word in query_words:
-                building_conditions.append(f"name.ilike.%{word}%")
-                building_conditions.append(f"address.ilike.%{word}%")
-                building_conditions.append(f"city.ilike.%{word}%")
-                building_conditions.append(f"state.ilike.%{word}%")
-                building_conditions.append(f"zip.ilike.%{word}%")
+                building_conditions.append(f"name.ilike.*{word}*")
+                building_conditions.append(f"address.ilike.*{word}*")
+                building_conditions.append(f"city.ilike.*{word}*")
+                building_conditions.append(f"state.ilike.*{word}*")
+                building_conditions.append(f"zip.ilike.*{word}*")
             
             # For multi-word queries, filter results to ensure all words are present
             if len(query_words) > 1:
@@ -186,7 +186,7 @@ def search_public(query: Optional[str] = None):
         
         # If we have a unit number in the query, filter by it
         if has_unit_number:
-            unit_number_conditions = [f"unit_number.ilike.%{word}%" for word in unit_number_words]
+            unit_number_conditions = [f"unit_number.ilike.*{word}*" for word in unit_number_words]
             units_by_building_query = units_by_building_query.or(",".join(unit_number_conditions))
         
         units_by_building_result = units_by_building_query.execute()
@@ -203,7 +203,7 @@ def search_public(query: Optional[str] = None):
             units_by_number_query = (
                 client.table("units")
                 .select("id, unit_number, building_id")
-                .ilike("unit_number", f"%{word}%")
+                .ilike("unit_number", f"%%{word}%%")
             )
             
             # If we have building matches, filter to only those buildings
@@ -222,10 +222,10 @@ def search_public(query: Optional[str] = None):
         # Search buildings by text again (broader search)
         building_text_conditions = []
         for word in query_words:
-            building_text_conditions.append(f"name.ilike.%{word}%")
-            building_text_conditions.append(f"address.ilike.%{word}%")
-            building_text_conditions.append(f"city.ilike.%{word}%")
-            building_text_conditions.append(f"state.ilike.%{word}%")
+            building_text_conditions.append(f"name.ilike.*{word}*")
+            building_text_conditions.append(f"address.ilike.*{word}*")
+            building_text_conditions.append(f"city.ilike.*{word}*")
+            building_text_conditions.append(f"state.ilike.*{word}*")
         
         buildings_by_text_result = (
             client.table("buildings")
@@ -247,7 +247,7 @@ def search_public(query: Optional[str] = None):
             
             # If we have unit numbers, filter by them
             if has_unit_number:
-                unit_number_conditions = [f"unit_number.ilike.%{word}%" for word in unit_number_words]
+                unit_number_conditions = [f"unit_number.ilike.*{word}*" for word in unit_number_words]
                 units_by_building_text_query = units_by_building_text_query.or(",".join(unit_number_conditions))
             
             units_by_building_text_result = units_by_building_text_query.execute()
