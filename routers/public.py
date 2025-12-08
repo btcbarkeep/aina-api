@@ -1,812 +1,401 @@
-# routers/public.py
+# routers/reports.py
 
-from fastapi import APIRouter, HTTPException
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Body
+from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pydantic import BaseModel, Field
 
+from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
+from core.permission_helpers import (
+    is_admin,
+    require_building_access,
+    require_unit_access,
+    require_event_access,
+    require_document_access,
+    get_user_accessible_unit_ids,
+    get_user_accessible_building_ids,
+)
 from services.report_generator import (
     generate_building_report,
     generate_unit_report,
+    generate_contractor_report,
+    generate_custom_report,
+    get_effective_role,
+    CustomReportFilters,
 )
 
 router = APIRouter(
-    prefix="/reports/public",
+    prefix="/reports",
+    # Tags are set per-endpoint to organize into "Reports" and "Reports - Public" sections
+)
+
+
+# ============================================================
+# Request Models
+# ============================================================
+class CustomReportRequest(BaseModel):
+    """Request body for custom report generation."""
+    building_id: Optional[str] = None
+    unit_ids: Optional[List[str]] = Field(default=[], description="List of unit IDs")
+    contractor_ids: Optional[List[str]] = Field(default=[], description="List of contractor IDs")
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    include_documents: bool = True
+    include_events: bool = True
+    format: str = Field(default="json", description="Report format: 'json' or 'pdf'")
+
+
+# ============================================================
+# PUBLIC ENDPOINTS (No Auth Required)
+# ============================================================
+
+@router.get(
+    "/public/building/{building_id}",
+    summary="Generate public building report (AinaReports.com)",
     tags=["Reports - Public"],
 )
-
-
-# ============================================================
-# GET — Public Search
-# ============================================================
-@router.get(
-    "/search",
-    summary="Search buildings, units, and addresses (public)",
-)
-def search_public(query: Optional[str] = None):
-    """
-    Public search endpoint for buildings, units, and addresses.
-    Designed for autocomplete/autopopulate functionality.
-    Searches across:
-    - Building names
-    - Building addresses
-    - Unit numbers (combined with building info)
-    - Cities and states
-    
-    Returns matching buildings and units that can be accessed via the public endpoints.
-    
-    Query parameter is optional - if not provided or too short (< 2 chars), returns empty results.
-    """
-    client = get_supabase_client()
-    
-    # Handle empty or missing query
-    if not query or len(query.strip()) < 2:
-        return {
-            "success": True,
-            "query": query or "",
-            "buildings": [],
-            "units": [],
-        }
-    
-    search_term = query.strip()
-    results = {
-        "buildings": [],
-        "units": [],
-    }
-    
-    # Search buildings by name, address, city, state
-    try:
-        all_buildings = {}
-        building_ids_seen = set()
-        
-        # Search by name
-        try:
-            name_results = (
-                client.table("buildings")
-                .select("id, name, address, city, state, zip, slug")
-                .ilike("name", f"%{search_term}%")
-                .limit(20)
-                .execute()
-            ).data or []
-            for b in name_results:
-                if b["id"] not in building_ids_seen:
-                    all_buildings[b["id"]] = b
-                    building_ids_seen.add(b["id"])
-        except Exception:
-            pass
-        
-        # Search by address
-        try:
-            address_results = (
-                client.table("buildings")
-                .select("id, name, address, city, state, zip, slug")
-                .ilike("address", f"%{search_term}%")
-                .limit(20)
-                .execute()
-            ).data or []
-            for b in address_results:
-                if b["id"] not in building_ids_seen:
-                    all_buildings[b["id"]] = b
-                    building_ids_seen.add(b["id"])
-        except Exception:
-            pass
-        
-        # Search by city
-        try:
-            city_results = (
-                client.table("buildings")
-                .select("id, name, address, city, state, zip, slug")
-                .ilike("city", f"%{search_term}%")
-                .limit(20)
-                .execute()
-            ).data or []
-            for b in city_results:
-                if b["id"] not in building_ids_seen:
-                    all_buildings[b["id"]] = b
-                    building_ids_seen.add(b["id"])
-        except Exception:
-            pass
-        
-        # Search by state
-        try:
-            state_results = (
-                client.table("buildings")
-                .select("id, name, address, city, state, zip, slug")
-                .ilike("state", f"%{search_term}%")
-                .limit(20)
-                .execute()
-            ).data or []
-            for b in state_results:
-                if b["id"] not in building_ids_seen:
-                    all_buildings[b["id"]] = b
-                    building_ids_seen.add(b["id"])
-        except Exception:
-            pass
-        
-        results["buildings"] = list(all_buildings.values())[:20]
-    except Exception as e:
-        print(f"Error searching buildings: {e}")
-        results["buildings"] = []
-    
-    # Search units by unit_number (and include building info)
-    try:
-        # First, try to find units by unit_number
-        units_query = (
-            client.table("units")
-            .select("id, unit_number, floor, building_id, owner_name")
-            .ilike("unit_number", f"%{search_term}%")
-            .limit(20)
-            .execute()
-        )
-        
-        if units_query.data:
-            # Get building info for these units
-            building_ids = list(set(u.get("building_id") for u in units_query.data if u.get("building_id")))
-            
-            if building_ids:
-                buildings_for_units = (
-                    client.table("buildings")
-                    .select("id, name, address, city, state, zip, slug")
-                    .in_("id", building_ids)
-                    .execute()
-                ).data or []
-                
-                building_map = {b["id"]: b for b in buildings_for_units}
-                
-                # Combine unit and building info
-                for unit in units_query.data:
-                    building_id = unit.get("building_id")
-                    building = building_map.get(building_id)
-                    if building:
-                        results["units"].append({
-                            **unit,
-                            "building": building,
-                        })
-    except Exception as e:
-        print(f"Error searching units: {e}")
-        results["units"] = []
-    
-    return {
-        "success": True,
-        "query": query,
-        "buildings": results["buildings"],
-        "units": results["units"],
-    }
-
-
-# ============================================================
-# Helper — Get top property managers for a building
-# ============================================================
-def get_top_property_managers(
-    client,
+async def get_public_building_report(
     building_id: str,
-    unit_number: Optional[str] = None,
-    unit_id: Optional[str] = None,
-    limit: int = 5,
+    format: str = "json"
 ):
     """
-    Get property managers:
-    - Individual property manager users (not tied to an organization)
-    - Property manager organizations (excluding individual users tied to those orgs)
-    Ranked by number of events they've created for the building/unit.
-    Includes all property managers who have building/unit access.
-    """
-    # Get PM companies with building/unit access
-    try:
-        pm_company_ids = set()
-        
-        resolved_unit_id = unit_id
-        if not resolved_unit_id and unit_number:
-            # First, find the unit_id for this unit_number and building_id (legacy support)
-            unit_result = (
-                client.table("units")
-                .select("id")
-                .eq("building_id", building_id)
-                .eq("unit_number", unit_number)
-                .single()
-                .execute()
-            )
-            
-            if not unit_result.data:
-                print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
-                return []
-            
-            resolved_unit_id = unit_result.data.get("id")
-        
-        if resolved_unit_id:
-            pm_access_result = (
-                client.table("pm_company_unit_access")
-                .select("pm_company_id")
-                .eq("unit_id", resolved_unit_id)
-                .execute()
-            )
-            
-            pm_company_ids = {access["pm_company_id"] for access in (pm_access_result.data or [])}
-        else:
-            # Building level: get both building-level and unit-level access
-            # 1. Get PM companies with building-level access
-            pm_building_access = (
-                client.table("pm_company_building_access")
-                .select("pm_company_id")
-                .eq("building_id", building_id)
-                .execute()
-            )
-            pm_company_ids = {access["pm_company_id"] for access in (pm_building_access.data or [])}
-            
-            # 2. Get all units for this building
-            units_result = (
-                client.table("units")
-                .select("id")
-                .eq("building_id", building_id)
-                .execute()
-            )
-            
-            if units_result.data:
-                unit_ids = [unit["id"] for unit in units_result.data]
-                
-                # 3. Get PM companies with unit-level access for any unit in this building
-                if unit_ids:
-                    pm_unit_access = (
-                        client.table("pm_company_unit_access")
-                        .select("pm_company_id")
-                        .in_("unit_id", unit_ids)
-                        .execute()
-                    )
-                    
-                    unit_pm_ids = {access["pm_company_id"] for access in (pm_unit_access.data or [])}
-                    pm_company_ids = pm_company_ids.union(unit_pm_ids)
-        
-        print(f"DEBUG: Found {len(pm_company_ids)} PM companies with access for building {building_id}")
-    except Exception as e:
-        print(f"DEBUG: Error querying PM access tables: {e}")
-        import traceback
-        traceback.print_exc()
-        pm_company_ids = set()
-    
-    if not pm_company_ids:
-        print(f"DEBUG: No PM companies found in access tables for building {building_id}")
-        return []
-    
-    # Get PM company details
-    try:
-        pm_companies_result = (
-            client.table("property_management_companies")
-            .select("*")
-            .in_("id", list(pm_company_ids))
-            .execute()
-        )
-        
-        pm_companies = {c["id"]: c for c in (pm_companies_result.data or [])}
-    except Exception as e:
-        print(f"Error fetching PM companies: {e}")
-        pm_companies = {}
-    
-    # Get all events for the building/unit
-    events_result = None
-    if resolved_unit_id:
-        event_units_result = (
-            client.table("event_units")
-            .select("event_id")
-            .eq("unit_id", resolved_unit_id)
-            .execute()
-        )
-        event_ids = [row.get("event_id") for row in (event_units_result.data or []) if row.get("event_id")]
-        if event_ids:
-            events_result = (
-                client.table("events")
-                .select("id, created_by")
-                .in_("id", event_ids)
-                .execute()
-            )
-        else:
-            events_result = type("Result", (), {"data": []})()
-    else:
-        events_query = (
-            client.table("events")
-            .select("created_by")
-            .eq("building_id", building_id)
-        )
-        
-        if unit_number:
-            events_query = events_query.eq("unit_number", unit_number)
-        
-        events_result = events_query.execute()
-    
-    # Filter out events with null created_by in Python
-    if events_result.data:
-        events_result.data = [e for e in events_result.data if e.get("created_by")]
-    
-    # Get all users who created events and map them to PM companies
-    user_to_pm_company = {}  # user_id -> pm_company_id
-    user_ids = set()
-    
-    if events_result.data:
-        user_ids = {e.get("created_by") for e in events_result.data if e.get("created_by")}
-    
-    # Map users to PM companies by matching organization_name
-    if user_ids:
-        for user_id in user_ids:
-            try:
-                user_resp = client.auth.admin.get_user_by_id(user_id)
-                if user_resp and user_resp.user:
-                    metadata = user_resp.user.user_metadata or {}
-                    if metadata.get("role", "").lower() == "property_manager":
-                        org_name = metadata.get("organization_name")
-                        if org_name:
-                            # Find PM company by name
-                            for pm_id, pm_company in pm_companies.items():
-                                pm_name = pm_company.get("name") or pm_company.get("company_name")
-                                if pm_name and pm_name.strip() == org_name.strip():
-                                    user_to_pm_company[user_id] = pm_id
-                                    break
-            except Exception:
-                continue
-    
-    # Count events per PM company
-    pm_event_counts = {}
-    
-    if events_result.data:
-        for event in events_result.data:
-            user_id = event.get("created_by")
-            if user_id in user_to_pm_company:
-                pm_id = user_to_pm_company[user_id]
-                pm_event_counts[pm_id] = pm_event_counts.get(pm_id, 0) + 1
-    
-    # Build results - PM companies (organizations)
-    # Always include all PM companies with access, even if 0 events
-    org_managers = []
-    for pm_id in pm_company_ids:
-        pm_company = pm_companies.get(pm_id, {"id": pm_id})
-        event_count = pm_event_counts.get(pm_id, 0)
-        
-        org_managers.append({
-            "id": pm_id,
-            "organization_name": pm_company.get("name") or pm_company.get("company_name") or f"PM Company {pm_id[:8]}",
-            "event_count": event_count,
-            "type": "organization",
-            # Include all other PM company fields
-            "phone": pm_company.get("phone"),
-            "email": pm_company.get("email"),
-            "website": pm_company.get("website"),
-            "address": pm_company.get("address"),
-            "city": pm_company.get("city"),
-            "state": pm_company.get("state"),
-            "zip_code": pm_company.get("zip_code"),
-            "contact_person": pm_company.get("contact_person"),
-            "contact_phone": pm_company.get("contact_phone"),
-            "contact_email": pm_company.get("contact_email"),
-            "notes": pm_company.get("notes"),
-            "created_at": pm_company.get("created_at"),
-            "updated_at": pm_company.get("updated_at"),
-        })
-    
-    # Also get individual property managers (users not in a PM company but with role property_manager)
-    individual_managers = []
-    if events_result.data:
-        processed_users = set()
-        
-        for event in events_result.data:
-            user_id = event.get("created_by")
-            if user_id and user_id not in user_to_pm_company and user_id not in processed_users:
-                processed_users.add(user_id)
-                try:
-                    user_resp = client.auth.admin.get_user_by_id(user_id)
-                    if user_resp and user_resp.user:
-                        metadata = user_resp.user.user_metadata or {}
-                        if metadata.get("role", "").lower() == "property_manager":
-                            org_name = metadata.get("organization_name")
-                            if not org_name or not org_name.strip():
-                                # Individual property manager
-                                event_count = sum(1 for e in events_result.data if e.get("created_by") == user_id)
-                                
-                                individual_managers.append({
-                                    "id": user_id,
-                                    "email": user_resp.user.email,
-                                    "full_name": metadata.get("full_name"),
-                                    "organization_name": None,
-                                    "phone": metadata.get("phone"),
-                                    "event_count": event_count,
-                                    "type": "individual",
-                                })
-                except Exception:
-                    continue
-    
-    # Combine and sort by event_count
-    all_managers = individual_managers + org_managers
-    sorted_managers = sorted(all_managers, key=lambda x: x.get("event_count", 0), reverse=True)
-    
-    return sorted_managers
-
-
-# ============================================================
-# Helper — Get AOAO info for a building
-# ============================================================
-def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
-    """
-    Get AOAO organizations for a building (only organizations, not individual users).
-    Returns organizations ranked by number of events they've created for the building/unit.
-    Includes all AOAO organizations that have building/unit access.
-    """
-    # Get AOAO organizations with building/unit access
-    aoao_org_ids = set()
-    
-    if unit_number:
-        # First, find the unit_id for this unit_number and building_id
-        unit_result = (
-            client.table("units")
-            .select("id")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
-            .single()
-            .execute()
-        )
-        
-        if not unit_result.data:
-            print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
-            return []
-        
-        unit_id = unit_result.data.get("id")
-        
-        aoao_access_result = (
-            client.table("aoao_organization_unit_access")
-            .select("aoao_organization_id")
-            .eq("unit_id", unit_id)
-            .execute()
-        )
-        
-        aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
-    else:
-        # Building-level: gather AOAO orgs via unit access (no building-access table exists)
-        units_result = (
-            client.table("units")
-            .select("id")
-            .eq("building_id", building_id)
-            .execute()
-        )
-        
-        if units_result.data:
-            unit_ids = [unit["id"] for unit in units_result.data]
-            
-            if unit_ids:
-                aoao_unit_access = (
-                    client.table("aoao_organization_unit_access")
-                    .select("aoao_organization_id")
-                    .in_("unit_id", unit_ids)
-                    .execute()
-                )
-                
-                aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_unit_access.data or [])}
-    
-    print(f"DEBUG: Found {len(aoao_org_ids)} AOAO organizations with access for building {building_id}")
-    
-    if not aoao_org_ids:
-        print(f"DEBUG: No AOAO organizations found in access tables for building {building_id}")
-        return []
-    
-    # Get AOAO organization details
-    try:
-        aoao_orgs_result = (
-            client.table("aoao_organizations")
-            .select("*")
-            .in_("id", list(aoao_org_ids))
-            .execute()
-        )
-        
-        aoao_orgs = {o["id"]: o for o in (aoao_orgs_result.data or [])}
-    except Exception as e:
-        print(f"Error fetching AOAO organizations: {e}")
-        aoao_orgs = {}
-    
-    # Get all events for the building/unit
-    events_query = (
-        client.table("events")
-        .select("created_by")
-        .eq("building_id", building_id)
-    )
-    
-    if unit_number:
-        events_query = events_query.eq("unit_number", unit_number)
-    
-    events_result = events_query.execute()
-    
-    # Filter out events with null created_by in Python
-    if events_result.data:
-        events_result.data = [e for e in events_result.data if e.get("created_by")]
-    
-    # Get all users who created events and map them to AOAO organizations
-    user_to_aoao_org = {}  # user_id -> aoao_org_id
-    user_ids = set()
-    
-    if events_result.data:
-        user_ids = {e.get("created_by") for e in events_result.data if e.get("created_by")}
-    
-    # Map users to AOAO organizations by matching organization_name
-    if user_ids:
-        for user_id in user_ids:
-            try:
-                user_resp = client.auth.admin.get_user_by_id(user_id)
-                if user_resp and user_resp.user:
-                    metadata = user_resp.user.user_metadata or {}
-                    role = metadata.get("role", "").lower()
-                    if role in ["hoa", "hoa_staff"]:
-                        org_name = metadata.get("organization_name")
-                        if org_name:
-                            # Find AOAO organization by name
-                            for aoao_id, aoao_org in aoao_orgs.items():
-                                aoao_name = aoao_org.get("name") or aoao_org.get("organization_name")
-                                if aoao_name and aoao_name.strip() == org_name.strip():
-                                    user_to_aoao_org[user_id] = aoao_id
-                                    break
-            except Exception:
-                continue
-    
-    # Count events per AOAO organization
-    aoao_event_counts = {}
-    
-    if events_result.data:
-        for event in events_result.data:
-            user_id = event.get("created_by")
-            if user_id in user_to_aoao_org:
-                aoao_id = user_to_aoao_org[user_id]
-                aoao_event_counts[aoao_id] = aoao_event_counts.get(aoao_id, 0) + 1
-    
-    # Build organization entries
-    # Always include all AOAO orgs with access, even if 0 events
-    org_aoaos = []
-    for aoao_id in aoao_org_ids:
-        aoao_org = aoao_orgs.get(aoao_id, {"id": aoao_id})
-        event_count = aoao_event_counts.get(aoao_id, 0)
-        
-        org_aoaos.append({
-            "id": aoao_id,
-            "organization_name": aoao_org.get("name") or aoao_org.get("organization_name") or f"AOAO {aoao_id[:8]}",
-            "event_count": event_count,
-            # Include all other AOAO organization fields
-            "phone": aoao_org.get("phone"),
-            "email": aoao_org.get("email"),
-            "website": aoao_org.get("website"),
-            "address": aoao_org.get("address"),
-            "city": aoao_org.get("city"),
-            "state": aoao_org.get("state"),
-            "zip_code": aoao_org.get("zip_code"),
-            "contact_person": aoao_org.get("contact_person"),
-            "contact_phone": aoao_org.get("contact_phone"),
-            "contact_email": aoao_org.get("contact_email"),
-            "notes": aoao_org.get("notes"),
-            "created_at": aoao_org.get("created_at"),
-            "updated_at": aoao_org.get("updated_at"),
-        })
-    
-    # Sort by event_count (descending)
-    org_aoaos.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-    
-    return org_aoaos
-
-
-# ============================================================
-# Helper — Get top contractors for a building
-# ============================================================
-def get_top_contractors(client, building_id: str, unit_number: Optional[str] = None, limit: int = 5):
-    """
-    Get all contractors who have events for the building/unit.
-    Ranked by number of events.
-    Uses contractor_id column from events table (contractors can be assigned to events).
-    """
-    # Get all events for the building/unit with contractor_id
-    try:
-        query = (
-            client.table("events")
-            .select("contractor_id")
-            .eq("building_id", building_id)
-        )
-        
-        if unit_number:
-            query = query.eq("unit_number", unit_number)
-        
-        events_result = query.execute()
-        
-        print(f"DEBUG: Found {len(events_result.data or [])} total events for building {building_id}")
-        
-        # Filter out events with null contractor_id in Python
-        if events_result.data:
-            events_with_contractors = [e for e in events_result.data if e.get("contractor_id")]
-            print(f"DEBUG: Found {len(events_with_contractors)} events with contractor_id")
-            events_result.data = events_with_contractors
-        else:
-            events_result.data = []
-        
-    except Exception as e:
-        print(f"DEBUG: Error querying events for contractors: {e}")
-        import traceback
-        traceback.print_exc()
-        # If contractor_id column doesn't exist yet, return empty list
-        return []
-    
-    if not events_result.data:
-        print(f"DEBUG: No events with contractor_id found for building {building_id}")
-        return []
-    
-    # Count events by contractor_id
-    contractor_counts = {}
-    contractor_ids = set()
-    
-    for event in events_result.data:
-        contractor_id = event.get("contractor_id")
-        if contractor_id:
-            contractor_counts[contractor_id] = contractor_counts.get(contractor_id, 0) + 1
-            contractor_ids.add(contractor_id)
-    
-    print(f"DEBUG: Found {len(contractor_ids)} unique contractors with events")
-    
-    if not contractor_ids:
-        return []
-    
-    # Get contractor details
-    try:
-        contractors_result = (
-            client.table("contractors")
-            .select("*")
-            .in_("id", list(contractor_ids))
-            .execute()
-        )
-        
-        contractor_map = {c["id"]: c for c in (contractors_result.data or [])}
-        print(f"DEBUG: Fetched {len(contractor_map)} contractor details from database")
-    except Exception as e:
-        print(f"DEBUG: Error fetching contractor details: {e}")
-        import traceback
-        traceback.print_exc()
-        contractor_map = {}
-    
-    # Get contractor roles for each contractor
-    contractor_roles_map = {}
-    try:
-        if contractor_ids:
-            role_assignments = (
-                client.table("contractor_role_assignments")
-                .select("contractor_id, role_id")
-                .in_("contractor_id", list(contractor_ids))
-                .execute()
-            ).data or []
-            
-            if role_assignments:
-                role_ids = list(set(a.get("role_id") for a in role_assignments if a.get("role_id")))
-                
-                if role_ids:
-                    roles = (
-                        client.table("contractor_roles")
-                        .select("*")
-                        .in_("id", role_ids)
-                        .execute()
-                    ).data or []
-                    
-                    role_map = {r["id"]: r for r in roles}
-                    
-                    # Map contractors to their roles
-                    for assignment in role_assignments:
-                        contractor_id = assignment.get("contractor_id")
-                        role_id = assignment.get("role_id")
-                        if contractor_id and role_id:
-                            if contractor_id not in contractor_roles_map:
-                                contractor_roles_map[contractor_id] = []
-                            if role_id in role_map:
-                                contractor_roles_map[contractor_id].append(role_map[role_id])
-    except Exception as e:
-        print(f"DEBUG: Error fetching contractor roles: {e}")
-        # Continue without roles
-    
-    # Build result with counts (include all contractor fields + roles)
-    result = []
-    for contractor_id in contractor_ids:
-        contractor = contractor_map.get(contractor_id)
-        if contractor:
-            contractor_info = contractor.copy()
-            contractor_info["event_count"] = contractor_counts.get(contractor_id, 0)
-            contractor_info["roles"] = contractor_roles_map.get(contractor_id, [])
-            result.append(contractor_info)
-        else:
-            # Contractor not found in database, but has events - include with minimal info
-            print(f"DEBUG: Warning: Contractor {contractor_id} has events but not found in contractors table")
-            result.append({
-                "id": contractor_id,
-                "company_name": f"Contractor {contractor_id[:8]}",
-                "event_count": contractor_counts.get(contractor_id, 0),
-                "roles": contractor_roles_map.get(contractor_id, []),
-            })
-    
-    # Sort by event_count (descending)
-    result.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-    
-    print(f"DEBUG: Returning {len(result)} contractors")
-    
-    return result
-
-
-# ============================================================
-# GET — Public Building Info
-# ============================================================
-@router.get(
-    "/building/{building_id}",
-    summary="Get public building information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
-    include_in_schema=False,
-)
-async def get_building_info(building_id: str):
-    """
-    Public endpoint to get free information about a building.
-    Uses the same data logic as the report generator (public context).
+    Generate a public building report for AinaReports.com.
+    No authentication required.
+    Returns sanitized data (no internal notes, only public documents).
     """
     try:
-        report = await generate_building_report(
+        # Validate format
+        if format not in ["json", "pdf"]:
+            raise HTTPException(400, "format must be 'json' or 'pdf'")
+        
+        result = await generate_building_report(
             building_id=building_id,
             user=None,
             context_role="public",
             internal=False,
-            format="json",
+            format=format
         )
+        
+        return result.to_dict()
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Failed to generate building info: {str(e)}")
-    
-    data = report.data or {}
-    # Keep backward-compatible top-level fields where possible
-    return {
-        "success": True,
-        "building_id": building_id,
-        **data,
-        "generated_at": data.get("generated_at", datetime.utcnow().isoformat()),
-    }
+        raise HTTPException(500, f"Failed to generate building report: {str(e)}")
 
 
-# ============================================================
-# GET — Public Unit Info
-# ============================================================
 @router.get(
-    "/building/{building_id}/unit/{unit_id}",
-    summary="Get public unit information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info) by unit_id",
-    include_in_schema=False,
+    "/public/unit/{unit_id}",
+    summary="Generate public unit report (AinaReports.com)",
+    tags=["Reports - Public"],
 )
-async def get_unit_info(building_id: str, unit_id: str):
+async def get_public_unit_report(
+    unit_id: str,
+    format: str = "json"
+):
     """
-    Public endpoint to get free information about a specific unit (by unit_id).
-    Uses the same data logic as the report generator (public context).
+    Generate a public unit report for AinaReports.com.
+    No authentication required.
+    Returns sanitized data (no internal notes, only public documents).
     """
-    client = get_supabase_client()
     try:
-        # Validate unit exists and belongs to the building
-        unit_result = (
-            client.table("units")
-            .select("id, building_id, unit_number")
-            .eq("id", unit_id)
-            .limit(1)
-            .execute()
-        )
-        unit_row = (unit_result.data or [None])[0]
-        if not unit_row:
-            raise HTTPException(404, "Unit not found")
-        if unit_row.get("building_id") != building_id:
-            raise HTTPException(404, "Unit does not belong to this building")
+        # Validate format
+        if format not in ["json", "pdf"]:
+            raise HTTPException(400, "format must be 'json' or 'pdf'")
         
-        report = await generate_unit_report(
+        result = await generate_unit_report(
             unit_id=unit_id,
             user=None,
             context_role="public",
             internal=False,
-            format="json",
+            format=format
         )
-    except HTTPException:
-        raise
+        
+        return result.to_dict()
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Failed to generate unit info: {str(e)}")
+        raise HTTPException(500, f"Failed to generate unit report: {str(e)}")
+
+
+# ============================================================
+# DASHBOARD ENDPOINTS (Auth Required)
+# ============================================================
+
+@router.get(
+    "/dashboard/building/{building_id}",
+    summary="Generate internal building report (Dashboard)",
+    tags=["Reports"],
+)
+async def get_dashboard_building_report(
+    building_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    format: str = "json"
+):
+    """
+    Generate an internal building report for dashboard users.
+    Requires authentication.
+    Applies role-based visibility rules for events and documents.
+    """
+    # Permission check: ensure user has access to this building
+    if not is_admin(current_user):
+        require_building_access(current_user, building_id)
     
-    data = report.data or {}
-    return {
-        "success": True,
-        "building_id": building_id,
-        "unit_id": unit_id,
-        "unit_number": unit_row.get("unit_number"),
-        **data,
-        "generated_at": data.get("generated_at", datetime.utcnow().isoformat()),
-    }
+    try:
+        # Validate format
+        if format not in ["json", "pdf"]:
+            raise HTTPException(400, "format must be 'json' or 'pdf'")
+        
+        context_role = get_effective_role(current_user)
+        result = await generate_building_report(
+            building_id=building_id,
+            user=current_user,
+            context_role=context_role,
+            internal=True,
+            format=format
+        )
+        
+        response = result.to_dict()
+        response["user_role"] = current_user.role
+        return response
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate building report: {str(e)}")
+
+
+@router.get(
+    "/dashboard/unit/{unit_id}",
+    summary="Generate internal unit report (Dashboard)",
+    tags=["Reports"],
+)
+async def get_dashboard_unit_report(
+    unit_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    format: str = "json"
+):
+    """
+    Generate an internal unit report for dashboard users.
+    Requires authentication.
+    Applies role-based visibility rules for events and documents.
+    """
+    # Permission check: ensure user has access to this unit
+    if not is_admin(current_user):
+        require_unit_access(current_user, unit_id)
+    
+    try:
+        # Validate format
+        if format not in ["json", "pdf"]:
+            raise HTTPException(400, "format must be 'json' or 'pdf'")
+        
+        context_role = get_effective_role(current_user)
+        result = await generate_unit_report(
+            unit_id=unit_id,
+            user=current_user,
+            context_role=context_role,
+            internal=True,
+            format=format
+        )
+        
+        response = result.to_dict()
+        response["user_role"] = current_user.role
+        return response
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate unit report: {str(e)}")
+
+
+@router.get(
+    "/dashboard/owner/unit/{unit_id}",
+    summary="Generate owner-focused unit report (Dashboard)",
+    tags=["Reports"],
+)
+async def get_dashboard_owner_unit_report(
+    unit_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    format: str = "json"
+):
+    """
+    Generate an owner-focused unit report.
+    Requires authentication and unit ownership.
+    Owners can only see contractor_notes (no internal notes).
+    """
+    # Permission check: ensure user has access to this unit
+    if not is_admin(current_user):
+        require_unit_access(current_user, unit_id)
+    
+    # Verify user is an owner (or admin)
+    if not is_admin(current_user) and current_user.role != "owner":
+        raise HTTPException(403, "Not authorized to generate owner report. Owner role required.")
+    
+    try:
+        # Validate format
+        if format not in ["json", "pdf"]:
+            raise HTTPException(400, "format must be 'json' or 'pdf'")
+        
+        # Use "owner" context role for sanitization
+        result = await generate_unit_report(
+            unit_id=unit_id,
+            user=current_user,
+            context_role="owner",
+            internal=True,
+            format=format
+        )
+        
+        response = result.to_dict()
+        response["user_role"] = current_user.role
+        return response
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate owner unit report: {str(e)}")
+
+
+@router.get(
+    "/dashboard/contractor/{contractor_id}",
+    summary="Generate contractor activity report (Dashboard)",
+    tags=["Reports"],
+)
+async def get_dashboard_contractor_report(
+    contractor_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    format: str = "json"
+):
+    """
+    Generate a contractor activity report.
+    Requires authentication.
+    
+    - Admin/AOAO/PM: Can view any contractor report
+    - Contractors: Can only view their own report
+    """
+    client = get_supabase_client()
+    
+    # Verify contractor exists
+    contractor_result = (
+        client.table("contractors")
+        .select("id")
+        .eq("id", contractor_id)
+        .limit(1)
+        .execute()
+    )
+    
+    if not contractor_result.data:
+        raise HTTPException(404, f"Contractor {contractor_id} not found")
+    
+    # Permission check: contractors can only view their own report
+    if not is_admin(current_user) and current_user.role == "contractor":
+        user_contractor_id = getattr(current_user, "contractor_id", None)
+        if not user_contractor_id or str(user_contractor_id) != contractor_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only view your own contractor report"
+            )
+    
+    try:
+        # Validate format
+        if format not in ["json", "pdf"]:
+            raise HTTPException(400, "format must be 'json' or 'pdf'")
+        
+        context_role = get_effective_role(current_user)
+        
+        # For contractors, use "contractor" context role for sanitization
+        if current_user.role == "contractor":
+            context_role = "contractor"
+        
+        result = await generate_contractor_report(
+            contractor_id=contractor_id,
+            user=current_user,
+            context_role=context_role,
+            format=format
+        )
+        
+        response = result.to_dict()
+        response["user_role"] = current_user.role
+        return response
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate contractor report: {str(e)}")
+
+
+@router.post(
+    "/dashboard/custom",
+    summary="Generate custom report (Dashboard)",
+    tags=["Reports"],
+)
+async def post_dashboard_custom_report(
+    request: CustomReportRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Generate a custom report based on filters.
+    Requires authentication.
+    Applies role-based permissions and visibility rules.
+    """
+    # Validate format
+    if request.format not in ["json", "pdf"]:
+        raise HTTPException(400, "format must be 'json' or 'pdf'")
+    
+    # Permission checks based on filters
+    if not is_admin(current_user):
+        # Check building access if building_id provided
+        if request.building_id:
+            require_building_access(current_user, request.building_id)
+        
+        # Check unit access if unit_ids provided
+        if request.unit_ids:
+            # AOAO roles can access units in their buildings even without explicit unit access
+            if current_user.role not in ["aoao", "aoao_staff"]:
+                # For each unit, verify access
+                for unit_id in request.unit_ids:
+                    require_unit_access(current_user, unit_id)
+        
+        # Contractors can only filter by their own contractor_id
+        if request.contractor_ids and current_user.role == "contractor":
+            user_contractor_id = getattr(current_user, "contractor_id", None)
+            if not user_contractor_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Contractor account missing contractor_id"
+                )
+            # Verify all requested contractor_ids match the user's contractor_id
+            user_contractor_id_str = str(user_contractor_id)
+            for cid in request.contractor_ids:
+                if str(cid) != user_contractor_id_str:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You can only filter by your own contractor_id"
+                    )
+    
+    try:
+        context_role = get_effective_role(current_user)
+        
+        # For contractors, use "contractor" context role
+        if current_user.role == "contractor":
+            context_role = "contractor"
+        
+        filters = CustomReportFilters(
+            building_id=request.building_id,
+            unit_ids=request.unit_ids or [],
+            contractor_ids=request.contractor_ids or [],
+            start_date=request.start_date,
+            end_date=request.end_date,
+            include_documents=request.include_documents,
+            include_events=request.include_events,
+        )
+        
+        result = await generate_custom_report(
+            filters=filters,
+            user=current_user,
+            context_role=context_role,
+            format=request.format
+        )
+        
+        response = result.to_dict()
+        response["user_role"] = current_user.role
+        return response
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate custom report: {str(e)}")
