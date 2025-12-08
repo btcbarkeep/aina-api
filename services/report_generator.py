@@ -564,6 +564,14 @@ async def generate_building_report(
             cid = contractor.get("id")
             contractor["event_count"] = contractor_event_counts.get(cid, 0)
     
+    # Store total contractor count before limiting (for public reports)
+    total_contractors_count = len(contractors)
+    
+    # For public reports, limit to top 5 contractors by event count
+    if not internal and context_role == "public":
+        contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        contractors = contractors[:5]
+    
     # Get property management companies assigned to this building
     pm_building_access_result = (
         client.table("pm_company_building_access")
@@ -675,15 +683,36 @@ async def generate_building_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
+    # Store total PM companies count before limiting (for public reports)
+    total_pm_companies_count = len(pm_companies)
+    
+    # For public reports, limit to top 5 PM companies by event count
+    # Include PM companies with 0 events if there aren't 5 with events
+    if not internal and context_role == "public":
+        # Sort by event count (descending)
+        pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        
+        # Separate PM companies with events from those without
+        pm_with_events = [pm for pm in pm_companies if pm.get("event_count", 0) > 0]
+        pm_without_events = [pm for pm in pm_companies if pm.get("event_count", 0) == 0]
+        
+        # Take up to 5 with events, then fill remaining slots with those without events
+        result = pm_with_events[:5]
+        remaining_slots = 5 - len(result)
+        if remaining_slots > 0 and pm_without_events:
+            result.extend(pm_without_events[:remaining_slots])
+        
+        pm_companies = result
+    
     # Calculate statistics
     # Use total counts (not limited) for public reports
     stats = {
         "total_events": total_events_count if (not internal and context_role == "public") else len(events),
         "total_documents": total_documents_count if (not internal and context_role == "public") else len(documents),
         "total_units": len(units),
-        "total_contractors": len(contractors),
+        "total_contractors": total_contractors_count if (not internal and context_role == "public") else len(contractors),
         "total_aoao_organizations": len(aoao_orgs),
-        "total_pm_companies": len(pm_companies),
+        "total_pm_companies": total_pm_companies_count if (not internal and context_role == "public") else len(pm_companies),
     }
     
     # Build report data
