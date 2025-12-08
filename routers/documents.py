@@ -601,7 +601,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     doc_data["building_id"] = str(building_id)
     doc_data["event_id"] = str(event_id) if event_id else None
     doc_data["uploaded_by"] = str(current_user.id)
-    doc_data["uploaded_by_role"] = current_user.role  # Denormalized for performance
+    doc_data["uploaded_by_role"] = "admin" if current_user.role in ["admin", "super_admin"] else current_user.role  # Denormalized for performance (normalize admin roles)
     
     # Generate filename from title (filename is required by database, but we use title as the primary field)
     if doc_data.get("title"):
