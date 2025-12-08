@@ -918,15 +918,23 @@ async def generate_unit_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
-    # Get AOAO organizations assigned to this unit
+    # Get AOAO organizations assigned to this unit's building
+    # (AOAO organizations are assigned at the building level, not unit level)
     aoao_orgs = []
-    aoao_access_result = (
-        client.table("aoao_organization_unit_access")
-        .select("aoao_organization_id")
-        .eq("unit_id", unit_id)
-        .execute()
-    )
-    aoao_org_ids = [row["aoao_organization_id"] for row in (aoao_access_result.data or [])]
+    aoao_org_ids = []
+    if building_id:
+        try:
+            aoao_building_access_result = (
+                client.table("aoao_organization_building_access")
+                .select("aoao_organization_id")
+                .eq("building_id", building_id)
+                .execute()
+            )
+            aoao_org_ids = [row["aoao_organization_id"] for row in (aoao_building_access_result.data or [])]
+        except Exception:
+            # Table might not exist or error accessing it, continue with empty list
+            aoao_org_ids = []
+    
     if aoao_org_ids:
         aoao_orgs_result = (
             client.table("aoao_organizations")
