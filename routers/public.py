@@ -1,7 +1,7 @@
 # routers/public.py
 
 import re
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
 from core.supabase_client import get_supabase_client
@@ -9,6 +9,13 @@ from services.report_generator import (
     generate_building_report,
     generate_unit_report,
 )
+
+# UUID pattern for validation
+UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+
+def is_uuid(identifier: str) -> bool:
+    """Check if a string is a valid UUID format."""
+    return bool(UUID_PATTERN.match(identifier))
 
 router = APIRouter(
     prefix="/reports/public",
@@ -505,13 +512,17 @@ def search_public(query: Optional[str] = None):
 # GET — Public Building Report
 # ============================================================
 @router.get(
-    "/building/{building_id}",
+    "/building/{identifier}",
     summary="Get public building report (AinaReports.com)",
 )
-async def get_public_building_report(building_id: str, format: str = "json"):
+async def get_public_building_report(identifier: str, format: str = "json"):
     """
     Public endpoint to get all public data for a building.
     Used when a user clicks a building from the main search on AinaReports.com.
+    
+    Accepts either:
+    - building_id (UUID format): e.g., /reports/public/building/1cc862c3-e58e-4af3-8b0a-ab47128bac5c
+    - slug (string): e.g., /reports/public/building/papakea
     
     Returns sanitized data (no internal notes, only public documents) with:
     - Building information
@@ -528,6 +539,28 @@ async def get_public_building_report(building_id: str, format: str = "json"):
         if format not in ["json", "pdf"]:
             raise HTTPException(400, "format must be 'json' or 'pdf'")
         
+        client = get_supabase_client()
+        building_id = None
+        
+        # Check if identifier is a UUID or slug
+        if is_uuid(identifier):
+            # UUID format - use directly as building_id
+            building_id = identifier
+        else:
+            # Slug format - query building by slug (case-insensitive)
+            building_result = (
+                client.table("buildings")
+                .select("id")
+                .ilike("slug", identifier.lower())
+                .limit(1)
+                .execute()
+            )
+            
+            if not building_result.data:
+                raise HTTPException(404, f"Building not found: {identifier}")
+            
+            building_id = building_result.data[0]["id"]
+        
         result = await generate_building_report(
             building_id=building_id,
             user=None,
@@ -537,6 +570,8 @@ async def get_public_building_report(building_id: str, format: str = "json"):
         )
         
         return result.to_dict()
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
@@ -547,13 +582,21 @@ async def get_public_building_report(building_id: str, format: str = "json"):
 # GET — Public Unit Report
 # ============================================================
 @router.get(
-    "/unit/{unit_id}",
+    "/unit/{identifier}",
     summary="Get public unit report (AinaReports.com)",
 )
-async def get_public_unit_report(unit_id: str, format: str = "json"):
+async def get_public_unit_report(
+    identifier: str, 
+    format: str = "json",
+    building_slug: Optional[str] = Query(None, description="Building slug (required when using unit_number instead of unit_id)")
+):
     """
     Public endpoint to get all public data for a unit.
     Used when a user clicks a specific unit from the main search on AinaReports.com.
+    
+    Accepts either:
+    - unit_id (UUID format): e.g., /reports/public/unit/58fe5873-fbc3-4f5e-8c21-c933990677e5
+    - unit_number (string) with building_slug query param: e.g., /reports/public/unit/203?building_slug=papakea
     
     Returns sanitized data (no internal notes, only public documents) with:
     - Unit information
@@ -570,6 +613,47 @@ async def get_public_unit_report(unit_id: str, format: str = "json"):
         if format not in ["json", "pdf"]:
             raise HTTPException(400, "format must be 'json' or 'pdf'")
         
+        client = get_supabase_client()
+        unit_id = None
+        
+        # Check if identifier is a UUID or unit_number
+        if is_uuid(identifier):
+            # UUID format - use directly as unit_id
+            unit_id = identifier
+        else:
+            # unit_number format - requires building_slug query parameter
+            if not building_slug:
+                raise HTTPException(400, "building_slug query parameter required when using unit_number instead of unit_id")
+            
+            # Query building by slug to get building_id
+            building_result = (
+                client.table("buildings")
+                .select("id")
+                .ilike("slug", building_slug.lower())
+                .limit(1)
+                .execute()
+            )
+            
+            if not building_result.data:
+                raise HTTPException(404, f"Building not found: {building_slug}")
+            
+            building_id = building_result.data[0]["id"]
+            
+            # Query unit by unit_number and building_id (case-insensitive)
+            unit_result = (
+                client.table("units")
+                .select("id")
+                .eq("building_id", building_id)
+                .ilike("unit_number", identifier)
+                .limit(1)
+                .execute()
+            )
+            
+            if not unit_result.data:
+                raise HTTPException(404, f"Unit not found: {identifier} in building {building_slug}")
+            
+            unit_id = unit_result.data[0]["id"]
+        
         result = await generate_unit_report(
             unit_id=unit_id,
             user=None,
@@ -579,6 +663,8 @@ async def get_public_unit_report(unit_id: str, format: str = "json"):
         )
         
         return result.to_dict()
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
