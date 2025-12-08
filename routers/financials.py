@@ -96,9 +96,10 @@ def get_revenue(
         
         for sub in (user_subs_result.data or []):
             revenue_data["subscriptions"]["user_subscriptions"]["total"] += 1
-            if sub.get("subscription_tier") == "paid" and sub.get("subscription_status") in ["active", "trialing"]:
+            # Active paid = paid tier with active status (NOT trialing)
+            if sub.get("subscription_tier") == "paid" and sub.get("subscription_status") == "active":
                 revenue_data["subscriptions"]["user_subscriptions"]["active_paid"] += 1
-            if sub.get("is_trial"):
+            if sub.get("is_trial") or sub.get("subscription_status") == "trialing":
                 revenue_data["subscriptions"]["user_subscriptions"]["trials"] += 1
         
         # Count contractor subscriptions
@@ -110,7 +111,8 @@ def get_revenue(
         
         for contractor in (contractors_result.data or []):
             revenue_data["subscriptions"]["contractors"]["total"] += 1
-            if contractor.get("subscription_tier") == "paid" and contractor.get("subscription_status") in ["active", "trialing"]:
+            # Active paid = paid tier with active status (NOT trialing)
+            if contractor.get("subscription_tier") == "paid" and contractor.get("subscription_status") == "active":
                 revenue_data["subscriptions"]["contractors"]["active_paid"] += 1
             if contractor.get("subscription_status") == "trialing":
                 revenue_data["subscriptions"]["contractors"]["trials"] += 1
@@ -124,7 +126,8 @@ def get_revenue(
         
         for org in (aoao_result.data or []):
             revenue_data["subscriptions"]["aoao_organizations"]["total"] += 1
-            if org.get("subscription_tier") == "paid" and org.get("subscription_status") in ["active", "trialing"]:
+            # Active paid = paid tier with active status (NOT trialing)
+            if org.get("subscription_tier") == "paid" and org.get("subscription_status") == "active":
                 revenue_data["subscriptions"]["aoao_organizations"]["active_paid"] += 1
             if org.get("subscription_status") == "trialing":
                 revenue_data["subscriptions"]["aoao_organizations"]["trials"] += 1
@@ -138,7 +141,8 @@ def get_revenue(
         
         for company in (pm_result.data or []):
             revenue_data["subscriptions"]["pm_companies"]["total"] += 1
-            if company.get("subscription_tier") == "paid" and company.get("subscription_status") in ["active", "trialing"]:
+            # Active paid = paid tier with active status (NOT trialing)
+            if company.get("subscription_tier") == "paid" and company.get("subscription_status") == "active":
                 revenue_data["subscriptions"]["pm_companies"]["active_paid"] += 1
             if company.get("subscription_status") == "trialing":
                 revenue_data["subscriptions"]["pm_companies"]["trials"] += 1
