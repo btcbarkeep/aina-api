@@ -61,6 +61,10 @@ class DocumentBase(BaseModel):
     # Redaction and visibility controls
     is_redacted: Optional[bool] = Field(False, description="Whether the document has been redacted")
     is_public: Optional[bool] = Field(True, description="Whether the document is publicly accessible (true = public, false = private)")
+    
+    # Uploader information (denormalized for performance)
+    uploaded_by: Optional[str] = Field(None, description="User ID who uploaded the document")
+    uploaded_by_role: Optional[str] = Field(None, description="Role of the user who uploaded the document (denormalized)")
 
     # -----------------------------
     # Validators
@@ -236,6 +240,7 @@ class DocumentUpdate(BaseModel):
 
 class DocumentRead(DocumentBase):
     id: str
+    uploaded_by_name: Optional[str] = Field(None, description="Name of the user who uploaded the document (fetched from user metadata)")
     created_at: Optional[datetime] = None
 
     @field_validator("created_at", mode="before")
