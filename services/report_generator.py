@@ -1051,6 +1051,36 @@ async def generate_unit_report(
         "total_aoao_organizations": len(aoao_orgs),
     }
     
+    # For public reports, remove unnecessary fields to reduce payload size
+    if not internal and context_role == "public":
+        # Remove fields from building (if it exists)
+        if building:
+            building = {k: v for k, v in building.items() if k not in ["created_at", "updated_at", "metadata", "metadata_last_refreshed"]}
+        
+        # Remove fields from documents
+        documents_filtered = []
+        for doc in documents:
+            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted"]})
+        documents = documents_filtered
+        
+        # Remove fields from contractors
+        contractors_filtered = []
+        for contractor in contractors:
+            contractors_filtered.append({k: v for k, v in contractor.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
+        contractors = contractors_filtered
+        
+        # Remove fields from AOAO organizations
+        aoao_orgs_filtered = []
+        for org in aoao_orgs:
+            aoao_orgs_filtered.append({k: v for k, v in org.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
+        aoao_orgs = aoao_orgs_filtered
+        
+        # Remove fields from property management companies
+        pm_companies_filtered = []
+        for pm in pm_companies:
+            pm_companies_filtered.append({k: v for k, v in pm.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
+        pm_companies = pm_companies_filtered
+    
     # Build report data
     report_data = {
         "unit": unit,
