@@ -389,8 +389,9 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     """
     Get all contractors who have events for the building/unit.
     Ranked by number of events.
+    Uses contractor_id column from events table (contractors can be assigned to events).
     """
-    # Get all events for the building/unit
+    # Get all events for the building/unit with contractor_id
     try:
         query = (
             client.table("events")
@@ -417,6 +418,7 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
         print(f"DEBUG: Error querying events for contractors: {e}")
         import traceback
         traceback.print_exc()
+        # If contractor_id column doesn't exist yet, return empty list
         return []
     
     if not events_result.data:
