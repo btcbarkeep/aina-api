@@ -448,7 +448,8 @@ def send_bulk_message(
     - 'contractors': Users associated with contractors.
     - 'property_managers': Users associated with PM companies.
     - 'owners': Users with role 'owner'.
-    - Can include multiple types (e.g., ['contractors', 'owners']).
+    - 'aoao': Users with role 'aoao' (Admin/Super Admin only).
+    - Can include multiple types (e.g., ['contractors', 'owners', 'aoao']).
     
     **Filtering:**
     - `building_id`: Optional. Filter recipients to those with access to this building.
@@ -474,7 +475,12 @@ def send_bulk_message(
         raise HTTPException(400, "AOAO user must be associated with an AOAO organization to send bulk messages")
     
     # Validate recipient types
-    valid_types = ["contractors", "property_managers", "owners"]
+    # Admins can include AOAO users, regular users cannot
+    if is_admin:
+        valid_types = ["contractors", "property_managers", "owners", "aoao"]
+    else:
+        valid_types = ["contractors", "property_managers", "owners"]
+    
     invalid_types = [t for t in payload.recipient_types if t not in valid_types]
     if invalid_types:
         raise HTTPException(400, f"Invalid recipient types: {invalid_types}. Valid types: {valid_types}")
@@ -636,6 +642,37 @@ def send_bulk_message(
             )
             pm_company_ids_with_access.update([row["pm_company_id"] for row in (pm_unit_access_result.data or [])])
         
+        # 3b. Get AOAO organizations with access to target buildings/units (for admin filtering)
+        aoao_organization_ids_with_access = set()
+        if "aoao" in payload.recipient_types and (target_building_ids or target_unit_ids):
+            if target_building_ids:
+                aoao_building_access_result = (
+                    client.table("aoao_organization_building_access")
+                    .select("aoao_organization_id")
+                    .in_("building_id", target_building_ids)
+                    .execute()
+                )
+                aoao_organization_ids_with_access.update([row["aoao_organization_id"] for row in (aoao_building_access_result.data or [])])
+            
+            if target_unit_ids:
+                # Get buildings from units, then check AOAO building access
+                units_buildings_result = (
+                    client.table("units")
+                    .select("building_id")
+                    .in_("id", target_unit_ids)
+                    .execute()
+                )
+                unit_building_ids = set([row["building_id"] for row in (units_buildings_result.data or [])])
+                
+                if unit_building_ids:
+                    aoao_building_access_result = (
+                        client.table("aoao_organization_building_access")
+                        .select("aoao_organization_id")
+                        .in_("building_id", unit_building_ids)
+                        .execute()
+                    )
+                    aoao_organization_ids_with_access.update([row["aoao_organization_id"] for row in (aoao_building_access_result.data or [])])
+        
         # 4. Filter users by recipient types and access
         for user in all_users:
             if hasattr(user, "id"):
@@ -687,6 +724,18 @@ def send_bulk_message(
                     recipient_ids.add(user_id)
                 elif user_id in users_with_unit_access:
                     recipient_ids.add(user_id)
+            
+            if "aoao" in payload.recipient_types:
+                # AOAO users (admins only - validated earlier)
+                aoao_organization_id = user_meta.get("aoao_organization_id")
+                if user_role == "aoao" and aoao_organization_id:
+                    # Check if AOAO has access (or admin with no filters)
+                    if is_admin and not target_building_ids and not target_unit_ids:
+                        # Admin with no filters: include all AOAO users
+                        recipient_ids.add(user_id)
+                    elif aoao_organization_id in aoao_organization_ids_with_access:
+                        # AOAO organization has access to target buildings/units
+                        recipient_ids.add(user_id)
         
         # Remove the sender from recipients
         recipient_ids.discard(current_user.auth_user_id)
