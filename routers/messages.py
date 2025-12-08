@@ -92,23 +92,39 @@ def list_messages(
     client = get_supabase_client()
     
     try:
-        # Get messages where user is recipient OR user sent to admins
-        result = (
+        # Fetch messages where user is recipient
+        recipient_result = (
             client.table("messages")
             .select("*")
-            .or_(f"to_user_id.eq.{current_user.auth_user_id},and(to_user_id.is.null,from_user_id.eq.{current_user.auth_user_id})")
+            .eq("to_user_id", current_user.auth_user_id)
             .order("created_at", desc=True)
             .execute()
         )
         
-        # Filter in Python for better compatibility
-        messages = result.data or []
-        filtered = []
-        for msg in messages:
-            is_recipient = msg.get("to_user_id") == current_user.auth_user_id
-            is_sender_to_admins = msg.get("to_user_id") is None and msg.get("from_user_id") == current_user.auth_user_id
-            if is_recipient or is_sender_to_admins:
-                filtered.append(msg)
+        # Fetch messages where user sent to admins (to_user_id is NULL)
+        admin_messages_result = (
+            client.table("messages")
+            .select("*")
+            .is_("to_user_id", "null")
+            .eq("from_user_id", current_user.auth_user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        
+        # Combine and deduplicate messages
+        recipient_messages = recipient_result.data or []
+        admin_messages = admin_messages_result.data or []
+        
+        # Use a dict to deduplicate by message ID
+        messages_dict = {}
+        for msg in recipient_messages + admin_messages:
+            msg_id = msg.get("id")
+            if msg_id and msg_id not in messages_dict:
+                messages_dict[msg_id] = msg
+        
+        # Convert back to list and sort by created_at
+        filtered = list(messages_dict.values())
+        filtered.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         
         # Apply unread filter if requested
         if unread_only:
