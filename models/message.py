@@ -25,7 +25,7 @@ class BulkMessageCreate(BaseModel):
     """Bulk message model for AOAO users and admins."""
     recipient_types: List[str] = Field(
         ..., 
-        description="List of recipient types: 'contractors', 'property_managers', 'owners'. Can include multiple types."
+        description="List of recipient types: 'contractors', 'property_managers', 'owners', 'aoao' (admins only). Can include multiple types."
     )
     subject: str = Field(..., description="Message subject")
     body: str = Field(..., description="Message body")
