@@ -7,7 +7,7 @@ from datetime import datetime
 from core.supabase_client import get_supabase_client
 
 router = APIRouter(
-    prefix="/public",
+    prefix="/reports/public",
     tags=["Public"],
 )
 
@@ -260,7 +260,7 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
 # GET — Public Building Info
 # ============================================================
 @router.get(
-    "/buildings/{building_id}/info",
+    "/building/{building_id}",
     summary="Get public building information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
 )
 def get_building_info(building_id: str):
@@ -357,7 +357,7 @@ def get_building_info(building_id: str):
 # GET — Public Unit Info
 # ============================================================
 @router.get(
-    "/buildings/{building_id}/units/{unit_number}/info",
+    "/building/{building_id}/unit/{unit_number}",
     summary="Get public unit information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
 )
 def get_unit_info(building_id: str, unit_number: str):
