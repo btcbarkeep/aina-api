@@ -171,9 +171,24 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         event_count = pm_event_counts.get(pm_id, 0)
         
         org_managers.append({
+            "id": pm_id,
             "organization_name": pm_company.get("name") or pm_company.get("company_name") or f"PM Company {pm_id[:8]}",
             "event_count": event_count,
             "type": "organization",
+            # Include all other PM company fields
+            "phone": pm_company.get("phone"),
+            "email": pm_company.get("email"),
+            "website": pm_company.get("website"),
+            "address": pm_company.get("address"),
+            "city": pm_company.get("city"),
+            "state": pm_company.get("state"),
+            "zip_code": pm_company.get("zip_code"),
+            "contact_person": pm_company.get("contact_person"),
+            "contact_phone": pm_company.get("contact_phone"),
+            "contact_email": pm_company.get("contact_email"),
+            "notes": pm_company.get("notes"),
+            "created_at": pm_company.get("created_at"),
+            "updated_at": pm_company.get("updated_at"),
         })
     
     # Also get individual property managers (users not in a PM company but with role property_manager)
@@ -372,8 +387,23 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
         event_count = aoao_event_counts.get(aoao_id, 0)
         
         org_aoaos.append({
+            "id": aoao_id,
             "organization_name": aoao_org.get("name") or aoao_org.get("organization_name") or f"AOAO {aoao_id[:8]}",
             "event_count": event_count,
+            # Include all other AOAO organization fields
+            "phone": aoao_org.get("phone"),
+            "email": aoao_org.get("email"),
+            "website": aoao_org.get("website"),
+            "address": aoao_org.get("address"),
+            "city": aoao_org.get("city"),
+            "state": aoao_org.get("state"),
+            "zip_code": aoao_org.get("zip_code"),
+            "contact_person": aoao_org.get("contact_person"),
+            "contact_phone": aoao_org.get("contact_phone"),
+            "contact_email": aoao_org.get("contact_email"),
+            "notes": aoao_org.get("notes"),
+            "created_at": aoao_org.get("created_at"),
+            "updated_at": aoao_org.get("updated_at"),
         })
     
     # Sort by event_count (descending)
@@ -457,13 +487,51 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
         traceback.print_exc()
         contractor_map = {}
     
-    # Build result with counts
+    # Get contractor roles for each contractor
+    contractor_roles_map = {}
+    try:
+        if contractor_ids:
+            role_assignments = (
+                client.table("contractor_role_assignments")
+                .select("contractor_id, role_id")
+                .in_("contractor_id", list(contractor_ids))
+                .execute()
+            ).data or []
+            
+            if role_assignments:
+                role_ids = list(set(a.get("role_id") for a in role_assignments if a.get("role_id")))
+                
+                if role_ids:
+                    roles = (
+                        client.table("contractor_roles")
+                        .select("*")
+                        .in_("id", role_ids)
+                        .execute()
+                    ).data or []
+                    
+                    role_map = {r["id"]: r for r in roles}
+                    
+                    # Map contractors to their roles
+                    for assignment in role_assignments:
+                        contractor_id = assignment.get("contractor_id")
+                        role_id = assignment.get("role_id")
+                        if contractor_id and role_id:
+                            if contractor_id not in contractor_roles_map:
+                                contractor_roles_map[contractor_id] = []
+                            if role_id in role_map:
+                                contractor_roles_map[contractor_id].append(role_map[role_id])
+    except Exception as e:
+        print(f"DEBUG: Error fetching contractor roles: {e}")
+        # Continue without roles
+    
+    # Build result with counts (include all contractor fields + roles)
     result = []
     for contractor_id in contractor_ids:
         contractor = contractor_map.get(contractor_id)
         if contractor:
             contractor_info = contractor.copy()
             contractor_info["event_count"] = contractor_counts.get(contractor_id, 0)
+            contractor_info["roles"] = contractor_roles_map.get(contractor_id, [])
             result.append(contractor_info)
         else:
             # Contractor not found in database, but has events - include with minimal info
@@ -472,6 +540,7 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
                 "id": contractor_id,
                 "company_name": f"Contractor {contractor_id[:8]}",
                 "event_count": contractor_counts.get(contractor_id, 0),
+                "roles": contractor_roles_map.get(contractor_id, []),
             })
     
     # Sort by event_count (descending)
@@ -515,12 +584,13 @@ def get_building_info(building_id: str):
     if not building:
         raise HTTPException(404, "Building not found")
     
-    # Get last 5 documents
+    # Get last 5 documents (ONLY public documents - is_public = true)
     try:
         documents = (
             client.table("documents")
             .select("*")
             .eq("building_id", building_id)
+            .eq("is_public", True)
             .order("created_at", desc=True)
             .limit(5)
             .execute()
@@ -528,7 +598,19 @@ def get_building_info(building_id: str):
     except Exception as e:
         documents = []
     
-    # Get last 5 events
+    # Get all units for this building
+    try:
+        units = (
+            client.table("units")
+            .select("*")
+            .eq("building_id", building_id)
+            .order("unit_number", desc=False)
+            .execute()
+        ).data or []
+    except Exception as e:
+        units = []
+    
+    # Get last 5 events with their comments
     try:
         events = (
             client.table("events")
@@ -538,6 +620,35 @@ def get_building_info(building_id: str):
             .limit(5)
             .execute()
         ).data or []
+        
+        # Get comments for each event
+        if events:
+            event_ids = [e["id"] for e in events]
+            try:
+                comments = (
+                    client.table("event_comments")
+                    .select("*")
+                    .in_("event_id", event_ids)
+                    .order("created_at", desc=False)
+                    .execute()
+                ).data or []
+                
+                # Group comments by event_id
+                comments_by_event = {}
+                for comment in comments:
+                    event_id = comment.get("event_id")
+                    if event_id:
+                        if event_id not in comments_by_event:
+                            comments_by_event[event_id] = []
+                        comments_by_event[event_id].append(comment)
+                
+                # Add comments to each event
+                for event in events:
+                    event["comments"] = comments_by_event.get(event["id"], [])
+            except Exception:
+                # If comments table doesn't exist or error, just add empty array
+                for event in events:
+                    event["comments"] = []
     except Exception as e:
         events = []
     
@@ -578,7 +689,24 @@ def get_building_info(building_id: str):
             "city": building.get("city"),
             "state": building.get("state"),
             "zip": building.get("zip"),
+            "tmk": building.get("tmk"),
+            "unit_count": unit_count,
+            "floors": building.get("floors"),
+            "year_built": building.get("year_built"),
+            "zoning": building.get("zoning"),
+            "description": building.get("description"),
+            "slug": building.get("slug"),
+            "metadata": building.get("metadata"),
+            "created_at": building.get("created_at"),
+            "updated_at": building.get("updated_at"),
         },
+        "units": [
+            {
+                # Include all unit fields from database
+                **unit
+            }
+            for unit in units
+        ],
         "documents": documents,
         "events": events,
         "property_managers": property_managers,
@@ -606,7 +734,7 @@ def get_unit_info(building_id: str, unit_number: str):
     """
     client = get_supabase_client()
     
-    # Verify building exists
+    # Get building details (all fields from database)
     try:
         building = (
             client.table("buildings")
@@ -620,6 +748,29 @@ def get_unit_info(building_id: str, unit_number: str):
     
     if not building:
         raise HTTPException(404, "Building not found")
+    
+    # Calculate unit count from units table
+    try:
+        units_result = (
+            client.table("units")
+            .select("id")
+            .eq("building_id", building_id)
+            .execute()
+        )
+        unit_count = len(units_result.data or [])
+    except Exception:
+        # Fallback: try to get from events if units table doesn't exist
+        try:
+            units_from_events = (
+                client.table("events")
+                .select("unit_number")
+                .eq("building_id", building_id)
+                .not_.is_("unit_number", "null")
+                .execute()
+            )
+            unit_count = len(set(e.get("unit_number") for e in (units_from_events.data or []) if e.get("unit_number")))
+        except Exception:
+            unit_count = None
     
     # Get last 5 documents for this unit
     # Documents are linked to events, so we get documents via unit events
@@ -636,11 +787,12 @@ def get_unit_info(building_id: str, unit_number: str):
         event_ids = [e["id"] for e in unit_events]
         
         if event_ids:
-            # Get documents linked to these events
+            # Get documents linked to these events (ONLY public documents - is_public = true)
             documents = (
                 client.table("documents")
                 .select("*")
                 .in_("event_id", event_ids)
+                .eq("is_public", True)
                 .order("created_at", desc=True)
                 .limit(5)
                 .execute()
@@ -651,7 +803,7 @@ def get_unit_info(building_id: str, unit_number: str):
     except Exception as e:
         documents = []
     
-    # Get last 5 events for this unit
+    # Get last 5 events for this unit with their comments
     try:
         events = (
             client.table("events")
@@ -662,6 +814,35 @@ def get_unit_info(building_id: str, unit_number: str):
             .limit(5)
             .execute()
         ).data or []
+        
+        # Get comments for each event
+        if events:
+            event_ids = [e["id"] for e in events]
+            try:
+                comments = (
+                    client.table("event_comments")
+                    .select("*")
+                    .in_("event_id", event_ids)
+                    .order("created_at", desc=False)
+                    .execute()
+                ).data or []
+                
+                # Group comments by event_id
+                comments_by_event = {}
+                for comment in comments:
+                    event_id = comment.get("event_id")
+                    if event_id:
+                        if event_id not in comments_by_event:
+                            comments_by_event[event_id] = []
+                        comments_by_event[event_id].append(comment)
+                
+                # Add comments to each event
+                for event in events:
+                    event["comments"] = comments_by_event.get(event["id"], [])
+            except Exception:
+                # If comments table doesn't exist or error, just add empty array
+                for event in events:
+                    event["comments"] = []
     except Exception as e:
         events = []
     
@@ -694,6 +875,16 @@ def get_unit_info(building_id: str, unit_number: str):
             "city": building.get("city"),
             "state": building.get("state"),
             "zip": building.get("zip"),
+            "tmk": building.get("tmk"),
+            "unit_count": unit_count,
+            "floors": building.get("floors"),
+            "year_built": building.get("year_built"),
+            "zoning": building.get("zoning"),
+            "description": building.get("description"),
+            "slug": building.get("slug"),
+            "metadata": building.get("metadata"),
+            "created_at": building.get("created_at"),
+            "updated_at": building.get("updated_at"),
         },
         "documents": documents,
         "events": events,
