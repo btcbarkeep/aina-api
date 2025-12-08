@@ -24,25 +24,48 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     Includes all property managers who have building/unit access.
     """
     # Get PM companies with building/unit access
-    if unit_number:
-        pm_access_result = (
-            client.table("pm_company_unit_access")
-            .select("pm_company_id")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
-            .execute()
-        )
-    else:
-        pm_access_result = (
-            client.table("pm_company_building_access")
-            .select("pm_company_id")
-            .eq("building_id", building_id)
-            .execute()
-        )
-    
-    pm_company_ids = {access["pm_company_id"] for access in (pm_access_result.data or [])}
+    try:
+        if unit_number:
+            # First, find the unit_id for this unit_number and building_id
+            unit_result = (
+                client.table("units")
+                .select("id")
+                .eq("building_id", building_id)
+                .eq("unit_number", unit_number)
+                .single()
+                .execute()
+            )
+            
+            if not unit_result.data:
+                print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
+                return []
+            
+            unit_id = unit_result.data.get("id")
+            
+            pm_access_result = (
+                client.table("pm_company_unit_access")
+                .select("pm_company_id")
+                .eq("unit_id", unit_id)
+                .execute()
+            )
+        else:
+            pm_access_result = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id")
+                .eq("building_id", building_id)
+                .execute()
+            )
+        
+        pm_company_ids = {access["pm_company_id"] for access in (pm_access_result.data or [])}
+        print(f"DEBUG: Found {len(pm_company_ids)} PM companies with access for building {building_id}")
+    except Exception as e:
+        print(f"DEBUG: Error querying PM access tables: {e}")
+        import traceback
+        traceback.print_exc()
+        pm_company_ids = set()
     
     if not pm_company_ids:
+        print(f"DEBUG: No PM companies found in access tables for building {building_id}")
         return []
     
     # Get PM company details
@@ -169,25 +192,48 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     Includes all AOAO organizations that have building/unit access.
     """
     # Get AOAO organizations with building/unit access
-    if unit_number:
-        aoao_access_result = (
-            client.table("aoao_organization_unit_access")
-            .select("aoao_organization_id")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
-            .execute()
-        )
-    else:
-        aoao_access_result = (
-            client.table("aoao_organization_building_access")
-            .select("aoao_organization_id")
-            .eq("building_id", building_id)
-            .execute()
-        )
-    
-    aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
+    try:
+        if unit_number:
+            # First, find the unit_id for this unit_number and building_id
+            unit_result = (
+                client.table("units")
+                .select("id")
+                .eq("building_id", building_id)
+                .eq("unit_number", unit_number)
+                .single()
+                .execute()
+            )
+            
+            if not unit_result.data:
+                print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
+                return []
+            
+            unit_id = unit_result.data.get("id")
+            
+            aoao_access_result = (
+                client.table("aoao_organization_unit_access")
+                .select("aoao_organization_id")
+                .eq("unit_id", unit_id)
+                .execute()
+            )
+        else:
+            aoao_access_result = (
+                client.table("aoao_organization_building_access")
+                .select("aoao_organization_id")
+                .eq("building_id", building_id)
+                .execute()
+            )
+        
+        aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
+        print(f"DEBUG: Found {len(aoao_org_ids)} AOAO organizations with access for building {building_id}")
+    except Exception as e:
+        print(f"DEBUG: Error querying AOAO access tables: {e}")
+        import traceback
+        traceback.print_exc()
+        aoao_org_ids = set()
     
     if not aoao_org_ids:
+        print(f"DEBUG: No AOAO organizations found in access tables for building {building_id}")
         return []
     
     # Get AOAO organization details
@@ -281,19 +327,28 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     Ranked by number of events.
     """
     # Get all events for the building/unit with contractor_id
-    query = (
-        client.table("events")
-        .select("contractor_id")
-        .eq("building_id", building_id)
-        .not_.is_("contractor_id", None)
-    )
-    
-    if unit_number:
-        query = query.eq("unit_number", unit_number)
-    
-    events_result = query.execute()
+    try:
+        query = (
+            client.table("events")
+            .select("contractor_id")
+            .eq("building_id", building_id)
+            .not_.is_("contractor_id", None)
+        )
+        
+        if unit_number:
+            query = query.eq("unit_number", unit_number)
+        
+        events_result = query.execute()
+        
+        print(f"DEBUG: Found {len(events_result.data or [])} events with contractor_id for building {building_id}")
+    except Exception as e:
+        print(f"DEBUG: Error querying events for contractors: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
     
     if not events_result.data:
+        print(f"DEBUG: No events with contractor_id found for building {building_id}")
         return []
     
     # Count events by contractor_id
