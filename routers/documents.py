@@ -11,6 +11,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.logging_config import logger
 from core.utils import sanitize
 from core.permission_helpers import (
     is_admin,
@@ -241,7 +242,7 @@ from core.contractor_helpers import enrich_contractor_with_roles
 # NEW — Enrich document with units and contractors
 # -----------------------------------------------------
 def enrich_document_with_relations(document: dict) -> dict:
-    """Add units and contractors arrays to document dict"""
+    """Add units, contractors, and uploader info to document dict"""
     document_id = document.get("id")
     if not document_id:
         return document
@@ -252,6 +253,22 @@ def enrich_document_with_relations(document: dict) -> dict:
     # Also add unit_ids and contractor_ids for convenience
     document["unit_ids"] = [u["id"] for u in document["units"]]
     document["contractor_ids"] = [c["id"] for c in document["contractors"]]
+    
+    # Add uploader name if uploaded_by exists (role is already stored in uploaded_by_role)
+    uploaded_by = document.get("uploaded_by")
+    if uploaded_by:
+        try:
+            client = get_supabase_client()
+            auth_user = client.auth.admin.get_user_by_id(uploaded_by)
+            if auth_user and auth_user.user:
+                user_meta = auth_user.user.user_metadata or {}
+                document["uploaded_by_name"] = user_meta.get("full_name")
+        except Exception as e:
+            # If we can't fetch user info, leave it as None
+            logger.debug(f"Could not fetch uploader name for document {document_id}: {e}")
+            document["uploaded_by_name"] = None
+    else:
+        document["uploaded_by_name"] = None
     
     return document
 
@@ -584,6 +601,7 @@ def create_document(payload: DocumentCreate, current_user: CurrentUser = Depends
     doc_data["building_id"] = str(building_id)
     doc_data["event_id"] = str(event_id) if event_id else None
     doc_data["uploaded_by"] = str(current_user.id)
+    doc_data["uploaded_by_role"] = current_user.role  # Denormalized for performance
     
     # Generate filename from title (filename is required by database, but we use title as the primary field)
     if doc_data.get("title"):
