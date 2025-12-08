@@ -8,8 +8,162 @@ from core.supabase_client import get_supabase_client
 
 router = APIRouter(
     prefix="/reports/public",
-    tags=["Public"],
+    tags=["Ainareports.com Public Router"],
 )
+
+
+# ============================================================
+# GET — Public Search
+# ============================================================
+@router.get(
+    "/search",
+    summary="Search buildings, units, and addresses (public)",
+)
+def search_public(query: str):
+    """
+    Public search endpoint for buildings, units, and addresses.
+    Searches across:
+    - Building names
+    - Building addresses
+    - Unit numbers (combined with building info)
+    - Cities and states
+    
+    Returns matching buildings and units that can be accessed via the public endpoints.
+    """
+    client = get_supabase_client()
+    
+    if not query or len(query.strip()) < 2:
+        return {
+            "success": True,
+            "query": query,
+            "buildings": [],
+            "units": [],
+        }
+    
+    search_term = query.strip()
+    results = {
+        "buildings": [],
+        "units": [],
+    }
+    
+    # Search buildings by name, address, city, state
+    try:
+        all_buildings = {}
+        building_ids_seen = set()
+        
+        # Search by name
+        try:
+            name_results = (
+                client.table("buildings")
+                .select("id, name, address, city, state, zip, slug")
+                .ilike("name", f"%{search_term}%")
+                .limit(20)
+                .execute()
+            ).data or []
+            for b in name_results:
+                if b["id"] not in building_ids_seen:
+                    all_buildings[b["id"]] = b
+                    building_ids_seen.add(b["id"])
+        except Exception:
+            pass
+        
+        # Search by address
+        try:
+            address_results = (
+                client.table("buildings")
+                .select("id, name, address, city, state, zip, slug")
+                .ilike("address", f"%{search_term}%")
+                .limit(20)
+                .execute()
+            ).data or []
+            for b in address_results:
+                if b["id"] not in building_ids_seen:
+                    all_buildings[b["id"]] = b
+                    building_ids_seen.add(b["id"])
+        except Exception:
+            pass
+        
+        # Search by city
+        try:
+            city_results = (
+                client.table("buildings")
+                .select("id, name, address, city, state, zip, slug")
+                .ilike("city", f"%{search_term}%")
+                .limit(20)
+                .execute()
+            ).data or []
+            for b in city_results:
+                if b["id"] not in building_ids_seen:
+                    all_buildings[b["id"]] = b
+                    building_ids_seen.add(b["id"])
+        except Exception:
+            pass
+        
+        # Search by state
+        try:
+            state_results = (
+                client.table("buildings")
+                .select("id, name, address, city, state, zip, slug")
+                .ilike("state", f"%{search_term}%")
+                .limit(20)
+                .execute()
+            ).data or []
+            for b in state_results:
+                if b["id"] not in building_ids_seen:
+                    all_buildings[b["id"]] = b
+                    building_ids_seen.add(b["id"])
+        except Exception:
+            pass
+        
+        results["buildings"] = list(all_buildings.values())[:20]
+    except Exception as e:
+        print(f"Error searching buildings: {e}")
+        results["buildings"] = []
+    
+    # Search units by unit_number (and include building info)
+    try:
+        # First, try to find units by unit_number
+        units_query = (
+            client.table("units")
+            .select("id, unit_number, floor, building_id, owner_name")
+            .ilike("unit_number", f"%{search_term}%")
+            .limit(20)
+            .execute()
+        )
+        
+        if units_query.data:
+            # Get building info for these units
+            building_ids = list(set(u.get("building_id") for u in units_query.data if u.get("building_id")))
+            
+            if building_ids:
+                buildings_for_units = (
+                    client.table("buildings")
+                    .select("id, name, address, city, state, zip, slug")
+                    .in_("id", building_ids)
+                    .execute()
+                ).data or []
+                
+                building_map = {b["id"]: b for b in buildings_for_units}
+                
+                # Combine unit and building info
+                for unit in units_query.data:
+                    building_id = unit.get("building_id")
+                    building = building_map.get(building_id)
+                    if building:
+                        results["units"].append({
+                            **unit,
+                            "building": building,
+                        })
+    except Exception as e:
+        print(f"Error searching units: {e}")
+        results["units"] = []
+    
+    return {
+        "success": True,
+        "query": query,
+        "buildings": results["buildings"],
+        "units": results["units"],
+    }
 
 
 # ============================================================
