@@ -880,6 +880,13 @@ async def generate_unit_report(
             sanitized_events.append(sanitized)
     events = sanitized_events
     
+    # Store total event count before limiting (for public reports)
+    total_events_count = len(events)
+    
+    # For public reports, limit to 5 most recent events
+    if not internal and context_role == "public":
+        events = events[:5]
+    
     # Get documents for this unit (via document_units)
     document_units_result = (
         client.table("document_units")
@@ -906,6 +913,13 @@ async def generate_unit_report(
         if sanitized:
             sanitized_documents.append(sanitized)
     documents = sanitized_documents
+    
+    # Store total document count before limiting (for public reports)
+    total_documents_count = len(documents)
+    
+    # For public reports, limit to 5 most recent documents
+    if not internal and context_role == "public":
+        documents = documents[:5]
     
     # Get contractors (via events for this unit)
     contractors = []
@@ -939,6 +953,14 @@ async def generate_unit_report(
                 contractors[i] = enrich_contractor_with_roles(contractor)
                 cid = contractors[i].get("id")
                 contractors[i]["event_count"] = contractor_event_counts.get(cid, 0)
+    
+    # Store total contractor count before limiting (for public reports)
+    total_contractors_count = len(contractors)
+    
+    # For public reports, limit to top 5 contractors by event count
+    if not internal and context_role == "public":
+        contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        contractors = contractors[:5]
     
     # Get property management companies assigned to this unit
     pm_companies = []
@@ -999,6 +1021,27 @@ async def generate_unit_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
+    # Store total PM companies count before limiting (for public reports)
+    total_pm_companies_count = len(pm_companies)
+    
+    # For public reports, limit to top 5 PM companies by event count
+    # Include PM companies with 0 events if there aren't 5 with events
+    if not internal and context_role == "public":
+        # Sort by event count (descending)
+        pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        
+        # Separate PM companies with events from those without
+        pm_with_events = [pm for pm in pm_companies if pm.get("event_count", 0) > 0]
+        pm_without_events = [pm for pm in pm_companies if pm.get("event_count", 0) == 0]
+        
+        # Take up to 5 with events, then fill remaining slots with those without events
+        result = pm_with_events[:5]
+        remaining_slots = 5 - len(result)
+        if remaining_slots > 0 and pm_without_events:
+            result.extend(pm_without_events[:remaining_slots])
+        
+        pm_companies = result
+    
     # Get AOAO organizations assigned to this unit's building
     # (AOAO organizations are assigned at the building level, not unit level)
     aoao_orgs = []
@@ -1043,11 +1086,12 @@ async def generate_unit_report(
         org["event_count"] = aoao_event_counts.get(org.get("id"), 0)
     
     # Calculate statistics
+    # Use total counts (not limited) for public reports
     stats = {
-        "total_events": len(events),
-        "total_documents": len(documents),
-        "total_contractors": len(contractors),
-        "total_pm_companies": len(pm_companies),
+        "total_events": total_events_count if (not internal and context_role == "public") else len(events),
+        "total_documents": total_documents_count if (not internal and context_role == "public") else len(documents),
+        "total_contractors": total_contractors_count if (not internal and context_role == "public") else len(contractors),
+        "total_pm_companies": total_pm_companies_count if (not internal and context_role == "public") else len(pm_companies),
         "total_aoao_organizations": len(aoao_orgs),
     }
     
