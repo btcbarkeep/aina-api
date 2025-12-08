@@ -173,7 +173,13 @@ def search_public(query: Optional[str] = None):
 # ============================================================
 # Helper — Get top property managers for a building
 # ============================================================
-def get_top_property_managers(client, building_id: str, unit_number: Optional[str] = None, limit: int = 5):
+def get_top_property_managers(
+    client,
+    building_id: str,
+    unit_number: Optional[str] = None,
+    unit_id: Optional[str] = None,
+    limit: int = 5,
+):
     """
     Get property managers:
     - Individual property manager users (not tied to an organization)
@@ -185,8 +191,9 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     try:
         pm_company_ids = set()
         
-        if unit_number:
-            # First, find the unit_id for this unit_number and building_id
+        resolved_unit_id = unit_id
+        if not resolved_unit_id and unit_number:
+            # First, find the unit_id for this unit_number and building_id (legacy support)
             unit_result = (
                 client.table("units")
                 .select("id")
@@ -200,12 +207,13 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                 print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
                 return []
             
-            unit_id = unit_result.data.get("id")
-            
+            resolved_unit_id = unit_result.data.get("id")
+        
+        if resolved_unit_id:
             pm_access_result = (
                 client.table("pm_company_unit_access")
                 .select("pm_company_id")
-                .eq("unit_id", unit_id)
+                .eq("unit_id", resolved_unit_id)
                 .execute()
             )
             
@@ -270,16 +278,35 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         pm_companies = {}
     
     # Get all events for the building/unit
-    events_query = (
-        client.table("events")
-        .select("created_by")
-        .eq("building_id", building_id)
-    )
-    
-    if unit_number:
-        events_query = events_query.eq("unit_number", unit_number)
-    
-    events_result = events_query.execute()
+    events_result = None
+    if resolved_unit_id:
+        event_units_result = (
+            client.table("event_units")
+            .select("event_id")
+            .eq("unit_id", resolved_unit_id)
+            .execute()
+        )
+        event_ids = [row.get("event_id") for row in (event_units_result.data or []) if row.get("event_id")]
+        if event_ids:
+            events_result = (
+                client.table("events")
+                .select("id, created_by")
+                .in_("id", event_ids)
+                .execute()
+            )
+        else:
+            events_result = type("Result", (), {"data": []})()
+    else:
+        events_query = (
+            client.table("events")
+            .select("created_by")
+            .eq("building_id", building_id)
+        )
+        
+        if unit_number:
+            events_query = events_query.eq("unit_number", unit_number)
+        
+        events_result = events_query.execute()
     
     # Filter out events with null created_by in Python
     if events_result.data:
@@ -397,74 +424,56 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     Includes all AOAO organizations that have building/unit access.
     """
     # Get AOAO organizations with building/unit access
-    try:
-        aoao_org_ids = set()
+    aoao_org_ids = set()
+    
+    if unit_number:
+        # First, find the unit_id for this unit_number and building_id
+        unit_result = (
+            client.table("units")
+            .select("id")
+            .eq("building_id", building_id)
+            .eq("unit_number", unit_number)
+            .single()
+            .execute()
+        )
         
-        if unit_number:
-            # First, find the unit_id for this unit_number and building_id
-            unit_result = (
-                client.table("units")
-                .select("id")
-                .eq("building_id", building_id)
-                .eq("unit_number", unit_number)
-                .single()
-                .execute()
-            )
+        if not unit_result.data:
+            print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
+            return []
+        
+        unit_id = unit_result.data.get("id")
+        
+        aoao_access_result = (
+            client.table("aoao_organization_unit_access")
+            .select("aoao_organization_id")
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        
+        aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
+    else:
+        # Building-level: gather AOAO orgs via unit access (no building-access table exists)
+        units_result = (
+            client.table("units")
+            .select("id")
+            .eq("building_id", building_id)
+            .execute()
+        )
+        
+        if units_result.data:
+            unit_ids = [unit["id"] for unit in units_result.data]
             
-            if not unit_result.data:
-                print(f"DEBUG: Unit {unit_number} not found for building {building_id}")
-                return []
-            
-            unit_id = unit_result.data.get("id")
-            
-            aoao_access_result = (
-                client.table("aoao_organization_unit_access")
-                .select("aoao_organization_id")
-                .eq("unit_id", unit_id)
-                .execute()
-            )
-            
-            aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_access_result.data or [])}
-        else:
-            # Building level: get both building-level and unit-level access
-            # 1. Get AOAO organizations with building-level access
-            aoao_building_access = (
-                client.table("aoao_organization_building_access")
-                .select("aoao_organization_id")
-                .eq("building_id", building_id)
-                .execute()
-            )
-            aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_building_access.data or [])}
-            
-            # 2. Get all units for this building
-            units_result = (
-                client.table("units")
-                .select("id")
-                .eq("building_id", building_id)
-                .execute()
-            )
-            
-            if units_result.data:
-                unit_ids = [unit["id"] for unit in units_result.data]
+            if unit_ids:
+                aoao_unit_access = (
+                    client.table("aoao_organization_unit_access")
+                    .select("aoao_organization_id")
+                    .in_("unit_id", unit_ids)
+                    .execute()
+                )
                 
-                # 3. Get AOAO organizations with unit-level access for any unit in this building
-                if unit_ids:
-                    aoao_unit_access = (
-                        client.table("aoao_organization_unit_access")
-                        .select("aoao_organization_id")
-                        .in_("unit_id", unit_ids)
-                        .execute()
-                    )
-                    
-                    unit_aoao_ids = {access["aoao_organization_id"] for access in (aoao_unit_access.data or [])}
-                    aoao_org_ids = aoao_org_ids.union(unit_aoao_ids)
-        
-        print(f"DEBUG: Found {len(aoao_org_ids)} AOAO organizations with access for building {building_id}")
-    except Exception as e:
-        print(f"DEBUG: Error querying AOAO access tables: {e}")
-        import traceback
-        traceback.print_exc()
-        aoao_org_ids = set()
+                aoao_org_ids = {access["aoao_organization_id"] for access in (aoao_unit_access.data or [])}
+    
+    print(f"DEBUG: Found {len(aoao_org_ids)} AOAO organizations with access for building {building_id}")
     
     if not aoao_org_ids:
         print(f"DEBUG: No AOAO organizations found in access tables for building {building_id}")
