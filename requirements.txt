@@ -30,6 +30,9 @@ reportlab
 # Payment Processing
 stripe>=7.0.0
 
+# Timezone support
+pytz
+
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
