@@ -46,14 +46,18 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         return []
     
     # Get PM company details
-    pm_companies_result = (
-        client.table("property_management_companies")
-        .select("*")
-        .in_("id", list(pm_company_ids))
-        .execute()
-    )
-    
-    pm_companies = {c["id"]: c for c in (pm_companies_result.data or [])}
+    try:
+        pm_companies_result = (
+            client.table("property_management_companies")
+            .select("*")
+            .in_("id", list(pm_company_ids))
+            .execute()
+        )
+        
+        pm_companies = {c["id"]: c for c in (pm_companies_result.data or [])}
+    except Exception as e:
+        print(f"Error fetching PM companies: {e}")
+        pm_companies = {}
     
     # Get all events for the building/unit
     events_query = (
@@ -67,18 +71,6 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         events_query = events_query.eq("unit_number", unit_number)
     
     events_result = events_query.execute()
-    
-    if not events_result.data:
-        # Return PM companies with 0 events
-        org_managers = []
-        for pm_id in pm_company_ids:
-            pm_company = pm_companies.get(pm_id, {"id": pm_id})
-            org_managers.append({
-                "organization_name": pm_company.get("name") or pm_company.get("company_name"),
-                "event_count": 0,
-                "type": "organization",
-            })
-        return org_managers
     
     # Get all users who created events and map them to PM companies
     user_to_pm_company = {}  # user_id -> pm_company_id
@@ -117,13 +109,14 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                 pm_event_counts[pm_id] = pm_event_counts.get(pm_id, 0) + 1
     
     # Build results - PM companies (organizations)
+    # Always include all PM companies with access, even if 0 events
     org_managers = []
     for pm_id in pm_company_ids:
         pm_company = pm_companies.get(pm_id, {"id": pm_id})
         event_count = pm_event_counts.get(pm_id, 0)
         
         org_managers.append({
-            "organization_name": pm_company.get("name") or pm_company.get("company_name"),
+            "organization_name": pm_company.get("name") or pm_company.get("company_name") or f"PM Company {pm_id[:8]}",
             "event_count": event_count,
             "type": "organization",
         })
@@ -198,14 +191,18 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
         return []
     
     # Get AOAO organization details
-    aoao_orgs_result = (
-        client.table("aoao_organizations")
-        .select("*")
-        .in_("id", list(aoao_org_ids))
-        .execute()
-    )
-    
-    aoao_orgs = {o["id"]: o for o in (aoao_orgs_result.data or [])}
+    try:
+        aoao_orgs_result = (
+            client.table("aoao_organizations")
+            .select("*")
+            .in_("id", list(aoao_org_ids))
+            .execute()
+        )
+        
+        aoao_orgs = {o["id"]: o for o in (aoao_orgs_result.data or [])}
+    except Exception as e:
+        print(f"Error fetching AOAO organizations: {e}")
+        aoao_orgs = {}
     
     # Get all events for the building/unit
     events_query = (
@@ -219,17 +216,6 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
         events_query = events_query.eq("unit_number", unit_number)
     
     events_result = events_query.execute()
-    
-    if not events_result.data:
-        # Return AOAO orgs with 0 events
-        org_aoaos = []
-        for aoao_id in aoao_org_ids:
-            aoao_org = aoao_orgs.get(aoao_id, {"id": aoao_id})
-            org_aoaos.append({
-                "organization_name": aoao_org.get("name") or aoao_org.get("organization_name"),
-                "event_count": 0,
-            })
-        return org_aoaos
     
     # Get all users who created events and map them to AOAO organizations
     user_to_aoao_org = {}  # user_id -> aoao_org_id
@@ -269,13 +255,14 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
                 aoao_event_counts[aoao_id] = aoao_event_counts.get(aoao_id, 0) + 1
     
     # Build organization entries
+    # Always include all AOAO orgs with access, even if 0 events
     org_aoaos = []
     for aoao_id in aoao_org_ids:
         aoao_org = aoao_orgs.get(aoao_id, {"id": aoao_id})
         event_count = aoao_event_counts.get(aoao_id, 0)
         
         org_aoaos.append({
-            "organization_name": aoao_org.get("name") or aoao_org.get("organization_name"),
+            "organization_name": aoao_org.get("name") or aoao_org.get("organization_name") or f"AOAO {aoao_id[:8]}",
             "event_count": event_count,
         })
     
@@ -410,18 +397,27 @@ def get_building_info(building_id: str):
     try:
         property_managers = get_top_property_managers(client, building_id, limit=5)
     except Exception as e:
+        import traceback
+        print(f"Error getting property managers: {e}")
+        traceback.print_exc()
         property_managers = []
     
     # Get top 5 contractors
     try:
         contractors = get_top_contractors(client, building_id, limit=5)
     except Exception as e:
+        import traceback
+        print(f"Error getting contractors: {e}")
+        traceback.print_exc()
         contractors = []
     
     # Get AOAO organizations (only organizations, not individual users)
     try:
         aoao_organizations = get_aoao_info(client, building_id)
     except Exception as e:
+        import traceback
+        print(f"Error getting AOAO organizations: {e}")
+        traceback.print_exc()
         aoao_organizations = []
     
     return {
