@@ -26,13 +26,20 @@ def send_message(
     
     **Permissions:**
     - Admin/Super Admin: Can message any user (or set to_user_id=None to send to all admins)
-    - Regular users: Can only message admins (to_user_id must be None or an admin user ID)
+    - Regular users: Can message admins (to_user_id can be None to message all admins, or a specific admin user ID)
     
     **Reply Restrictions:**
-    - If replying to a message with `replies_disabled=True`, only admins can reply
+    - Regular admin messages (replies_disabled=False): Any user can reply
+    - Bulk announcements (replies_disabled=True): Only admins can reply
     - Regular users will receive a 403 error if trying to reply to a bulk announcement
     
-    If `to_user_id` is None, the message is sent to admins.
+    **Examples:**
+    - User messages admin: `{"to_user_id": "admin-uuid", "subject": "...", "body": "..."}` ✓
+    - User messages all admins: `{"to_user_id": null, "subject": "...", "body": "..."}` ✓
+    - User replies to regular admin message: ✓ Allowed
+    - User replies to bulk announcement: ✗ Blocked (only admins can reply)
+    
+    If `to_user_id` is None, the message is sent to all admins.
     """
     client = get_supabase_client()
     
@@ -52,28 +59,35 @@ def send_message(
                         "Regular users can only message admins. Set to_user_id to None to message all admins."
                     )
                 
-                # Check if there's a recent message from this recipient with replies_disabled
+                # Check if there's a recent bulk announcement from this admin with replies_disabled
                 # (indicating this might be a reply to a bulk announcement)
+                # Regular admin messages (replies_disabled=False) allow replies from anyone
+                # Only bulk announcements (replies_disabled=True) block replies from regular users
                 # Look for messages sent in the last 30 days to avoid blocking old conversations
                 thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
                 
-                recent_message_result = (
+                recent_bulk_message_result = (
                     client.table("messages")
                     .select("id, replies_disabled, created_at")
-                    .eq("from_user_id", payload.to_user_id)
-                    .eq("to_user_id", current_user.auth_user_id)
-                    .eq("replies_disabled", True)
+                    .eq("from_user_id", payload.to_user_id)  # From the admin
+                    .eq("to_user_id", current_user.auth_user_id)  # To the current user
+                    .eq("replies_disabled", True)  # Only check bulk announcements
                     .gte("created_at", thirty_days_ago)
                     .order("created_at", desc=True)
                     .limit(1)
                     .execute()
                 )
                 
-                if recent_message_result.data:
+                # Only block if this is a reply to a bulk announcement
+                # Regular admin messages (replies_disabled=False) are not found by this query, so replies are allowed
+                if recent_bulk_message_result.data:
                     raise HTTPException(
                         403,
                         "Replies are disabled for this message. Only admins can reply to bulk announcements."
                     )
+                # If no bulk message found, this is either:
+                # 1. A new message to admin (not a reply) - allowed ✓
+                # 2. A reply to a regular admin message (replies_disabled=False) - allowed ✓
             else:
                 raise HTTPException(404, "Recipient user not found")
         except HTTPException:
