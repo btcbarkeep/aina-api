@@ -19,9 +19,10 @@ router = APIRouter(
     "/search",
     summary="Search buildings, units, and addresses (public)",
 )
-def search_public(query: str):
+def search_public(query: Optional[str] = None):
     """
     Public search endpoint for buildings, units, and addresses.
+    Designed for autocomplete/autopopulate functionality.
     Searches across:
     - Building names
     - Building addresses
@@ -29,13 +30,16 @@ def search_public(query: str):
     - Cities and states
     
     Returns matching buildings and units that can be accessed via the public endpoints.
+    
+    Query parameter is optional - if not provided or too short (< 2 chars), returns empty results.
     """
     client = get_supabase_client()
     
+    # Handle empty or missing query
     if not query or len(query.strip()) < 2:
         return {
             "success": True,
-            "query": query,
+            "query": query or "",
             "buildings": [],
             "units": [],
         }
