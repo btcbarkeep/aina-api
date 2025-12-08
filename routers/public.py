@@ -761,29 +761,29 @@ async def get_building_info(building_id: str):
 # GET — Public Unit Info
 # ============================================================
 @router.get(
-    "/building/{building_id}/unit/{unit_number}",
-    summary="Get public unit information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info)",
+    "/building/{building_id}/unit/{unit_id}",
+    summary="Get public unit information (last 5 documents, last 5 events, top 5 property managers, top 5 contractors, AOAO info) by unit_id",
 )
-async def get_unit_info(building_id: str, unit_number: str):
+async def get_unit_info(building_id: str, unit_id: str):
     """
-    Public endpoint to get free information about a specific unit.
+    Public endpoint to get free information about a specific unit (by unit_id).
     Uses the same data logic as the report generator (public context).
     """
+    client = get_supabase_client()
     try:
-        # generate_unit_report expects unit_id; look up by building+unit_number first
-        client = get_supabase_client()
+        # Validate unit exists and belongs to the building
         unit_result = (
             client.table("units")
-            .select("id")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
+            .select("id, building_id, unit_number")
+            .eq("id", unit_id)
             .limit(1)
             .execute()
         )
         unit_row = (unit_result.data or [None])[0]
         if not unit_row:
             raise HTTPException(404, "Unit not found")
-        unit_id = unit_row.get("id")
+        if unit_row.get("building_id") != building_id:
+            raise HTTPException(404, "Unit does not belong to this building")
         
         report = await generate_unit_report(
             unit_id=unit_id,
@@ -803,7 +803,8 @@ async def get_unit_info(building_id: str, unit_number: str):
     return {
         "success": True,
         "building_id": building_id,
-        "unit_number": unit_number,
+        "unit_id": unit_id,
+        "unit_number": unit_row.get("unit_number"),
         **data,
         "generated_at": data.get("generated_at", datetime.utcnow().isoformat()),
     }
