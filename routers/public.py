@@ -123,8 +123,9 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                 user = user_resp.user
                 metadata = user.user_metadata or {}
                 
-                # Only process property_manager role
-                if metadata.get("role") != "property_manager":
+                # Only process property_manager role (case-insensitive check)
+                role = metadata.get("role", "").lower()
+                if role != "property_manager":
                     continue
                 
                 event_count = user_event_counts.get(user_id, 0)
@@ -156,12 +157,29 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
             continue
     
     # Build organization entries (excluding individual users from those orgs)
+    # Include all organizations, even if they have 0 events/documents
     org_managers = []
     for org_name, total_count in org_total_counts.items():
+        # Calculate event and document counts for this org
+        org_event_count = 0
+        org_doc_count = 0
+        for user_id in user_ids_with_access:
+            try:
+                user_resp = client.auth.admin.get_user_by_id(user_id)
+                if user_resp and user_resp.user:
+                    metadata = user_resp.user.user_metadata or {}
+                    if metadata.get("role") == "property_manager":
+                        user_org = metadata.get("organization_name")
+                        if user_org and user_org.strip() == org_name:
+                            org_event_count += user_event_counts.get(user_id, 0)
+                            org_doc_count += user_document_counts.get(user_id, 0)
+            except Exception:
+                continue
+        
         org_managers.append({
             "organization_name": org_name,
-            "event_count": 0,  # We don't track per-org event counts separately
-            "document_count": 0,  # We don't track per-org document counts separately
+            "event_count": org_event_count,
+            "document_count": org_doc_count,
             "total_count": total_count,
             "type": "organization",
         })
@@ -276,8 +294,8 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
                 user = user_resp.user
                 metadata = user.user_metadata or {}
                 
-                # Only process hoa or hoa_staff roles
-                role = metadata.get("role")
+                # Only process hoa or hoa_staff roles (case-insensitive check)
+                role = metadata.get("role", "").lower()
                 if role not in ["hoa", "hoa_staff"]:
                     continue
                 
@@ -295,12 +313,30 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
             continue
     
     # Build organization entries (only organizations, no individual users)
+    # Include all organizations, even if they have 0 events/documents
     org_aoaos = []
     for org_name, total_count in org_total_counts.items():
+        # Calculate event and document counts for this org
+        org_event_count = 0
+        org_doc_count = 0
+        for user_id in user_ids_with_access:
+            try:
+                user_resp = client.auth.admin.get_user_by_id(user_id)
+                if user_resp and user_resp.user:
+                    metadata = user_resp.user.user_metadata or {}
+                    role = metadata.get("role")
+                    if role in ["hoa", "hoa_staff"]:
+                        user_org = metadata.get("organization_name")
+                        if user_org and user_org.strip() == org_name:
+                            org_event_count += user_event_counts.get(user_id, 0)
+                            org_doc_count += user_document_counts.get(user_id, 0)
+            except Exception:
+                continue
+        
         org_aoaos.append({
             "organization_name": org_name,
-            "event_count": 0,  # We don't track per-org event counts separately
-            "document_count": 0,  # We don't track per-org document counts separately
+            "event_count": org_event_count,
+            "document_count": org_doc_count,
             "total_count": total_count,
         })
     
@@ -315,7 +351,8 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
 # ============================================================
 def get_top_contractors(client, building_id: str, unit_number: Optional[str] = None, limit: int = 5):
     """
-    Get top contractors ranked by number of events for the building/unit.
+    Get all contractors who have events for the building/unit, ranked by number of events.
+    Returns all contractors, not just top N.
     """
     query = (
         client.table("events")
@@ -336,10 +373,14 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     contractor_counts = {}
     for event in events_result.data:
         contractor_id = event["contractor_id"]
-        contractor_counts[contractor_id] = contractor_counts.get(contractor_id, 0) + 1
+        if contractor_id:  # Double check it's not None
+            contractor_counts[contractor_id] = contractor_counts.get(contractor_id, 0) + 1
     
-    # Sort by count and get top N
-    sorted_contractors = sorted(contractor_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    if not contractor_counts:
+        return []
+    
+    # Sort by count (descending) - return all, not just top N
+    sorted_contractors = sorted(contractor_counts.items(), key=lambda x: x[1], reverse=True)
     
     # Get contractor details
     contractor_ids = [cid for cid, _ in sorted_contractors]
