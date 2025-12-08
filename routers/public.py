@@ -129,10 +129,10 @@ def search_public(query: Optional[str] = None):
                 buildings_error = None
                 
             elif has_building_name:
-            # Only building name words - prioritize building name matches
-            # First, try matching building names only
-            all_buildings = {}
-            for word in building_name_words:
+                # Only building name words - prioritize building name matches
+                # First, try matching building names only
+                all_buildings = {}
+                for word in building_name_words:
                 try:
                     name_result = (
                         client.table("buildings")
@@ -146,36 +146,36 @@ def search_public(query: Optional[str] = None):
                             all_buildings[b["id"]] = b
                 except Exception as e:
                     buildings_error = e
-            
-            buildings = list(all_buildings.values())[:10]
-            buildings_error = None
-            
-            # Only search addresses if we got NO results from building names
-            # This prevents "Aina" from matching all buildings with "Aina" in addresses
-            if len(buildings) == 0:
-                # Search addresses only (not city/state) to be more precise
-                all_address_buildings = {}
-                for word in building_name_words:
-                    try:
-                        address_result = (
-                            client.table("buildings")
-                            .select("id, name, address, city, state, zip, slug")
-                            .ilike("address", f"%{word}%")
-                            .limit(20)
-                            .execute()
-                        )
-                        if address_result.data:
-                            for b in address_result.data:
-                                all_address_buildings[b["id"]] = b
-                    except:
-                        pass
                 
-                # Double-check: filter to ensure the word actually appears in the address
-                buildings = [
-                    b for b in all_address_buildings.values()
-                    if any(word in (b.get("address") or "").lower() for word in building_name_words)
-                ][:10]
-        else:
+                buildings = list(all_buildings.values())[:10]
+                buildings_error = None
+                
+                # Only search addresses if we got NO results from building names
+                # This prevents "Aina" from matching all buildings with "Aina" in addresses
+                if len(buildings) == 0:
+                    # Search addresses only (not city/state) to be more precise
+                    all_address_buildings = {}
+                    for word in building_name_words:
+                        try:
+                            address_result = (
+                                client.table("buildings")
+                                .select("id, name, address, city, state, zip, slug")
+                                .ilike("address", f"%{word}%")
+                                .limit(20)
+                                .execute()
+                            )
+                            if address_result.data:
+                                for b in address_result.data:
+                                    all_address_buildings[b["id"]] = b
+                        except:
+                            pass
+                    
+                    # Double-check: filter to ensure the word actually appears in the address
+                    buildings = [
+                        b for b in all_address_buildings.values()
+                        if any(word in (b.get("address") or "").lower() for word in building_name_words)
+                    ][:10]
+            else:
             # No building name words (only numbers) - match all words
             # But require ALL words to match (not just any word)
             all_buildings = {}
