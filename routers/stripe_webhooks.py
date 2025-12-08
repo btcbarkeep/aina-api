@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Request, HTTPException, Header, Depends
 from typing import Optional
+from datetime import datetime
 import json
 
 from core.config import settings
@@ -296,6 +297,173 @@ async def handle_stripe_subscription_webhook(
                         )
                     except Exception as e:
                         logger.error(f"Error updating user {user_id} subscription for role {role}: {e}")
+        
+        # Handle premium report purchases (checkout.session.completed)
+        if event_type == "checkout.session.completed":
+            session_id = event_data.get("id")
+            customer_email = event_data.get("customer_details", {}).get("email")
+            customer_name = event_data.get("customer_details", {}).get("name")
+            amount_total = event_data.get("amount_total", 0)  # in cents
+            currency = event_data.get("currency", "usd")
+            payment_status = event_data.get("payment_status", "paid")
+            customer_id = event_data.get("customer")
+            payment_intent_id = event_data.get("payment_intent")
+            metadata = event_data.get("metadata", {})
+            
+            # Check if this is a premium report purchase (has report_type in metadata)
+            report_type = metadata.get("report_type")
+            if report_type:
+                client = get_supabase_client()
+                
+                # Extract report-specific metadata
+                building_id = metadata.get("building_id")
+                unit_id = metadata.get("unit_id")
+                contractor_id = metadata.get("contractor_id")
+                report_id = metadata.get("report_id")
+                
+                # Calculate amount in decimal
+                amount_decimal = round(amount_total / 100.0, 2)
+                
+                # Determine payment status
+                status = "paid" if payment_status == "paid" else "pending"
+                
+                try:
+                    purchase_data = {
+                        "customer_email": customer_email or "unknown",
+                        "customer_name": customer_name,
+                        "report_type": report_type,
+                        "report_id": report_id,
+                        "building_id": building_id if building_id else None,
+                        "unit_id": unit_id if unit_id else None,
+                        "contractor_id": contractor_id if contractor_id else None,
+                        "stripe_session_id": session_id,
+                        "stripe_payment_intent_id": payment_intent_id,
+                        "stripe_customer_id": customer_id,
+                        "amount_cents": amount_total,
+                        "amount_decimal": amount_decimal,
+                        "currency": currency,
+                        "payment_status": status,
+                        "purchased_at": datetime.utcnow().isoformat() + "Z"
+                    }
+                    
+                    # Remove None values for optional fields
+                    purchase_data = {k: v for k, v in purchase_data.items() if v is not None}
+                    
+                    result = (
+                        client.table("premium_report_purchases")
+                        .insert(purchase_data)
+                        .execute()
+                    )
+                    
+                    if result.data:
+                        logger.info(
+                            f"Recorded premium report purchase: {report_type} report for {customer_email} "
+                            f"(${amount_decimal} {currency.upper()})"
+                        )
+                        return {
+                            "status": "success",
+                            "purchase_id": result.data[0].get("id"),
+                            "report_type": report_type
+                        }
+                    else:
+                        logger.warning(f"Failed to insert premium report purchase for session {session_id}")
+                        return {"status": "error", "reason": "insert_failed"}
+                        
+                except Exception as e:
+                    logger.error(f"Error recording premium report purchase: {e}")
+                    # Don't fail the webhook, just log the error
+                    return {"status": "error", "reason": str(e)}
+            
+            # If not a premium report, ignore (might be a document purchase or other)
+            logger.debug(f"Checkout session {session_id} completed but not a premium report purchase")
+            return {"status": "ignored", "reason": "not_premium_report"}
+        
+        # Handle payment_intent.succeeded for premium reports (alternative to checkout.session.completed)
+        if event_type == "payment_intent.succeeded":
+            payment_intent_id = event_data.get("id")
+            amount = event_data.get("amount", 0)  # in cents
+            currency = event_data.get("currency", "usd")
+            customer_id = event_data.get("customer")
+            metadata = event_data.get("metadata", {})
+            
+            # Check if this is a premium report purchase
+            report_type = metadata.get("report_type")
+            if report_type:
+                client = get_supabase_client()
+                
+                # Check if purchase already exists (might have been created via checkout.session.completed)
+                existing = (
+                    client.table("premium_report_purchases")
+                    .select("id")
+                    .eq("stripe_payment_intent_id", payment_intent_id)
+                    .maybe_single()
+                    .execute()
+                )
+                
+                if existing.data:
+                    # Update payment status to paid
+                    try:
+                        (
+                            client.table("premium_report_purchases")
+                            .update({"payment_status": "paid"})
+                            .eq("stripe_payment_intent_id", payment_intent_id)
+                            .execute()
+                        )
+                        logger.info(f"Updated premium report purchase payment status to paid: {payment_intent_id}")
+                    except Exception as e:
+                        logger.error(f"Error updating premium report purchase: {e}")
+                    return {"status": "success", "action": "updated"}
+                
+                # If not exists, create new purchase record
+                # Note: We might not have customer email from payment intent, so we'll need to fetch it
+                customer_email = metadata.get("customer_email", "unknown")
+                customer_name = metadata.get("customer_name")
+                building_id = metadata.get("building_id")
+                unit_id = metadata.get("unit_id")
+                contractor_id = metadata.get("contractor_id")
+                report_id = metadata.get("report_id")
+                
+                amount_decimal = round(amount / 100.0, 2)
+                
+                try:
+                    purchase_data = {
+                        "customer_email": customer_email,
+                        "customer_name": customer_name,
+                        "report_type": report_type,
+                        "report_id": report_id,
+                        "building_id": building_id if building_id else None,
+                        "unit_id": unit_id if unit_id else None,
+                        "contractor_id": contractor_id if contractor_id else None,
+                        "stripe_payment_intent_id": payment_intent_id,
+                        "stripe_customer_id": customer_id,
+                        "amount_cents": amount,
+                        "amount_decimal": amount_decimal,
+                        "currency": currency,
+                        "payment_status": "paid",
+                        "purchased_at": datetime.utcnow().isoformat() + "Z"
+                    }
+                    
+                    purchase_data = {k: v for k, v in purchase_data.items() if v is not None}
+                    
+                    result = (
+                        client.table("premium_report_purchases")
+                        .insert(purchase_data)
+                        .execute()
+                    )
+                    
+                    if result.data:
+                        logger.info(
+                            f"Recorded premium report purchase via payment intent: {report_type} report "
+                            f"(${amount_decimal} {currency.upper()})"
+                        )
+                        return {
+                            "status": "success",
+                            "purchase_id": result.data[0].get("id"),
+                            "report_type": report_type
+                        }
+                except Exception as e:
+                    logger.error(f"Error recording premium report purchase from payment intent: {e}")
+                    return {"status": "error", "reason": str(e)}
         
         # Ignore other event types
         logger.debug(f"Ignoring webhook event type: {event_type}")
