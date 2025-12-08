@@ -47,44 +47,6 @@ class CustomReportRequest(BaseModel):
 
 
 # ============================================================
-# PUBLIC ENDPOINTS (No Auth Required)
-# ============================================================
-
-@router.get(
-    "/public/building/{building_id}",
-    summary="Generate public building report (AinaReports.com)",
-    tags=["Reports - Public"],
-)
-async def get_public_building_report(
-    building_id: str,
-    format: str = "json"
-):
-    """
-    Generate a public building report for AinaReports.com.
-    No authentication required.
-    Returns sanitized data (no internal notes, only public documents).
-    """
-    try:
-        # Validate format
-        if format not in ["json", "pdf"]:
-            raise HTTPException(400, "format must be 'json' or 'pdf'")
-        
-        result = await generate_building_report(
-            building_id=building_id,
-            user=None,
-            context_role="public",
-            internal=False,
-            format=format
-        )
-        
-        return result.to_dict()
-    except ValueError as e:
-        raise HTTPException(404, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Failed to generate building report: {str(e)}")
-
-
-# ============================================================
 # DASHBOARD ENDPOINTS (Auth Required)
 # ============================================================
 
