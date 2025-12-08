@@ -87,13 +87,16 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         client.table("events")
         .select("created_by")
         .eq("building_id", building_id)
-        .not_.is_("created_by", None)
     )
     
     if unit_number:
         events_query = events_query.eq("unit_number", unit_number)
     
     events_result = events_query.execute()
+    
+    # Filter out events with null created_by in Python
+    if events_result.data:
+        events_result.data = [e for e in events_result.data if e.get("created_by")]
     
     # Get all users who created events and map them to PM companies
     user_to_pm_company = {}  # user_id -> pm_company_id
@@ -255,13 +258,16 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
         client.table("events")
         .select("created_by")
         .eq("building_id", building_id)
-        .not_.is_("created_by", None)
     )
     
     if unit_number:
         events_query = events_query.eq("unit_number", unit_number)
     
     events_result = events_query.execute()
+    
+    # Filter out events with null created_by in Python
+    if events_result.data:
+        events_result.data = [e for e in events_result.data if e.get("created_by")]
     
     # Get all users who created events and map them to AOAO organizations
     user_to_aoao_org = {}  # user_id -> aoao_org_id
@@ -332,13 +338,16 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
             client.table("events")
             .select("contractor_id")
             .eq("building_id", building_id)
-            .not_.is_("contractor_id", None)
         )
         
         if unit_number:
             query = query.eq("unit_number", unit_number)
         
         events_result = query.execute()
+        
+        # Filter out events with null contractor_id in Python
+        if events_result.data:
+            events_result.data = [e for e in events_result.data if e.get("contractor_id")]
         
         print(f"DEBUG: Found {len(events_result.data or [])} events with contractor_id for building {building_id}")
     except Exception as e:
