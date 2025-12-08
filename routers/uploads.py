@@ -427,6 +427,7 @@ async def upload_document(
         "filename": clean_filename,  # Auto-generated from title for database compatibility
         "s3_key": s3_key,
         "uploaded_by": current_user.id,
+        "uploaded_by_role": current_user.role,  # Denormalized for performance
         "is_redacted": False,  # Manual redaction is handled via separate endpoint
         "is_public": is_public,
         # Note: Don't store download_url - it expires. Use /documents/{id}/download endpoint instead
