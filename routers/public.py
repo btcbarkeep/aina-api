@@ -12,7 +12,7 @@ from services.report_generator import (
 
 router = APIRouter(
     prefix="/reports/public",
-    tags=["Ainareports.com Public Router"],
+    tags=["Reports - Public"],
 )
 
 
