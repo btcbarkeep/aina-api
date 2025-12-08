@@ -59,12 +59,12 @@ def search_public(query: Optional[str] = None):
         # BUILDINGS SEARCH
         # ============================================================
         try:
-        if has_building_name and has_unit_number:
-            # When we have BOTH building name AND unit number:
-            # Only match buildings on building name words (ignore numbers in addresses/zip)
-            # Make multiple queries and combine results
-            all_buildings = {}
-            for word in building_name_words:
+            if has_building_name and has_unit_number:
+                # When we have BOTH building name AND unit number:
+                # Only match buildings on building name words (ignore numbers in addresses/zip)
+                # Make multiple queries and combine results
+                all_buildings = {}
+                for word in building_name_words:
                 # Search by name
                 try:
                     name_result = (
@@ -124,10 +124,10 @@ def search_public(query: Optional[str] = None):
                             all_buildings[b["id"]] = b
                 except:
                     pass
-            
+                
             buildings = list(all_buildings.values())[:10]
             buildings_error = None
-            
+                
         elif has_building_name:
             # Only building name words - prioritize building name matches
             # First, try matching building names only
