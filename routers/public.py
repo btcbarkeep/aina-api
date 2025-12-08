@@ -44,21 +44,21 @@ def search_public(query: Optional[str] = None):
             }
         
         q = query.strip()
-    
-    # Separate building name words (non-numeric) from unit numbers (numeric)
-    query_words = [w for w in q.lower().split() if len(w) > 0]
-    building_name_words = [word for word in query_words if not re.search(r'\d', word)]
-    unit_number_words = [word for word in query_words if re.search(r'\d', word)]
-    has_unit_number = len(unit_number_words) > 0
-    has_building_name = len(building_name_words) > 0
-    
-    buildings = []
-    buildings_error = None
-    
-    # ============================================================
-    # BUILDINGS SEARCH
-    # ============================================================
-    try:
+        
+        # Separate building name words (non-numeric) from unit numbers (numeric)
+        query_words = [w for w in q.lower().split() if len(w) > 0]
+        building_name_words = [word for word in query_words if not re.search(r'\d', word)]
+        unit_number_words = [word for word in query_words if re.search(r'\d', word)]
+        has_unit_number = len(unit_number_words) > 0
+        has_building_name = len(building_name_words) > 0
+        
+        buildings = []
+        buildings_error = None
+        
+        # ============================================================
+        # BUILDINGS SEARCH
+        # ============================================================
+        try:
         if has_building_name and has_unit_number:
             # When we have BOTH building name AND unit number:
             # Only match buildings on building name words (ignore numbers in addresses/zip)
@@ -270,34 +270,34 @@ def search_public(query: Optional[str] = None):
             
             buildings_error = None
                 
-    except Exception as e:
-        print(f"Error searching buildings: {e}")
-        buildings_error = e
-        buildings = []
-    
-    if buildings_error:
-        print(f"Error fetching buildings: {buildings_error}")
-    
-    # ============================================================
-    # UNITS SEARCH
-    # ============================================================
-    units = []
-    
-    # Get matched building IDs to filter out units from other buildings
-    matched_building_ids = set(b["id"] for b in buildings) if buildings else set()
-    
-    # 1) GET UNITS BY BUILDING MATCH (filter by unit number if present)
-    if buildings:
-        building_ids = list(matched_building_ids)
+        except Exception as e:
+            print(f"Error searching buildings: {e}")
+            buildings_error = e
+            buildings = []
         
-        units_by_building_query = (
-            client.table("units")
-            .select("id, unit_number, building_id")
-            .in_("building_id", building_ids)
-        )
+        if buildings_error:
+            print(f"Error fetching buildings: {buildings_error}")
         
-        # If we have a unit number in the query, filter by it
-        if has_unit_number:
+        # ============================================================
+        # UNITS SEARCH
+        # ============================================================
+        units = []
+        
+        # Get matched building IDs to filter out units from other buildings
+        matched_building_ids = set(b["id"] for b in buildings) if buildings else set()
+        
+        # 1) GET UNITS BY BUILDING MATCH (filter by unit number if present)
+        if buildings:
+            building_ids = list(matched_building_ids)
+            
+            units_by_building_query = (
+                client.table("units")
+                .select("id, unit_number, building_id")
+                .in_("building_id", building_ids)
+            )
+            
+            # If we have a unit number in the query, filter by it
+            if has_unit_number:
             # Apply unit number filter by making separate queries for each word
             filtered_units = []
             for word in unit_number_words:
@@ -313,20 +313,20 @@ def search_public(query: Optional[str] = None):
                         filtered_units.extend(unit_result.data)
                 except:
                     pass
-            # Remove duplicates
-            unique_filtered_units = {u["id"]: u for u in filtered_units}
-            units.extend(list(unique_filtered_units.values()))
-        else:
-            try:
-                units_by_building_result = units_by_building_query.execute()
-                if units_by_building_result.data:
-                    units.extend(units_by_building_result.data)
-            except Exception as e:
-                print(f"Error fetching units by building: {e}")
-    
-    # 2) GET UNITS DIRECTLY MATCHING UNIT NUMBER
-    # If we have building matches, only include units from those buildings
-    if has_unit_number:
+                # Remove duplicates
+                unique_filtered_units = {u["id"]: u for u in filtered_units}
+                units.extend(list(unique_filtered_units.values()))
+            else:
+                try:
+                    units_by_building_result = units_by_building_query.execute()
+                    if units_by_building_result.data:
+                        units.extend(units_by_building_result.data)
+                except Exception as e:
+                    print(f"Error fetching units by building: {e}")
+        
+        # 2) GET UNITS DIRECTLY MATCHING UNIT NUMBER
+        # If we have building matches, only include units from those buildings
+        if has_unit_number:
         for word in unit_number_words:
             units_by_number_query = (
                 client.table("units")
@@ -344,11 +344,11 @@ def search_public(query: Optional[str] = None):
                     units.extend(units_by_number_result.data)
             except Exception as e:
                 print(f"Error fetching units by number: {e}")
-    
-    # 3) GET UNITS BY BUILDING TEXT (only if no building matches yet)
-    # This helps find buildings that weren't found in the initial building search
-    # We do this by searching for buildings again with broader criteria, then getting their units
-    if not buildings and has_building_name:
+        
+        # 3) GET UNITS BY BUILDING TEXT (only if no building matches yet)
+        # This helps find buildings that weren't found in the initial building search
+        # We do this by searching for buildings again with broader criteria, then getting their units
+        if not buildings and has_building_name:
         # Search buildings by text again (broader search)
         all_text_buildings = {}
         for word in query_words:
@@ -449,14 +449,14 @@ def search_public(query: Optional[str] = None):
                         units.extend(units_by_building_text_result.data)
                 except Exception as e:
                     print(f"Error fetching units by building text: {e}")
-    
-    # 4) REMOVE DUPLICATES and FETCH BUILDING INFO
-    unique_units_dict = {}
-    for u in units:
-        unique_units_dict[u["id"]] = u
-    
-    # Fetch building info for all unique units
-    if unique_units_dict:
+        
+        # 4) REMOVE DUPLICATES and FETCH BUILDING INFO
+        unique_units_dict = {}
+        for u in units:
+            unique_units_dict[u["id"]] = u
+        
+        # Fetch building info for all unique units
+        if unique_units_dict:
         unit_building_ids = list(set(u.get("building_id") for u in unique_units_dict.values() if u.get("building_id")))
         
         if unit_building_ids:
