@@ -763,7 +763,7 @@ def send_bulk_message(
                 f"No eligible recipients found for types: {payload.recipient_types}{filter_msg}"
             )
         
-        # Create messages for all recipients (with replies disabled)
+        # Create messages for all recipients (with replies disabled and marked as bulk)
         messages_to_create = []
         for recipient_id in recipient_ids:
             messages_to_create.append({
@@ -773,6 +773,7 @@ def send_bulk_message(
                 "body": payload.body.strip(),
                 "is_read": False,
                 "replies_disabled": True,  # Disable replies for bulk messages
+                "is_bulk": True,  # Mark as bulk message/announcement
             })
         
         # Batch insert messages (Supabase supports batch inserts)
