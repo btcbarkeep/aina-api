@@ -8,7 +8,7 @@ from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
 from core.logging_config import logger
 from core.permission_helpers import requires_permission
-from models.message import MessageCreate, MessageUpdate, MessageRead
+from models.message import MessageCreate, MessageUpdate, MessageRead, BulkMessageCreate
 
 router = APIRouter(
     prefix="/messages",
@@ -24,9 +24,36 @@ def send_message(
     """
     Send a message to another user or to admins.
     
+    **Permissions:**
+    - Admin/Super Admin: Can message any user (or set to_user_id=None to send to all admins)
+    - Regular users: Can only message admins (to_user_id must be None or an admin user ID)
+    
     If `to_user_id` is None, the message is sent to admins.
     """
     client = get_supabase_client()
+    
+    # Validation: Non-admin users can only message admins
+    is_admin = current_user.role in ["admin", "super_admin"]
+    
+    if not is_admin and payload.to_user_id is not None:
+        # Regular user trying to message a specific user - verify it's an admin
+        try:
+            recipient = client.auth.admin.get_user_by_id(payload.to_user_id)
+            if recipient.user:
+                recipient_meta = recipient.user.user_metadata or {}
+                recipient_role = recipient_meta.get("role")
+                if recipient_role not in ["admin", "super_admin"]:
+                    raise HTTPException(
+                        403,
+                        "Regular users can only message admins. Set to_user_id to None to message all admins."
+                    )
+            else:
+                raise HTTPException(404, "Recipient user not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to validate recipient: {e}")
+            raise HTTPException(400, f"Invalid recipient: {str(e)}")
     
     message_data = {
         "from_user_id": current_user.auth_user_id,
@@ -43,7 +70,7 @@ def send_message(
             .execute()
         )
         
-        logger.info(f"User {current_user.auth_user_id} sent message to {payload.to_user_id or 'admins'}")
+        logger.info(f"User {current_user.auth_user_id} ({current_user.role}) sent message to {payload.to_user_id or 'admins'}")
         return result.data[0]
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
@@ -83,13 +110,11 @@ def list_messages(
             if is_recipient or is_sender_to_admins:
                 filtered.append(msg)
         
-        query_result = filtered
-        
+        # Apply unread filter if requested
         if unread_only:
-            query = query.eq("is_read", False)
+            filtered = [msg for msg in filtered if not msg.get("is_read", False)]
         
-        result = query.execute()
-        return result.data or []
+        return filtered
     except Exception as e:
         logger.error(f"Failed to list messages: {e}")
         raise HTTPException(500, f"Failed to list messages: {str(e)}")
@@ -265,4 +290,204 @@ def delete_message(
     except Exception as e:
         logger.error(f"Failed to delete message: {e}")
         raise HTTPException(500, f"Failed to delete message: {str(e)}")
+
+
+@router.get("/eligible-recipients")
+def get_eligible_recipients(
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Get list of users that the current user can message.
+    
+    **Permissions:**
+    - Admin/Super Admin: Can see all users
+    - Regular users: Can only see admins
+    """
+    client = get_supabase_client()
+    
+    try:
+        # Fetch all users
+        raw = client.auth.admin.list_users()
+        
+        # Extract user list (handle different response formats)
+        if hasattr(raw, "users"):
+            all_users = raw.users
+        elif isinstance(raw, list):
+            all_users = raw
+        elif isinstance(raw, dict) and "users" in raw:
+            all_users = raw["users"]
+        else:
+            all_users = []
+        
+        is_admin = current_user.role in ["admin", "super_admin"]
+        
+        eligible = []
+        for user in all_users:
+            # Extract user data
+            if hasattr(user, "id"):
+                user_id = user.id
+                email = getattr(user, "email", None)
+                user_meta = getattr(user, "user_metadata", {}) or {}
+            elif isinstance(user, dict):
+                user_id = user.get("id")
+                email = user.get("email")
+                user_meta = user.get("user_metadata", {}) or {}
+            else:
+                continue
+            
+            user_role = user_meta.get("role", "aoao")
+            full_name = user_meta.get("full_name")
+            
+            # Filter based on permissions
+            if is_admin:
+                # Admins can message anyone (except themselves)
+                if user_id != current_user.auth_user_id:
+                    eligible.append({
+                        "id": user_id,
+                        "email": email,
+                        "full_name": full_name,
+                        "role": user_role,
+                    })
+            else:
+                # Regular users can only message admins
+                if user_role in ["admin", "super_admin"] and user_id != current_user.auth_user_id:
+                    eligible.append({
+                        "id": user_id,
+                        "email": email,
+                        "full_name": full_name,
+                        "role": user_role,
+                    })
+        
+        # Sort by full_name or email
+        eligible.sort(key=lambda x: (x.get("full_name") or x.get("email") or "").lower())
+        
+        return {
+            "eligible_recipients": eligible,
+            "count": len(eligible)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get eligible recipients: {e}")
+        raise HTTPException(500, f"Failed to get eligible recipients: {str(e)}")
+
+
+@router.post("/bulk")
+def send_bulk_message(
+    payload: BulkMessageCreate,
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Send a bulk message to multiple users (AOAO only).
+    
+    **Permissions:**
+    - Only AOAO users can send bulk messages
+    
+    **Recipient Types:**
+    - 'contractors': All users associated with contractors
+    - 'property_managers': All users associated with property management companies
+    - 'owners': All users with role 'owner'
+    
+    Creates one message record per recipient.
+    """
+    # Only AOAO can send bulk messages
+    if current_user.role != "aoao":
+        raise HTTPException(403, "Only AOAO users can send bulk messages")
+    
+    # Validate recipient types
+    valid_types = ["contractors", "property_managers", "owners"]
+    invalid_types = [t for t in payload.recipient_types if t not in valid_types]
+    if invalid_types:
+        raise HTTPException(400, f"Invalid recipient types: {invalid_types}. Valid types: {valid_types}")
+    
+    client = get_supabase_client()
+    
+    try:
+        # Fetch all users
+        raw = client.auth.admin.list_users()
+        
+        # Extract user list
+        if hasattr(raw, "users"):
+            all_users = raw.users
+        elif isinstance(raw, list):
+            all_users = raw
+        elif isinstance(raw, dict) and "users" in raw:
+            all_users = raw["users"]
+        else:
+            all_users = []
+        
+        recipient_ids = set()
+        
+        # Collect recipients based on types
+        for user in all_users:
+            # Extract user data
+            if hasattr(user, "id"):
+                user_id = user.id
+                user_meta = getattr(user, "user_metadata", {}) or {}
+            elif isinstance(user, dict):
+                user_id = user.get("id")
+                user_meta = user.get("user_metadata", {}) or {}
+            else:
+                continue
+            
+            user_role = user_meta.get("role", "aoao")
+            
+            # Check if user matches any recipient type
+            if "owners" in payload.recipient_types and user_role == "owner":
+                recipient_ids.add(user_id)
+            
+            if "contractors" in payload.recipient_types and user_meta.get("contractor_id"):
+                recipient_ids.add(user_id)
+            
+            if "property_managers" in payload.recipient_types and user_meta.get("pm_company_id"):
+                recipient_ids.add(user_id)
+        
+        if not recipient_ids:
+            raise HTTPException(400, f"No recipients found for types: {payload.recipient_types}")
+        
+        # Create messages for all recipients
+        messages_to_create = []
+        for recipient_id in recipient_ids:
+            messages_to_create.append({
+                "from_user_id": current_user.auth_user_id,
+                "to_user_id": recipient_id,
+                "subject": payload.subject.strip(),
+                "body": payload.body.strip(),
+                "is_read": False,
+            })
+        
+        # Batch insert messages (Supabase supports batch inserts)
+        created_count = 0
+        errors = []
+        
+        # Insert in batches of 100 (Supabase limit)
+        batch_size = 100
+        for i in range(0, len(messages_to_create), batch_size):
+            batch = messages_to_create[i:i + batch_size]
+            try:
+                result = (
+                    client.table("messages")
+                    .insert(batch)
+                    .execute()
+                )
+                created_count += len(result.data or [])
+            except Exception as e:
+                logger.error(f"Failed to insert batch {i//batch_size + 1}: {e}")
+                errors.append(f"Batch {i//batch_size + 1}: {str(e)}")
+        
+        logger.info(
+            f"AOAO user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
+            f"(types: {payload.recipient_types})"
+        )
+        
+        return {
+            "success": True,
+            "message": f"Bulk message sent to {created_count} recipients",
+            "recipient_count": created_count,
+            "recipient_types": payload.recipient_types,
+            "errors": errors if errors else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to send bulk message: {e}")
+        raise HTTPException(500, f"Failed to send bulk message: {str(e)}")
 
