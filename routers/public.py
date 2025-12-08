@@ -17,10 +17,10 @@ router = APIRouter(
 # ============================================================
 def get_top_property_managers(client, building_id: str, unit_number: Optional[str] = None, limit: int = 5):
     """
-    Get top property managers:
+    Get property managers:
     - Individual property manager users (not tied to an organization)
     - Property manager organizations (excluding individual users tied to those orgs)
-    Ranked by total count of events + documents they've created/uploaded.
+    Ranked by number of events they've created for the building/unit.
     Includes all property managers who have building/unit access.
     """
     # Get PM companies with building/unit access
@@ -58,7 +58,7 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     # Get all events for the building/unit
     events_query = (
         client.table("events")
-        .select("created_by, id")
+        .select("created_by")
         .eq("building_id", building_id)
         .not_.is_("created_by", None)
     )
@@ -67,6 +67,18 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         events_query = events_query.eq("unit_number", unit_number)
     
     events_result = events_query.execute()
+    
+    if not events_result.data:
+        # Return PM companies with 0 events
+        org_managers = []
+        for pm_id in pm_company_ids:
+            pm_company = pm_companies.get(pm_id, {"id": pm_id})
+            org_managers.append({
+                "organization_name": pm_company.get("name") or pm_company.get("company_name"),
+                "event_count": 0,
+                "type": "organization",
+            })
+        return org_managers
     
     # Get all users who created events and map them to PM companies
     user_to_pm_company = {}  # user_id -> pm_company_id
@@ -94,9 +106,8 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
             except Exception:
                 continue
     
-    # Count events and documents per PM company
+    # Count events per PM company
     pm_event_counts = {}
-    pm_doc_counts = {}
     
     if events_result.data:
         for event in events_result.data:
@@ -105,68 +116,22 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                 pm_id = user_to_pm_company[user_id]
                 pm_event_counts[pm_id] = pm_event_counts.get(pm_id, 0) + 1
     
-    # Get documents linked to events
-    documents_query = (
-        client.table("documents")
-        .select("event_id")
-        .eq("building_id", building_id)
-    )
-    documents_result = documents_query.execute()
-    
-    if documents_result.data and events_result.data:
-        event_ids = {e.get("id") for e in events_result.data if e.get("id")}
-        if event_ids:
-            all_events = (
-                client.table("events")
-                .select("id, created_by")
-                .in_("id", list(event_ids))
-                .not_.is_("created_by", None)
-                .execute()
-            )
-            if all_events.data:
-                event_to_creator = {e["id"]: e["created_by"] for e in all_events.data}
-                for doc in documents_result.data:
-                    event_id = doc.get("event_id")
-                    if event_id and event_id in event_to_creator:
-                        creator_id = event_to_creator[event_id]
-                        if creator_id in user_to_pm_company:
-                            pm_id = user_to_pm_company[creator_id]
-                            pm_doc_counts[pm_id] = pm_doc_counts.get(pm_id, 0) + 1
-    
     # Build results - PM companies (organizations)
     org_managers = []
     for pm_id in pm_company_ids:
         pm_company = pm_companies.get(pm_id, {"id": pm_id})
         event_count = pm_event_counts.get(pm_id, 0)
-        doc_count = pm_doc_counts.get(pm_id, 0)
-        total_count = event_count + doc_count
         
         org_managers.append({
             "organization_name": pm_company.get("name") or pm_company.get("company_name"),
             "event_count": event_count,
-            "document_count": doc_count,
-            "total_count": total_count,
             "type": "organization",
         })
     
     # Also get individual property managers (users not in a PM company but with role property_manager)
-    # Get all users who created events but aren't in a PM company
     individual_managers = []
     if events_result.data:
         processed_users = set()
-        event_to_creator = {}
-        if documents_result.data:
-            event_ids = {e.get("id") for e in events_result.data if e.get("id")}
-            if event_ids:
-                all_events = (
-                    client.table("events")
-                    .select("id, created_by")
-                    .in_("id", list(event_ids))
-                    .not_.is_("created_by", None)
-                    .execute()
-                )
-                if all_events.data:
-                    event_to_creator = {e["id"]: e["created_by"] for e in all_events.data}
         
         for event in events_result.data:
             user_id = event.get("created_by")
@@ -181,13 +146,6 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                             if not org_name or not org_name.strip():
                                 # Individual property manager
                                 event_count = sum(1 for e in events_result.data if e.get("created_by") == user_id)
-                                doc_count = 0
-                                if event_to_creator:
-                                    for doc in (documents_result.data or []):
-                                        event_id = doc.get("event_id")
-                                        if event_id and event_id in event_to_creator:
-                                            if event_to_creator[event_id] == user_id:
-                                                doc_count += 1
                                 
                                 individual_managers.append({
                                     "id": user_id,
@@ -196,16 +154,14 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                                     "organization_name": None,
                                     "phone": metadata.get("phone"),
                                     "event_count": event_count,
-                                    "document_count": doc_count,
-                                    "total_count": event_count + doc_count,
                                     "type": "individual",
                                 })
                 except Exception:
                     continue
     
-    # Combine and sort by total_count
+    # Combine and sort by event_count
     all_managers = individual_managers + org_managers
-    sorted_managers = sorted(all_managers, key=lambda x: x.get("total_count", 0), reverse=True)
+    sorted_managers = sorted(all_managers, key=lambda x: x.get("event_count", 0), reverse=True)
     
     return sorted_managers
 
@@ -216,7 +172,7 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
 def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     """
     Get AOAO organizations for a building (only organizations, not individual users).
-    Groups AOAO users by organization_name and returns organizations ranked by total count of events + documents.
+    Returns organizations ranked by number of events they've created for the building/unit.
     Includes all AOAO organizations that have building/unit access.
     """
     # Get AOAO organizations with building/unit access
@@ -254,7 +210,7 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     # Get all events for the building/unit
     events_query = (
         client.table("events")
-        .select("created_by, id")
+        .select("created_by")
         .eq("building_id", building_id)
         .not_.is_("created_by", None)
     )
@@ -263,6 +219,17 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
         events_query = events_query.eq("unit_number", unit_number)
     
     events_result = events_query.execute()
+    
+    if not events_result.data:
+        # Return AOAO orgs with 0 events
+        org_aoaos = []
+        for aoao_id in aoao_org_ids:
+            aoao_org = aoao_orgs.get(aoao_id, {"id": aoao_id})
+            org_aoaos.append({
+                "organization_name": aoao_org.get("name") or aoao_org.get("organization_name"),
+                "event_count": 0,
+            })
+        return org_aoaos
     
     # Get all users who created events and map them to AOAO organizations
     user_to_aoao_org = {}  # user_id -> aoao_org_id
@@ -291,9 +258,8 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
             except Exception:
                 continue
     
-    # Count events and documents per AOAO organization
+    # Count events per AOAO organization
     aoao_event_counts = {}
-    aoao_doc_counts = {}
     
     if events_result.data:
         for event in events_result.data:
@@ -302,51 +268,19 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
                 aoao_id = user_to_aoao_org[user_id]
                 aoao_event_counts[aoao_id] = aoao_event_counts.get(aoao_id, 0) + 1
     
-    # Get documents linked to events
-    documents_query = (
-        client.table("documents")
-        .select("event_id")
-        .eq("building_id", building_id)
-    )
-    documents_result = documents_query.execute()
-    
-    if documents_result.data and events_result.data:
-        event_ids = {e.get("id") for e in events_result.data if e.get("id")}
-        if event_ids:
-            all_events = (
-                client.table("events")
-                .select("id, created_by")
-                .in_("id", list(event_ids))
-                .not_.is_("created_by", None)
-                .execute()
-            )
-            if all_events.data:
-                event_to_creator = {e["id"]: e["created_by"] for e in all_events.data}
-                for doc in documents_result.data:
-                    event_id = doc.get("event_id")
-                    if event_id and event_id in event_to_creator:
-                        creator_id = event_to_creator[event_id]
-                        if creator_id in user_to_aoao_org:
-                            aoao_id = user_to_aoao_org[creator_id]
-                            aoao_doc_counts[aoao_id] = aoao_doc_counts.get(aoao_id, 0) + 1
-    
     # Build organization entries
     org_aoaos = []
     for aoao_id in aoao_org_ids:
         aoao_org = aoao_orgs.get(aoao_id, {"id": aoao_id})
         event_count = aoao_event_counts.get(aoao_id, 0)
-        doc_count = aoao_doc_counts.get(aoao_id, 0)
-        total_count = event_count + doc_count
         
         org_aoaos.append({
             "organization_name": aoao_org.get("name") or aoao_org.get("organization_name"),
             "event_count": event_count,
-            "document_count": doc_count,
-            "total_count": total_count,
         })
     
-    # Sort by total_count (descending)
-    org_aoaos.sort(key=lambda x: x.get("total_count", 0), reverse=True)
+    # Sort by event_count (descending)
+    org_aoaos.sort(key=lambda x: x.get("event_count", 0), reverse=True)
     
     return org_aoaos
 
@@ -356,28 +290,9 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
 # ============================================================
 def get_top_contractors(client, building_id: str, unit_number: Optional[str] = None, limit: int = 5):
     """
-    Get all contractors who have building/unit access or have events for the building/unit.
+    Get all contractors who have events for the building/unit.
     Ranked by number of events.
     """
-    # Get contractors with building/unit access
-    if unit_number:
-        contractor_access_result = (
-            client.table("contractor_unit_access")
-            .select("contractor_id")
-            .eq("building_id", building_id)
-            .eq("unit_number", unit_number)
-            .execute()
-        )
-    else:
-        contractor_access_result = (
-            client.table("contractor_building_access")
-            .select("contractor_id")
-            .eq("building_id", building_id)
-            .execute()
-        )
-    
-    contractor_ids_with_access = {access["contractor_id"] for access in (contractor_access_result.data or [])}
-    
     # Get all events for the building/unit with contractor_id
     query = (
         client.table("events")
@@ -391,28 +306,28 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     
     events_result = query.execute()
     
+    if not events_result.data:
+        return []
+    
     # Count events by contractor_id
     contractor_counts = {}
-    contractor_ids_from_events = set()
+    contractor_ids = set()
     
     if events_result.data:
         for event in events_result.data:
             contractor_id = event.get("contractor_id")
             if contractor_id:
                 contractor_counts[contractor_id] = contractor_counts.get(contractor_id, 0) + 1
-                contractor_ids_from_events.add(contractor_id)
+                contractor_ids.add(contractor_id)
     
-    # Combine contractor IDs (from access tables and from events)
-    all_contractor_ids = contractor_ids_with_access.union(contractor_ids_from_events)
-    
-    if not all_contractor_ids:
+    if not contractor_ids:
         return []
     
     # Get contractor details
     contractors_result = (
         client.table("contractors")
         .select("*")
-        .in_("id", list(all_contractor_ids))
+        .in_("id", list(contractor_ids))
         .execute()
     )
     
@@ -420,7 +335,7 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     
     # Build result with counts
     result = []
-    for contractor_id in all_contractor_ids:
+    for contractor_id in contractor_ids:
         contractor = contractor_map.get(contractor_id, {"id": contractor_id})
         contractor_info = contractor.copy()
         contractor_info["event_count"] = contractor_counts.get(contractor_id, 0)
