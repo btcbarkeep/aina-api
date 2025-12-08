@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
@@ -28,6 +28,10 @@ def send_message(
     - Admin/Super Admin: Can message any user (or set to_user_id=None to send to all admins)
     - Regular users: Can only message admins (to_user_id must be None or an admin user ID)
     
+    **Reply Restrictions:**
+    - If replying to a message with `replies_disabled=True`, only admins can reply
+    - Regular users will receive a 403 error if trying to reply to a bulk announcement
+    
     If `to_user_id` is None, the message is sent to admins.
     """
     client = get_supabase_client()
@@ -47,6 +51,29 @@ def send_message(
                         403,
                         "Regular users can only message admins. Set to_user_id to None to message all admins."
                     )
+                
+                # Check if there's a recent message from this recipient with replies_disabled
+                # (indicating this might be a reply to a bulk announcement)
+                # Look for messages sent in the last 30 days to avoid blocking old conversations
+                thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
+                
+                recent_message_result = (
+                    client.table("messages")
+                    .select("id, replies_disabled, created_at")
+                    .eq("from_user_id", payload.to_user_id)
+                    .eq("to_user_id", current_user.auth_user_id)
+                    .eq("replies_disabled", True)
+                    .gte("created_at", thirty_days_ago)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                
+                if recent_message_result.data:
+                    raise HTTPException(
+                        403,
+                        "Replies are disabled for this message. Only admins can reply to bulk announcements."
+                    )
             else:
                 raise HTTPException(404, "Recipient user not found")
         except HTTPException:
@@ -61,6 +88,7 @@ def send_message(
         "subject": payload.subject.strip(),
         "body": payload.body.strip(),
         "is_read": False,
+        "replies_disabled": False,  # Regular messages allow replies
     }
     
     try:
@@ -398,15 +426,23 @@ def send_bulk_message(
     - Only AOAO users can send bulk messages
     
     **Recipient Types:**
-    - 'contractors': All users associated with contractors
-    - 'property_managers': All users associated with property management companies
-    - 'owners': All users with role 'owner'
+    - 'contractors': Users associated with contractors that have access to AOAO's buildings/units
+    - 'property_managers': Users associated with PM companies that have access to AOAO's buildings/units
+    - 'owners': Users with role 'owner' that have access to units in AOAO's buildings
     
-    Creates one message record per recipient.
+    **Additional Recipients:**
+    - All admins and super_admins automatically receive the message
+    
+    **Note:**
+    - Replies are disabled for bulk messages (only admins can reply)
+    - Only users with access to buildings/units that the AOAO manages will receive the message
     """
     # Only AOAO can send bulk messages
     if current_user.role != "aoao":
         raise HTTPException(403, "Only AOAO users can send bulk messages")
+    
+    if not current_user.aoao_organization_id:
+        raise HTTPException(400, "AOAO user must be associated with an AOAO organization to send bulk messages")
     
     # Validate recipient types
     valid_types = ["contractors", "property_managers", "owners"]
@@ -417,10 +453,38 @@ def send_bulk_message(
     client = get_supabase_client()
     
     try:
-        # Fetch all users
-        raw = client.auth.admin.list_users()
+        # Get buildings that the AOAO organization has access to
+        aoao_buildings_result = (
+            client.table("aoao_organization_building_access")
+            .select("building_id")
+            .eq("aoao_organization_id", current_user.aoao_organization_id)
+            .execute()
+        )
+        aoao_building_ids = [row["building_id"] for row in (aoao_buildings_result.data or [])]
         
-        # Extract user list
+        if not aoao_building_ids:
+            raise HTTPException(400, "AOAO organization does not have access to any buildings")
+        
+        # Get all units in these buildings
+        units_result = (
+            client.table("units")
+            .select("id, building_id")
+            .in_("building_id", aoao_building_ids)
+            .execute()
+        )
+        aoao_unit_ids = [row["id"] for row in (units_result.data or [])]
+        
+        # Get users who have access to these buildings/units
+        # This includes:
+        # - Direct user building access
+        # - Direct user unit access
+        # - PM companies with building/unit access
+        # - Contractors (they have access to all buildings/units)
+        
+        recipient_ids = set()
+        
+        # 1. Get all admins and super_admins (always included)
+        raw = client.auth.admin.list_users()
         if hasattr(raw, "users"):
             all_users = raw.users
         elif isinstance(raw, list):
@@ -430,11 +494,7 @@ def send_bulk_message(
         else:
             all_users = []
         
-        recipient_ids = set()
-        
-        # Collect recipients based on types
         for user in all_users:
-            # Extract user data
             if hasattr(user, "id"):
                 user_id = user.id
                 user_meta = getattr(user, "user_metadata", {}) or {}
@@ -446,20 +506,119 @@ def send_bulk_message(
             
             user_role = user_meta.get("role", "aoao")
             
-            # Check if user matches any recipient type
+            # Always include admins
+            if user_role in ["admin", "super_admin"]:
+                recipient_ids.add(user_id)
+        
+        # 2. Get users with direct building access to AOAO's buildings
+        # (These will be filtered by recipient type below)
+        users_with_building_access = set()
+        if aoao_building_ids:
+            user_building_access_result = (
+                client.table("user_building_access")
+                .select("user_id")
+                .in_("building_id", aoao_building_ids)
+                .execute()
+            )
+            for row in (user_building_access_result.data or []):
+                users_with_building_access.add(row["user_id"])
+        
+        # 3. Get users with direct unit access to units in AOAO's buildings
+        users_with_unit_access = set()
+        if aoao_unit_ids:
+            user_unit_access_result = (
+                client.table("user_unit_access")
+                .select("user_id")
+                .in_("unit_id", aoao_unit_ids)
+                .execute()
+            )
+            for row in (user_unit_access_result.data or []):
+                users_with_unit_access.add(row["user_id"])
+        
+        # Combine users with access (building or unit)
+        users_with_access = users_with_building_access.union(users_with_unit_access)
+        
+        # 4. Get PM companies with access to AOAO's buildings/units, then get their users
+        if aoao_building_ids:
+            pm_building_access_result = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id")
+                .in_("building_id", aoao_building_ids)
+                .execute()
+            )
+            pm_company_ids = set([row["pm_company_id"] for row in (pm_building_access_result.data or [])])
+            
+            if aoao_unit_ids:
+                pm_unit_access_result = (
+                    client.table("pm_company_unit_access")
+                    .select("pm_company_id")
+                    .in_("unit_id", aoao_unit_ids)
+                    .execute()
+                )
+                pm_company_ids.update([row["pm_company_id"] for row in (pm_unit_access_result.data or [])])
+            
+            # Get users associated with these PM companies
+            for user in all_users:
+                if hasattr(user, "id"):
+                    user_id = user.id
+                    user_meta = getattr(user, "user_metadata", {}) or {}
+                elif isinstance(user, dict):
+                    user_id = user.get("id")
+                    user_meta = user.get("user_metadata", {}) or {}
+                else:
+                    continue
+                
+                pm_company_id = user_meta.get("pm_company_id")
+                if pm_company_id and pm_company_id in pm_company_ids:
+                    if "property_managers" in payload.recipient_types:
+                        recipient_ids.add(user_id)
+        
+        # 5. Filter users by recipient types and access
+        for user in all_users:
+            if hasattr(user, "id"):
+                user_id = user.id
+                user_meta = getattr(user, "user_metadata", {}) or {}
+            elif isinstance(user, dict):
+                user_id = user.get("id")
+                user_meta = user.get("user_metadata", {}) or {}
+            else:
+                continue
+            
+            user_role = user_meta.get("role", "aoao")
+            contractor_id = user_meta.get("contractor_id")
+            pm_company_id = user_meta.get("pm_company_id")
+            
+            # Skip if user doesn't have access to AOAO's buildings/units (unless admin or contractor)
+            has_access = (
+                user_id in users_with_access or
+                user_role in ["admin", "super_admin"] or
+                contractor_id  # Contractors have access to all buildings
+            )
+            
+            if not has_access:
+                continue
+            
+            # Filter by recipient types
+            if "contractors" in payload.recipient_types and contractor_id:
+                recipient_ids.add(user_id)
+            
+            if "property_managers" in payload.recipient_types and pm_company_id:
+                # Check if PM company has access to AOAO's buildings/units
+                if pm_company_id in pm_company_ids:
+                    recipient_ids.add(user_id)
+            
             if "owners" in payload.recipient_types and user_role == "owner":
-                recipient_ids.add(user_id)
-            
-            if "contractors" in payload.recipient_types and user_meta.get("contractor_id"):
-                recipient_ids.add(user_id)
-            
-            if "property_managers" in payload.recipient_types and user_meta.get("pm_company_id"):
-                recipient_ids.add(user_id)
+                # Owner must have unit access to be included
+                if user_id in users_with_unit_access:
+                    recipient_ids.add(user_id)
+        
+        # Remove the sender from recipients
+        recipient_ids.discard(current_user.auth_user_id)
         
         if not recipient_ids:
-            raise HTTPException(400, f"No recipients found for types: {payload.recipient_types}")
+            raise HTTPException(400, f"No eligible recipients found for types: {payload.recipient_types} with access to AOAO's buildings")
         
-        # Create messages for all recipients
+        # Create messages for all recipients (with replies disabled)
         messages_to_create = []
         for recipient_id in recipient_ids:
             messages_to_create.append({
@@ -468,6 +627,7 @@ def send_bulk_message(
                 "subject": payload.subject.strip(),
                 "body": payload.body.strip(),
                 "is_read": False,
+                "replies_disabled": True,  # Disable replies for bulk messages
             })
         
         # Batch insert messages (Supabase supports batch inserts)
