@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 from datetime import datetime
+import pytz
 
 from dependencies.auth import get_current_user, CurrentUser
 from core.supabase_client import get_supabase_client
@@ -20,6 +21,27 @@ router = APIRouter(
 
 # Presigned URL expiration for email links (7 days)
 EMAIL_PRESIGNED_URL_EXPIRY_SECONDS = 604800  # 7 days
+
+# Hawaii timezone
+HST = pytz.timezone('Pacific/Honolulu')
+
+
+def get_hst_time() -> datetime:
+    """Get current time in Hawaii Standard Time (HST)."""
+    return datetime.now(HST)
+
+
+def format_hst_time(dt: datetime = None) -> str:
+    """Format datetime in HST timezone for display."""
+    if dt is None:
+        dt = get_hst_time()
+    elif dt.tzinfo is None:
+        # If naive datetime, assume it's UTC and convert to HST
+        dt = pytz.UTC.localize(dt).astimezone(HST)
+    else:
+        # Convert to HST
+        dt = dt.astimezone(HST)
+    return dt.strftime('%Y-%m-%d %H:%M:%S %Z')
 
 
 @router.post("/send-email", summary="Send documents via email")
@@ -187,7 +209,7 @@ You are receiving {len(documents)} document(s) from {current_user.full_name or c
     email_body += f"""
 ---
 Aina Protocol
-This email was sent on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+This email was sent on {format_hst_time()}
 """
     
     # Build HTML email body
@@ -210,12 +232,15 @@ This email was sent on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     html_body += f"""
         <hr>
         <p><small>Aina Protocol<br>
-        This email was sent on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+        This email was sent on {format_hst_time()}</small></p>
     </body>
     </html>
     """
     
     # Send email to recipients
+    email_status = "sent"
+    error_message = None
+    
     try:
         send_email(
             subject=payload.subject,
@@ -230,7 +255,30 @@ This email was sent on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         )
     except Exception as e:
         logger.error(f"Failed to send document email: {e}")
+        email_status = "failed"
+        error_message = str(e)
         raise HTTPException(500, f"Failed to send email: {str(e)}")
+    finally:
+        # Log the email send attempt to database
+        try:
+            log_data = {
+                "sender_user_id": current_user.auth_user_id,
+                "sender_email": current_user.email,
+                "sender_name": current_user.full_name,
+                "recipient_emails": payload.recipient_emails,
+                "document_ids": payload.document_ids,
+                "subject": payload.subject,
+                "message": payload.message if payload.message else None,
+                "status": email_status,
+                "error_message": error_message,
+                "sent_at": get_hst_time().isoformat()
+            }
+            
+            client.table("document_email_logs").insert(log_data).execute()
+            logger.debug(f"Document email log created for user {current_user.auth_user_id}")
+        except Exception as log_error:
+            # Don't fail the request if logging fails
+            logger.warning(f"Failed to log document email: {log_error}")
     
     # Send receipt/confirmation email to sender
     sender_email = current_user.email
@@ -245,7 +293,7 @@ Recipients:
 Documents sent:
 {chr(10).join([f"- {doc.get('title', 'Untitled')}" for doc in documents])}
 
-Sent on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Sent on: {format_hst_time()}
 
 ---
 Aina Protocol
@@ -261,7 +309,7 @@ Aina Protocol
             <ul>
                 {''.join([f'<li>{doc.get("title", "Untitled")}</li>' for doc in documents])}
             </ul>
-            <p><small>Sent on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+            <p><small>Sent on: {format_hst_time()}</small></p>
             <hr>
             <p><small>Aina Protocol</small></p>
         </body>
