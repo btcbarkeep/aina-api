@@ -20,25 +20,9 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     Get top property managers:
     - Individual property manager users (not tied to an organization)
     - Property manager organizations (excluding individual users tied to those orgs)
-    Ranked by number of events they created.
-    Only includes property managers who have building access.
+    Ranked by total count of events + documents they've created/uploaded.
+    Includes all property managers who have building access, even if they have 0 events/documents.
     """
-    # Get all events for the building/unit
-    query = (
-        client.table("events")
-        .select("created_by")
-        .eq("building_id", building_id)
-        .not_.is_("created_by", None)
-    )
-    
-    if unit_number:
-        query = query.eq("unit_number", unit_number)
-    
-    events_result = query.execute()
-    
-    if not events_result.data:
-        return []
-    
     # Get all users who have access to this building
     access_result = (
         client.table("user_building_access")
@@ -47,28 +31,92 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
         .execute()
     )
     
-    user_ids_with_access = set()
-    if access_result.data:
-        user_ids_with_access = {access["user_id"] for access in access_result.data}
-    
-    if not user_ids_with_access:
+    if not access_result.data:
         return []
+    
+    user_ids_with_access = {access["user_id"] for access in access_result.data}
+    
+    # Get all events for the building/unit to count events per user
+    events_query = (
+        client.table("events")
+        .select("created_by")
+        .eq("building_id", building_id)
+        .not_.is_("created_by", None)
+    )
+    
+    if unit_number:
+        events_query = events_query.eq("unit_number", unit_number)
+    
+    events_result = events_query.execute()
     
     # Count events by created_by, but only for users with building access
     user_event_counts = {}
-    for event in events_result.data:
-        user_id = event["created_by"]
-        if user_id in user_ids_with_access:
-            user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
+    if events_result.data:
+        for event in events_result.data:
+            user_id = event["created_by"]
+            if user_id in user_ids_with_access:
+                user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
     
-    if not user_event_counts:
-        return []
+    # Get all documents for the building/unit to count documents per user
+    # Documents can be linked to events (via event_id) or directly to building
+    # For unit-level, we need documents linked to unit events
+    documents_query = (
+        client.table("documents")
+        .select("event_id, building_id")
+        .eq("building_id", building_id)
+    )
     
-    # Get user details and separate into individuals and organizations
+    documents_result = documents_query.execute()
+    
+    # Get event IDs for this unit if filtering by unit
+    unit_event_ids = set()
+    if unit_number and events_result.data:
+        unit_events = [e for e in events_result.data if e.get("created_by") in user_ids_with_access]
+        # We need to get the actual event IDs, not just created_by
+        unit_events_query = (
+            client.table("events")
+            .select("id")
+            .eq("building_id", building_id)
+            .eq("unit_number", unit_number)
+            .execute()
+        )
+        if unit_events_query.data:
+            unit_event_ids = {e["id"] for e in unit_events_query.data}
+    
+    # Count documents by event creator (via event_id -> events.created_by)
+    # For documents directly linked to building (no event_id), we can't attribute them to a user
+    user_document_counts = {}
+    if documents_result.data:
+        # Get all events to map event_id -> created_by
+        all_events = (
+            client.table("events")
+            .select("id, created_by")
+            .eq("building_id", building_id)
+            .not_.is_("created_by", None)
+            .execute()
+        )
+        event_to_creator = {}
+        if all_events.data:
+            event_to_creator = {e["id"]: e["created_by"] for e in all_events.data}
+        
+        for doc in documents_result.data:
+            # If filtering by unit, only count documents linked to unit events
+            if unit_number:
+                if doc.get("event_id") not in unit_event_ids:
+                    continue
+            
+            event_id = doc.get("event_id")
+            if event_id and event_id in event_to_creator:
+                creator_id = event_to_creator[event_id]
+                if creator_id in user_ids_with_access:
+                    user_document_counts[creator_id] = user_document_counts.get(creator_id, 0) + 1
+    
+    # Get user details for all users with building access
     individual_managers = []  # Users without organization
-    org_event_counts = {}    # organization_name -> total event count
+    org_total_counts = {}    # organization_name -> total count (events + documents)
+    org_user_ids = set()     # Track which users belong to organizations
     
-    for user_id, event_count in user_event_counts.items():
+    for user_id in user_ids_with_access:
         try:
             user_resp = client.auth.admin.get_user_by_id(user_id)
             if user_resp and user_resp.user:
@@ -79,12 +127,17 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                 if metadata.get("role") != "property_manager":
                     continue
                 
+                event_count = user_event_counts.get(user_id, 0)
+                document_count = user_document_counts.get(user_id, 0)
+                total_count = event_count + document_count
+                
                 org_name = metadata.get("organization_name")
                 
                 if org_name and org_name.strip():
                     # User belongs to an organization
                     org_name = org_name.strip()
-                    org_event_counts[org_name] = org_event_counts.get(org_name, 0) + event_count
+                    org_total_counts[org_name] = org_total_counts.get(org_name, 0) + total_count
+                    org_user_ids.add(user_id)
                 else:
                     # Individual property manager (no organization)
                     individual_managers.append({
@@ -94,6 +147,8 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
                         "organization_name": None,
                         "phone": metadata.get("phone"),
                         "event_count": event_count,
+                        "document_count": document_count,
+                        "total_count": total_count,
                         "type": "individual",
                     })
         except Exception:
@@ -102,17 +157,20 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
     
     # Build organization entries (excluding individual users from those orgs)
     org_managers = []
-    for org_name, total_events in org_event_counts.items():
+    for org_name, total_count in org_total_counts.items():
         org_managers.append({
             "organization_name": org_name,
-            "event_count": total_events,
+            "event_count": 0,  # We don't track per-org event counts separately
+            "document_count": 0,  # We don't track per-org document counts separately
+            "total_count": total_count,
             "type": "organization",
         })
     
-    # Combine and sort by event_count
+    # Combine and sort by total_count (events + documents)
     all_managers = individual_managers + org_managers
-    sorted_managers = sorted(all_managers, key=lambda x: x["event_count"], reverse=True)[:limit]
+    sorted_managers = sorted(all_managers, key=lambda x: x.get("total_count", 0), reverse=True)
     
+    # Return all, not just top limit (user wants everyone with access)
     return sorted_managers
 
 
@@ -122,25 +180,9 @@ def get_top_property_managers(client, building_id: str, unit_number: Optional[st
 def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
     """
     Get AOAO organizations for a building (only organizations, not individual users).
-    Groups AOAO users by organization_name and returns organizations with event counts.
-    Only includes AOAO organizations that have building access.
+    Groups AOAO users by organization_name and returns organizations ranked by total count of events + documents.
+    Includes all AOAO organizations that have building access, even if they have 0 events/documents.
     """
-    # Get all events for the building/unit
-    query = (
-        client.table("events")
-        .select("created_by")
-        .eq("building_id", building_id)
-        .not_.is_("created_by", None)
-    )
-    
-    if unit_number:
-        query = query.eq("unit_number", unit_number)
-    
-    events_result = query.execute()
-    
-    if not events_result.data:
-        return []
-    
     # Get all users who have access to this building
     access_result = (
         client.table("user_building_access")
@@ -149,27 +191,85 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
         .execute()
     )
     
-    user_ids_with_access = set()
-    if access_result.data:
-        user_ids_with_access = {access["user_id"] for access in access_result.data}
-    
-    if not user_ids_with_access:
+    if not access_result.data:
         return []
+    
+    user_ids_with_access = {access["user_id"] for access in access_result.data}
+    
+    # Get all events for the building/unit to count events per user
+    events_query = (
+        client.table("events")
+        .select("created_by")
+        .eq("building_id", building_id)
+        .not_.is_("created_by", None)
+    )
+    
+    if unit_number:
+        events_query = events_query.eq("unit_number", unit_number)
+    
+    events_result = events_query.execute()
     
     # Count events by created_by, but only for users with building access
     user_event_counts = {}
-    for event in events_result.data:
-        user_id = event["created_by"]
-        if user_id in user_ids_with_access:
-            user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
+    if events_result.data:
+        for event in events_result.data:
+            user_id = event["created_by"]
+            if user_id in user_ids_with_access:
+                user_event_counts[user_id] = user_event_counts.get(user_id, 0) + 1
     
-    if not user_event_counts:
-        return []
+    # Get all documents for the building/unit to count documents per user
+    documents_query = (
+        client.table("documents")
+        .select("event_id, building_id")
+        .eq("building_id", building_id)
+    )
+    
+    documents_result = documents_query.execute()
+    
+    # Get event IDs for this unit if filtering by unit
+    unit_event_ids = set()
+    if unit_number and events_result.data:
+        unit_events_query = (
+            client.table("events")
+            .select("id")
+            .eq("building_id", building_id)
+            .eq("unit_number", unit_number)
+            .execute()
+        )
+        if unit_events_query.data:
+            unit_event_ids = {e["id"] for e in unit_events_query.data}
+    
+    # Count documents by event creator (via event_id -> events.created_by)
+    user_document_counts = {}
+    if documents_result.data:
+        # Get all events to map event_id -> created_by
+        all_events = (
+            client.table("events")
+            .select("id, created_by")
+            .eq("building_id", building_id)
+            .not_.is_("created_by", None)
+            .execute()
+        )
+        event_to_creator = {}
+        if all_events.data:
+            event_to_creator = {e["id"]: e["created_by"] for e in all_events.data}
+        
+        for doc in documents_result.data:
+            # If filtering by unit, only count documents linked to unit events
+            if unit_number:
+                if doc.get("event_id") not in unit_event_ids:
+                    continue
+            
+            event_id = doc.get("event_id")
+            if event_id and event_id in event_to_creator:
+                creator_id = event_to_creator[event_id]
+                if creator_id in user_ids_with_access:
+                    user_document_counts[creator_id] = user_document_counts.get(creator_id, 0) + 1
     
     # Group by organization_name (only include users with organization_name)
-    org_event_counts = {}    # organization_name -> total event count
+    org_total_counts = {}    # organization_name -> total count (events + documents)
     
-    for user_id, event_count in user_event_counts.items():
+    for user_id in user_ids_with_access:
         try:
             user_resp = client.auth.admin.get_user_by_id(user_id)
             if user_resp and user_resp.user:
@@ -186,21 +286,26 @@ def get_aoao_info(client, building_id: str, unit_number: Optional[str] = None):
                 # Only include users that belong to an organization
                 if org_name and org_name.strip():
                     org_name = org_name.strip()
-                    org_event_counts[org_name] = org_event_counts.get(org_name, 0) + event_count
+                    event_count = user_event_counts.get(user_id, 0)
+                    document_count = user_document_counts.get(user_id, 0)
+                    total_count = event_count + document_count
+                    org_total_counts[org_name] = org_total_counts.get(org_name, 0) + total_count
         except Exception:
             # Skip if user lookup fails
             continue
     
     # Build organization entries (only organizations, no individual users)
     org_aoaos = []
-    for org_name, total_events in org_event_counts.items():
+    for org_name, total_count in org_total_counts.items():
         org_aoaos.append({
             "organization_name": org_name,
-            "event_count": total_events,
+            "event_count": 0,  # We don't track per-org event counts separately
+            "document_count": 0,  # We don't track per-org document counts separately
+            "total_count": total_count,
         })
     
-    # Sort by event count (descending)
-    org_aoaos.sort(key=lambda x: x["event_count"], reverse=True)
+    # Sort by total_count (descending)
+    org_aoaos.sort(key=lambda x: x.get("total_count", 0), reverse=True)
     
     return org_aoaos
 
