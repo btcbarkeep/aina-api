@@ -22,13 +22,21 @@ class MessageUpdate(BaseModel):
 
 
 class BulkMessageCreate(BaseModel):
-    """Bulk message model for AOAO users."""
+    """Bulk message model for AOAO users and admins."""
     recipient_types: List[str] = Field(
         ..., 
-        description="List of recipient types: 'contractors', 'property_managers', 'owners'"
+        description="List of recipient types: 'contractors', 'property_managers', 'owners'. Can include multiple types."
     )
     subject: str = Field(..., description="Message subject")
     body: str = Field(..., description="Message body")
+    building_id: Optional[str] = Field(
+        None, 
+        description="Optional: Filter recipients to those with access to this building. If not provided, uses all accessible buildings."
+    )
+    unit_id: Optional[str] = Field(
+        None, 
+        description="Optional: Filter recipients to those with access to this unit. If provided, building_id is ignored."
+    )
 
 
 class MessageRead(MessageBase):
