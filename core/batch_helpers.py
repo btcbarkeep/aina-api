@@ -4,6 +4,7 @@
 from typing import Dict, List, Any
 from core.supabase_client import get_supabase_client
 from core.contractor_helpers import batch_enrich_contractors_with_roles
+from core.logging_config import logger
 
 
 def batch_get_document_relations(document_ids: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -158,14 +159,14 @@ def batch_get_event_relations(event_ids: List[str]) -> Dict[str, Dict[str, Any]]
 
 def batch_enrich_documents_with_relations(documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Batch enrich multiple documents with their units and contractors.
+    Batch enrich multiple documents with their units, contractors, and uploader info.
     This is much more efficient than calling enrich_document_with_relations in a loop.
     
     Args:
         documents: List of document dictionaries
     
     Returns:
-        List of document dictionaries with "units" and "contractors" arrays added
+        List of document dictionaries with "units", "contractors", and uploader info added
     """
     if not documents:
         return documents
@@ -185,6 +186,26 @@ def batch_enrich_documents_with_relations(documents: List[Dict[str, Any]]) -> Li
     # Batch fetch all relations
     relations_map = batch_get_document_relations(document_ids)
     
+    # Batch fetch uploader names for all documents (role is already stored in uploaded_by_role)
+    uploader_ids = list(set([d.get("uploaded_by") for d in documents if d.get("uploaded_by")]))
+    uploader_info_map = {}
+    
+    if uploader_ids:
+        client = get_supabase_client()
+        # Fetch user metadata for all uploaders (only need name, role is already in document)
+        for user_id in uploader_ids:
+            try:
+                auth_user = client.auth.admin.get_user_by_id(user_id)
+                if auth_user and auth_user.user:
+                    user_meta = auth_user.user.user_metadata or {}
+                    uploader_info_map[user_id] = {
+                        "full_name": user_meta.get("full_name"),
+                    }
+            except Exception as e:
+                # If we can't fetch user info, skip it
+                logger.debug(f"Could not fetch uploader name for user {user_id}: {e}")
+                pass
+    
     # Enrich each document
     for doc in documents:
         doc_id = doc.get("id")
@@ -199,6 +220,15 @@ def batch_enrich_documents_with_relations(documents: List[Dict[str, Any]]) -> Li
             doc["contractors"] = []
             doc["unit_ids"] = []
             doc["contractor_ids"] = []
+        
+        # Add uploader name (role is already stored in uploaded_by_role from database)
+        uploaded_by = doc.get("uploaded_by")
+        if uploaded_by and uploaded_by in uploader_info_map:
+            uploader_info = uploader_info_map[uploaded_by]
+            doc["uploaded_by_name"] = uploader_info.get("full_name")
+        else:
+            doc["uploaded_by_name"] = None
+        # Note: uploaded_by_role is already in the document from the database query
     
     return documents
 
