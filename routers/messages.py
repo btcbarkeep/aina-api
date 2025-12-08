@@ -486,47 +486,56 @@ def send_bulk_message(
         raise HTTPException(400, f"Invalid recipient types: {invalid_types}. Valid types: {valid_types}")
     
     try:
+        # Clean up placeholder values ("string", empty strings, etc.)
+        building_id = payload.building_id
+        if building_id and (building_id.lower() == "string" or building_id.strip() == ""):
+            building_id = None
+        
+        unit_id = payload.unit_id
+        if unit_id and (unit_id.lower() == "string" or unit_id.strip() == ""):
+            unit_id = None
+        
         # Determine which buildings/units to filter by
         target_building_ids = set()
         target_unit_ids = set()
         
-        if payload.unit_id:
+        if unit_id:
             # If unit_id is provided, filter by that specific unit
             # Validate unit exists
             unit_result = (
                 client.table("units")
                 .select("id, building_id")
-                .eq("id", payload.unit_id)
+                .eq("id", unit_id)
                 .maybe_single()
                 .execute()
             )
             if not unit_result.data:
-                raise HTTPException(404, f"Unit {payload.unit_id} not found")
+                raise HTTPException(404, f"Unit {unit_id} not found")
             
-            target_unit_ids.add(payload.unit_id)
+            target_unit_ids.add(unit_id)
             # Also include the building for building-level access checks
             if unit_result.data.get("building_id"):
                 target_building_ids.add(unit_result.data["building_id"])
-        elif payload.building_id:
+        elif building_id:
             # If building_id is provided, filter by that building and its units
             # Validate building exists
             building_result = (
                 client.table("buildings")
                 .select("id")
-                .eq("id", payload.building_id)
+                .eq("id", building_id)
                 .maybe_single()
                 .execute()
             )
             if not building_result.data:
-                raise HTTPException(404, f"Building {payload.building_id} not found")
+                raise HTTPException(404, f"Building {building_id} not found")
             
-            target_building_ids.add(payload.building_id)
+            target_building_ids.add(building_id)
             
             # Get all units in this building
             units_result = (
                 client.table("units")
                 .select("id")
-                .eq("building_id", payload.building_id)
+                .eq("building_id", building_id)
                 .execute()
             )
             target_unit_ids = set([row["id"] for row in (units_result.data or [])])
@@ -742,10 +751,10 @@ def send_bulk_message(
         
         if not recipient_ids:
             filter_msg = ""
-            if payload.unit_id:
-                filter_msg = f" with access to unit {payload.unit_id}"
-            elif payload.building_id:
-                filter_msg = f" with access to building {payload.building_id}"
+            if unit_id:
+                filter_msg = f" with access to unit {unit_id}"
+            elif building_id:
+                filter_msg = f" with access to building {building_id}"
             elif is_aoao:
                 filter_msg = " with access to AOAO's buildings"
             
@@ -786,10 +795,10 @@ def send_bulk_message(
                 errors.append(f"Batch {i//batch_size + 1}: {str(e)}")
         
         sender_type = "AOAO" if is_aoao else "Admin"
-        logger.info(
-            f"{sender_type} user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
-            f"(types: {payload.recipient_types}, filters: building={payload.building_id}, unit={payload.unit_id})"
-        )
+            logger.info(
+                f"{sender_type} user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
+                f"(types: {payload.recipient_types}, filters: building={building_id}, unit={unit_id})"
+            )
         
         return {
             "success": True,
