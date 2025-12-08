@@ -34,6 +34,11 @@ def create_access_request(
     if payload.request_type == "unit" and not payload.unit_id:
         raise HTTPException(400, "unit_id is required for unit requests")
     
+    # Clean up unit_id if it's "string" or invalid
+    unit_id = payload.unit_id
+    if unit_id and (unit_id.lower() == "string" or unit_id.strip() == ""):
+        unit_id = None
+    
     # Validate building/unit exists
     if payload.building_id:
         building_result = (
@@ -46,38 +51,66 @@ def create_access_request(
         if not building_result.data:
             raise HTTPException(404, f"Building {payload.building_id} not found")
     
-    if payload.unit_id:
+    if unit_id:
         unit_result = (
             client.table("units")
             .select("id")
-            .eq("id", payload.unit_id)
+            .eq("id", unit_id)
             .limit(1)
             .execute()
         )
         if not unit_result.data:
-            raise HTTPException(404, f"Unit {payload.unit_id} not found")
+            raise HTTPException(404, f"Unit {unit_id} not found")
     
-    # Determine organization info if applicable
-    organization_type = None
-    organization_id = None
+    # Determine organization info - use payload if provided, otherwise from current user
+    organization_type = payload.organization_type
+    organization_id = payload.organization_id
     
-    if current_user.pm_company_id:
-        organization_type = "pm_company"
-        organization_id = current_user.pm_company_id
-    elif current_user.aoao_organization_id:
-        organization_type = "aoao_organization"
-        organization_id = current_user.aoao_organization_id
+    # If not provided in payload, try to get from current user
+    if not organization_type or not organization_id:
+        if current_user.pm_company_id:
+            organization_type = "pm_company"
+            organization_id = current_user.pm_company_id
+        elif current_user.aoao_organization_id:
+            organization_type = "aoao_organization"
+            organization_id = current_user.aoao_organization_id
+    
+    # Validate organization exists if provided
+    if organization_type and organization_id:
+        if organization_type == "pm_company":
+            org_result = (
+                client.table("property_management_companies")
+                .select("id")
+                .eq("id", organization_id)
+                .limit(1)
+                .execute()
+            )
+            if not org_result.data:
+                raise HTTPException(404, f"PM company {organization_id} not found")
+        elif organization_type == "aoao_organization":
+            org_result = (
+                client.table("aoao_organizations")
+                .select("id")
+                .eq("id", organization_id)
+                .limit(1)
+                .execute()
+            )
+            if not org_result.data:
+                raise HTTPException(404, f"AOAO organization {organization_id} not found")
     
     request_data = {
         "requester_user_id": current_user.auth_user_id,
         "request_type": payload.request_type,
         "building_id": payload.building_id,
-        "unit_id": payload.unit_id,
+        "unit_id": unit_id,  # Use cleaned unit_id
         "organization_type": organization_type,
         "organization_id": organization_id,
         "notes": payload.notes,
         "status": "pending",
     }
+    
+    # Remove None values to avoid database issues
+    request_data = {k: v for k, v in request_data.items() if v is not None}
     
     try:
         result = (
