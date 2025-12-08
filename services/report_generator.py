@@ -459,6 +459,33 @@ async def generate_building_report(
     if not internal and context_role == "public":
         events = events[:5]
     
+    # Attach unit_id to events from event_units junction table
+    if events:
+        event_ids = [e.get("id") for e in events if e.get("id")]
+        if event_ids:
+            event_units_result = (
+                client.table("event_units")
+                .select("event_id, unit_id")
+                .in_("event_id", event_ids)
+                .execute()
+            )
+            # Create a map: event_id -> list of unit_ids
+            event_units_map = {}
+            if event_units_result.data:
+                for row in event_units_result.data:
+                    event_id = row.get("event_id")
+                    unit_id = row.get("unit_id")
+                    if event_id and unit_id:
+                        if event_id not in event_units_map:
+                            event_units_map[event_id] = []
+                        event_units_map[event_id].append(unit_id)
+            
+            # Add unit_ids to each event (list of all unit_ids)
+            for event in events:
+                event_id = event.get("id")
+                unit_ids = event_units_map.get(event_id, [])
+                event["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
+    
     # Get documents for this building
     documents_query = client.table("documents").select("*").eq("building_id", building_id)
     
@@ -529,6 +556,33 @@ async def generate_building_report(
     # For public reports, limit to 5 most recent documents
     if not internal and context_role == "public":
         documents = documents[:5]
+    
+    # Attach unit_id to documents from document_units junction table
+    if documents:
+        document_ids = [d.get("id") for d in documents if d.get("id")]
+        if document_ids:
+            document_units_result = (
+                client.table("document_units")
+                .select("document_id, unit_id")
+                .in_("document_id", document_ids)
+                .execute()
+            )
+            # Create a map: document_id -> list of unit_ids
+            document_units_map = {}
+            if document_units_result.data:
+                for row in document_units_result.data:
+                    doc_id = row.get("document_id")
+                    unit_id = row.get("unit_id")
+                    if doc_id and unit_id:
+                        if doc_id not in document_units_map:
+                            document_units_map[doc_id] = []
+                        document_units_map[doc_id].append(unit_id)
+            
+            # Add unit_ids to each document (list of all unit_ids)
+            for document in documents:
+                doc_id = document.get("id")
+                unit_ids = document_units_map.get(doc_id, [])
+                document["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
     
     # Get contractors (via events)
     event_contractors_result = (
@@ -887,6 +941,13 @@ async def generate_unit_report(
     if not internal and context_role == "public":
         events = events[:5]
     
+    # Attach unit_ids to events from event_units junction table
+    # For unit reports, all events are linked to this unit via event_units
+    # Return as a list for consistency (even though it's always one unit for unit reports)
+    if events:
+        for event in events:
+            event["unit_ids"] = [unit_id]  # List with single unit_id
+    
     # Get documents for this unit (via document_units)
     document_units_result = (
         client.table("document_units")
@@ -920,6 +981,13 @@ async def generate_unit_report(
     # For public reports, limit to 5 most recent documents
     if not internal and context_role == "public":
         documents = documents[:5]
+    
+    # Attach unit_ids to documents from document_units junction table
+    # For unit reports, all documents are linked to this unit via document_units
+    # Return as a list for consistency (even though it's always one unit for unit reports)
+    if documents:
+        for document in documents:
+            document["unit_ids"] = [unit_id]  # List with single unit_id
     
     # Get contractors (via events for this unit)
     contractors = []
