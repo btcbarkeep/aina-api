@@ -795,10 +795,10 @@ def send_bulk_message(
                 errors.append(f"Batch {i//batch_size + 1}: {str(e)}")
         
         sender_type = "AOAO" if is_aoao else "Admin"
-            logger.info(
-                f"{sender_type} user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
-                f"(types: {payload.recipient_types}, filters: building={building_id}, unit={unit_id})"
-            )
+        logger.info(
+            f"{sender_type} user {current_user.auth_user_id} sent bulk message to {created_count} recipients "
+            f"(types: {payload.recipient_types}, filters: building={building_id}, unit={unit_id})"
+        )
         
         return {
             "success": True,
