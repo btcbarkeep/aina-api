@@ -218,6 +218,88 @@ def list_admin_messages(
         raise HTTPException(500, f"Failed to list admin messages: {str(e)}")
 
 
+@router.get("/eligible-recipients")
+def get_eligible_recipients(
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Get list of users that the current user can message.
+    
+    **Permissions:**
+    - Admin/Super Admin: Can see all users
+    - Regular users: Can only see admins
+    """
+    client = get_supabase_client()
+    
+    try:
+        # Fetch all users
+        raw = client.auth.admin.list_users()
+        
+        # Extract user list (handle different response formats)
+        # Use the same pattern as admin.py
+        if isinstance(raw, list):
+            all_users = raw
+        elif isinstance(raw, dict) and "users" in raw:
+            all_users = raw["users"]
+        elif hasattr(raw, "users"):
+            all_users = raw.users
+        else:
+            all_users = []
+        
+        is_admin = current_user.role in ["admin", "super_admin"]
+        
+        eligible = []
+        for user in all_users:
+            # Extract user data
+            if hasattr(user, "id"):
+                user_id = user.id
+                email = getattr(user, "email", None)
+                user_meta = getattr(user, "user_metadata", {}) or {}
+            elif isinstance(user, dict):
+                user_id = user.get("id")
+                email = user.get("email")
+                user_meta = user.get("user_metadata", {}) or {}
+            else:
+                continue
+            
+            if not user_id:
+                continue
+            
+            user_role = user_meta.get("role", "aoao")
+            full_name = user_meta.get("full_name")
+            
+            # Filter based on permissions
+            if is_admin:
+                # Admins can message anyone (except themselves)
+                if user_id != current_user.auth_user_id:
+                    eligible.append({
+                        "id": user_id,
+                        "email": email,
+                        "full_name": full_name,
+                        "role": user_role,
+                    })
+            else:
+                # Regular users can only message admins
+                if user_role in ["admin", "super_admin"] and user_id != current_user.auth_user_id:
+                    eligible.append({
+                        "id": user_id,
+                        "email": email,
+                        "full_name": full_name,
+                        "role": user_role,
+                    })
+        
+        # Sort by full_name or email
+        eligible.sort(key=lambda x: (x.get("full_name") or x.get("email") or "").lower())
+        
+        return {
+            "eligible_recipients": eligible,
+            "count": len(eligible)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get eligible recipients: {e}")
+        raise HTTPException(500, f"Failed to get eligible recipients: {str(e)}")
+
+
 @router.get("/{message_id}", response_model=MessageRead)
 def get_message(
     message_id: str,
@@ -334,84 +416,6 @@ def delete_message(
     except Exception as e:
         logger.error(f"Failed to delete message: {e}")
         raise HTTPException(500, f"Failed to delete message: {str(e)}")
-
-
-@router.get("/eligible-recipients")
-def get_eligible_recipients(
-    current_user: CurrentUser = Depends(get_current_user)
-):
-    """
-    Get list of users that the current user can message.
-    
-    **Permissions:**
-    - Admin/Super Admin: Can see all users
-    - Regular users: Can only see admins
-    """
-    client = get_supabase_client()
-    
-    try:
-        # Fetch all users
-        raw = client.auth.admin.list_users()
-        
-        # Extract user list (handle different response formats)
-        if hasattr(raw, "users"):
-            all_users = raw.users
-        elif isinstance(raw, list):
-            all_users = raw
-        elif isinstance(raw, dict) and "users" in raw:
-            all_users = raw["users"]
-        else:
-            all_users = []
-        
-        is_admin = current_user.role in ["admin", "super_admin"]
-        
-        eligible = []
-        for user in all_users:
-            # Extract user data
-            if hasattr(user, "id"):
-                user_id = user.id
-                email = getattr(user, "email", None)
-                user_meta = getattr(user, "user_metadata", {}) or {}
-            elif isinstance(user, dict):
-                user_id = user.get("id")
-                email = user.get("email")
-                user_meta = user.get("user_metadata", {}) or {}
-            else:
-                continue
-            
-            user_role = user_meta.get("role", "aoao")
-            full_name = user_meta.get("full_name")
-            
-            # Filter based on permissions
-            if is_admin:
-                # Admins can message anyone (except themselves)
-                if user_id != current_user.auth_user_id:
-                    eligible.append({
-                        "id": user_id,
-                        "email": email,
-                        "full_name": full_name,
-                        "role": user_role,
-                    })
-            else:
-                # Regular users can only message admins
-                if user_role in ["admin", "super_admin"] and user_id != current_user.auth_user_id:
-                    eligible.append({
-                        "id": user_id,
-                        "email": email,
-                        "full_name": full_name,
-                        "role": user_role,
-                    })
-        
-        # Sort by full_name or email
-        eligible.sort(key=lambda x: (x.get("full_name") or x.get("email") or "").lower())
-        
-        return {
-            "eligible_recipients": eligible,
-            "count": len(eligible)
-        }
-    except Exception as e:
-        logger.error(f"Failed to get eligible recipients: {e}")
-        raise HTTPException(500, f"Failed to get eligible recipients: {str(e)}")
 
 
 @router.post("/bulk")
