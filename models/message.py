@@ -47,6 +47,7 @@ class MessageRead(MessageBase):
     is_read: bool
     read_at: Optional[datetime] = None
     replies_disabled: bool = Field(default=False, description="If true, only admins can reply (used for bulk announcements)")
+    is_bulk: bool = Field(default=False, description="If true, this is a bulk message/announcement sent to multiple recipients")
     created_at: datetime
     updated_at: datetime
     
