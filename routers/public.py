@@ -390,7 +390,7 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     Get all contractors who have events for the building/unit.
     Ranked by number of events.
     """
-    # Get all events for the building/unit with contractor_id
+    # Get all events for the building/unit
     try:
         query = (
             client.table("events")
@@ -403,11 +403,16 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
         
         events_result = query.execute()
         
+        print(f"DEBUG: Found {len(events_result.data or [])} total events for building {building_id}")
+        
         # Filter out events with null contractor_id in Python
         if events_result.data:
-            events_result.data = [e for e in events_result.data if e.get("contractor_id")]
+            events_with_contractors = [e for e in events_result.data if e.get("contractor_id")]
+            print(f"DEBUG: Found {len(events_with_contractors)} events with contractor_id")
+            events_result.data = events_with_contractors
+        else:
+            events_result.data = []
         
-        print(f"DEBUG: Found {len(events_result.data or [])} events with contractor_id for building {building_id}")
     except Exception as e:
         print(f"DEBUG: Error querying events for contractors: {e}")
         import traceback
@@ -422,36 +427,55 @@ def get_top_contractors(client, building_id: str, unit_number: Optional[str] = N
     contractor_counts = {}
     contractor_ids = set()
     
-    if events_result.data:
-        for event in events_result.data:
-            contractor_id = event.get("contractor_id")
-            if contractor_id:
-                contractor_counts[contractor_id] = contractor_counts.get(contractor_id, 0) + 1
-                contractor_ids.add(contractor_id)
+    for event in events_result.data:
+        contractor_id = event.get("contractor_id")
+        if contractor_id:
+            contractor_counts[contractor_id] = contractor_counts.get(contractor_id, 0) + 1
+            contractor_ids.add(contractor_id)
+    
+    print(f"DEBUG: Found {len(contractor_ids)} unique contractors with events")
     
     if not contractor_ids:
         return []
     
     # Get contractor details
-    contractors_result = (
-        client.table("contractors")
-        .select("*")
-        .in_("id", list(contractor_ids))
-        .execute()
-    )
-    
-    contractor_map = {c["id"]: c for c in (contractors_result.data or [])}
+    try:
+        contractors_result = (
+            client.table("contractors")
+            .select("*")
+            .in_("id", list(contractor_ids))
+            .execute()
+        )
+        
+        contractor_map = {c["id"]: c for c in (contractors_result.data or [])}
+        print(f"DEBUG: Fetched {len(contractor_map)} contractor details from database")
+    except Exception as e:
+        print(f"DEBUG: Error fetching contractor details: {e}")
+        import traceback
+        traceback.print_exc()
+        contractor_map = {}
     
     # Build result with counts
     result = []
     for contractor_id in contractor_ids:
-        contractor = contractor_map.get(contractor_id, {"id": contractor_id})
-        contractor_info = contractor.copy()
-        contractor_info["event_count"] = contractor_counts.get(contractor_id, 0)
-        result.append(contractor_info)
+        contractor = contractor_map.get(contractor_id)
+        if contractor:
+            contractor_info = contractor.copy()
+            contractor_info["event_count"] = contractor_counts.get(contractor_id, 0)
+            result.append(contractor_info)
+        else:
+            # Contractor not found in database, but has events - include with minimal info
+            print(f"DEBUG: Warning: Contractor {contractor_id} has events but not found in contractors table")
+            result.append({
+                "id": contractor_id,
+                "company_name": f"Contractor {contractor_id[:8]}",
+                "event_count": contractor_counts.get(contractor_id, 0),
+            })
     
     # Sort by event_count (descending)
     result.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+    
+    print(f"DEBUG: Returning {len(result)} contractors")
     
     return result
 
