@@ -777,12 +777,13 @@ async def get_unit_info(building_id: str, unit_number: str):
             .select("id")
             .eq("building_id", building_id)
             .eq("unit_number", unit_number)
-            .single()
+            .limit(1)
             .execute()
         )
-        if not unit_result.data:
+        unit_row = (unit_result.data or [None])[0]
+        if not unit_row:
             raise HTTPException(404, "Unit not found")
-        unit_id = unit_result.data.get("id")
+        unit_id = unit_row.get("id")
         
         report = await generate_unit_report(
             unit_id=unit_id,
