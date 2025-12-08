@@ -485,6 +485,10 @@ async def generate_building_report(
                 event_id = event.get("id")
                 unit_ids = event_units_map.get(event_id, [])
                 event["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
+                
+                # Remove unit_number field for public reports
+                if not internal and context_role == "public":
+                    event.pop("unit_number", None)
     
     # Get documents for this building
     documents_query = client.table("documents").select("*").eq("building_id", building_id)
@@ -947,6 +951,10 @@ async def generate_unit_report(
     if events:
         for event in events:
             event["unit_ids"] = [unit_id]  # List with single unit_id
+            
+            # Remove unit_number field for public reports
+            if not internal and context_role == "public":
+                event.pop("unit_number", None)
     
     # Get documents for this unit (via document_units)
     document_units_result = (
