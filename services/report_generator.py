@@ -452,6 +452,13 @@ async def generate_building_report(
             sanitized_events.append(sanitized)
     events = sanitized_events
     
+    # Store total event count before limiting (for public reports)
+    total_events_count = len(events)
+    
+    # For public reports, limit to 5 most recent events
+    if not internal and context_role == "public":
+        events = events[:5]
+    
     # Get documents for this building
     documents_query = client.table("documents").select("*").eq("building_id", building_id)
     
@@ -515,6 +522,13 @@ async def generate_building_report(
         if sanitized:
             sanitized_documents.append(sanitized)
     documents = sanitized_documents
+    
+    # Store total document count before limiting (for public reports)
+    total_documents_count = len(documents)
+    
+    # For public reports, limit to 5 most recent documents
+    if not internal and context_role == "public":
+        documents = documents[:5]
     
     # Get contractors (via events)
     event_contractors_result = (
@@ -662,9 +676,10 @@ async def generate_building_report(
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
     # Calculate statistics
+    # Use total counts (not limited) for public reports
     stats = {
-        "total_events": len(events),
-        "total_documents": len(documents),
+        "total_events": total_events_count if (not internal and context_role == "public") else len(events),
+        "total_documents": total_documents_count if (not internal and context_role == "public") else len(documents),
         "total_units": len(units),
         "total_contractors": len(contractors),
         "total_aoao_organizations": len(aoao_orgs),
