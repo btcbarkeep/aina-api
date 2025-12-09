@@ -175,10 +175,6 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     event_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids"}))
     event_data["created_by"] = current_user.id
 
-    # Legacy: Keep contractor_id for backward compatibility (temporary)
-    if current_user.role == "contractor":
-        event_data["contractor_id"] = current_user.contractor_id
-
     # Building access check for non-admin, non-manager, non-contractor roles
     # Contractors have hardcoded access to post events for any building/unit
     contractor_roles = ["contractor", "contractor_staff"]
