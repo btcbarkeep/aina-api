@@ -10,6 +10,7 @@ from dependencies.auth import (
 )
 
 from core.supabase_client import get_supabase_client
+from core.logging_config import logger
 from models.event import EventCreate, EventUpdate, EventRead
 from models.event_comment import EventCommentCreate, EventCommentRead
 
@@ -67,6 +68,68 @@ def get_event_building_id(event_id: str) -> str:
 
 
 # -----------------------------------------------------
+# Helper — Create event_units junction table entries
+# -----------------------------------------------------
+def create_event_units(event_id: str, unit_ids: list):
+    if not unit_ids:
+        return
+    client = get_supabase_client()
+    for unit_id in unit_ids:
+        try:
+            client.table("event_units").insert({
+                "event_id": event_id,
+                "unit_id": str(unit_id)
+            }).execute()
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "unique" in error_msg:
+                logger.debug(f"Duplicate event_unit relationship ignored: event_id={event_id}, unit_id={unit_id}")
+            else:
+                logger.warning(f"Failed to create event_unit relationship: {e}")
+                raise HTTPException(500, f"Failed to create event_unit relationship: {e}")
+
+
+# -----------------------------------------------------
+# Helper — Create event_contractors junction table entries
+# -----------------------------------------------------
+def create_event_contractors(event_id: str, contractor_ids: list):
+    if not contractor_ids:
+        return
+    client = get_supabase_client()
+    for contractor_id in contractor_ids:
+        try:
+            client.table("event_contractors").insert({
+                "event_id": event_id,
+                "contractor_id": str(contractor_id)
+            }).execute()
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "duplicate" in error_msg or "unique" in error_msg:
+                logger.debug(f"Duplicate event_contractor relationship ignored: event_id={event_id}, contractor_id={contractor_id}")
+            else:
+                logger.warning(f"Failed to create event_contractor relationship: {e}")
+                raise HTTPException(500, f"Failed to create event_contractor relationship: {e}")
+
+
+# -----------------------------------------------------
+# Helper — Update event_units junction table (replace all)
+# -----------------------------------------------------
+def update_event_units(event_id: str, unit_ids: list):
+    client = get_supabase_client()
+    client.table("event_units").delete().eq("event_id", event_id).execute()
+    create_event_units(event_id, unit_ids)
+
+
+# -----------------------------------------------------
+# Helper — Update event_contractors junction table (replace all)
+# -----------------------------------------------------
+def update_event_contractors(event_id: str, contractor_ids: list):
+    client = get_supabase_client()
+    client.table("event_contractors").delete().eq("event_id", event_id).execute()
+    create_event_contractors(event_id, contractor_ids)
+
+
+# -----------------------------------------------------
 # LIST EVENTS
 # -----------------------------------------------------
 @router.get("", summary="List Events", response_model=List[EventRead])
@@ -96,13 +159,24 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     building_id = payload.building_id
 
-    event_data = sanitize(payload.model_dump())
-    event_data["created_by"] = current_user.id
-
-    # Contractor linking
+    # Extract unit_ids and contractor_ids before sanitizing (they don't belong in events table)
+    unit_ids = payload.unit_ids or []
+    contractor_ids = payload.contractor_ids or []
+    
+    # If contractor user, add their contractor_id to the list
     if current_user.role == "contractor":
         if not getattr(current_user, "contractor_id", None):
             raise HTTPException(400, "Contractor account missing contractor_id.")
+        # Add contractor_id to list if not already present
+        if current_user.contractor_id not in contractor_ids:
+            contractor_ids.append(current_user.contractor_id)
+
+    # Sanitize and prepare event_data (exclude unit_ids and contractor_ids)
+    event_data = sanitize(payload.model_dump(exclude={"unit_ids", "contractor_ids"}))
+    event_data["created_by"] = current_user.id
+
+    # Legacy: Keep contractor_id for backward compatibility (temporary)
+    if current_user.role == "contractor":
         event_data["contractor_id"] = current_user.contractor_id
 
     # Building access check for non-admin, non-manager, non-contractor roles
@@ -111,6 +185,7 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
     if current_user.role not in ["admin", "manager"] + contractor_roles:
         verify_user_building_access_supabase(current_user.id, building_id)
 
+    # Create event
     result = (
         client.table("events")
         .insert(event_data, returning="representation")
@@ -120,6 +195,12 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 
     if not result.data:
         raise HTTPException(500, "Insert failed")
+
+    event_id = result.data["id"]
+
+    # Create junction table entries
+    create_event_units(event_id, unit_ids)
+    create_event_contractors(event_id, contractor_ids)
 
     return result.data
 
@@ -134,7 +215,13 @@ def create_event(payload: EventCreate, current_user: CurrentUser = Depends(get_c
 )
 def update_event(event_id: str, payload: EventUpdate, current_user: CurrentUser = Depends(get_current_user)):
     client = get_supabase_client()
-    update_data = sanitize(payload.model_dump(exclude_unset=True))
+    
+    # Extract unit_ids and contractor_ids if provided
+    unit_ids = payload.unit_ids if hasattr(payload, 'unit_ids') and payload.unit_ids is not None else None
+    contractor_ids = payload.contractor_ids if hasattr(payload, 'contractor_ids') and payload.contractor_ids is not None else None
+    
+    # Prepare update_data (exclude unit_ids and contractor_ids)
+    update_data = sanitize(payload.model_dump(exclude_unset=True, exclude={"unit_ids", "contractor_ids"}))
     
     # Contractors can ONLY update status, nothing else
     contractor_roles = ["contractor", "contractor_staff"]
@@ -146,8 +233,7 @@ def update_event(event_id: str, payload: EventUpdate, current_user: CurrentUser 
         if not update_data:
             raise HTTPException(400, "Contractors can only update event status.")
     
-    # For non-contractors, check if they're trying to modify fields (not just status)
-    # This prevents contractors from modifying other fields even if they somehow bypass the above check
+    # Update event table
     try:
         result = (
             client.table("events")
@@ -161,6 +247,13 @@ def update_event(event_id: str, payload: EventUpdate, current_user: CurrentUser 
 
     if not result.data:
         raise HTTPException(404, "Event not found")
+
+    # Update junction tables if provided
+    if unit_ids is not None:
+        update_event_units(event_id, unit_ids)
+    
+    if contractor_ids is not None:
+        update_event_contractors(event_id, contractor_ids)
 
     return result.data
 
