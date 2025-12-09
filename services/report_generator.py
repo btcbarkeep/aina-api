@@ -704,10 +704,19 @@ async def generate_building_report(
     # Store total contractor count before limiting (for public reports)
     total_contractors_count = len(contractors)
     
-    # For public reports, limit to top 5 contractors by event count
+    # For public reports, limit to top 5 contractors
+    # Prioritize contractors with "paid" subscription, then sort by event count
     if not internal and context_role == "public":
-        contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        contractors = contractors[:5]
+        # Separate paid and non-paid contractors
+        paid_contractors = [c for c in contractors if c.get("subscription_tier") == "paid"]
+        non_paid_contractors = [c for c in contractors if c.get("subscription_tier") != "paid"]
+        
+        # Sort each group by event count (descending)
+        paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        non_paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        
+        # Combine: paid first, then non-paid, take top 5
+        contractors = (paid_contractors + non_paid_contractors)[:5]
     
     # Get property management companies assigned to this building
     pm_building_access_result = (
@@ -942,23 +951,19 @@ async def generate_building_report(
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
     
-    # For public reports, limit to top 5 PM companies by event count
-    # Include PM companies with 0 events if there aren't 5 with events
+    # For public reports, limit to top 5 PM companies
+    # Prioritize PM companies with "paid" subscription, then sort by event count
     if not internal and context_role == "public":
-        # Sort by event count (descending)
-        pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        # Separate paid and non-paid PM companies
+        paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") == "paid"]
+        non_paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") != "paid"]
         
-        # Separate PM companies with events from those without
-        pm_with_events = [pm for pm in pm_companies if pm.get("event_count", 0) > 0]
-        pm_without_events = [pm for pm in pm_companies if pm.get("event_count", 0) == 0]
+        # Sort each group by event count (descending)
+        paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        non_paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         
-        # Take up to 5 with events, then fill remaining slots with those without events
-        result = pm_with_events[:5]
-        remaining_slots = 5 - len(result)
-        if remaining_slots > 0 and pm_without_events:
-            result.extend(pm_without_events[:remaining_slots])
-        
-        pm_companies = result
+        # Combine: paid first, then non-paid, take top 5
+        pm_companies = (paid_pm_companies + non_paid_pm_companies)[:5]
     
     # Calculate statistics
     # Use total counts (not limited) for public reports
@@ -1310,10 +1315,19 @@ async def generate_unit_report(
     # Store total contractor count before limiting (for public reports)
     total_contractors_count = len(contractors)
     
-    # For public reports, limit to top 5 contractors by event count
+    # For public reports, limit to top 5 contractors
+    # Prioritize contractors with "paid" subscription, then sort by event count
     if not internal and context_role == "public":
-        contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        contractors = contractors[:5]
+        # Separate paid and non-paid contractors
+        paid_contractors = [c for c in contractors if c.get("subscription_tier") == "paid"]
+        non_paid_contractors = [c for c in contractors if c.get("subscription_tier") != "paid"]
+        
+        # Sort each group by event count (descending)
+        paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        non_paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        
+        # Combine: paid first, then non-paid, take top 5
+        contractors = (paid_contractors + non_paid_contractors)[:5]
     
     # Get property management companies assigned to this unit
     pm_companies = []
@@ -1469,23 +1483,19 @@ async def generate_unit_report(
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
     
-    # For public reports, limit to top 5 PM companies by event count
-    # Include PM companies with 0 events if there aren't 5 with events
+    # For public reports, limit to top 5 PM companies
+    # Prioritize PM companies with "paid" subscription, then sort by event count
     if not internal and context_role == "public":
-        # Sort by event count (descending)
-        pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        # Separate paid and non-paid PM companies
+        paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") == "paid"]
+        non_paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") != "paid"]
         
-        # Separate PM companies with events from those without
-        pm_with_events = [pm for pm in pm_companies if pm.get("event_count", 0) > 0]
-        pm_without_events = [pm for pm in pm_companies if pm.get("event_count", 0) == 0]
+        # Sort each group by event count (descending)
+        paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        non_paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         
-        # Take up to 5 with events, then fill remaining slots with those without events
-        result = pm_with_events[:5]
-        remaining_slots = 5 - len(result)
-        if remaining_slots > 0 and pm_without_events:
-            result.extend(pm_without_events[:remaining_slots])
-        
-        pm_companies = result
+        # Combine: paid first, then non-paid, take top 5
+        pm_companies = (paid_pm_companies + non_paid_pm_companies)[:5]
     
     # Get AOAO organizations assigned to this unit's building
     # (AOAO organizations are assigned at the building level, not unit level)
