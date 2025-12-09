@@ -648,8 +648,9 @@ async def generate_building_report(
             subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
         
         # Update documents with category and subcategory names
+        # Keep category_id and subcategory_id, and add category and subcategory text names
         for document in documents:
-            # Set category name (rename from content_type to category)
+            # Add category text name (keep category_id)
             category_id = document.get("category_id")
             if category_id and category_id in category_name_map:
                 document["category"] = category_name_map[category_id]
@@ -659,7 +660,7 @@ async def generate_building_report(
             # Remove old content_type field if it exists
             document.pop("content_type", None)
             
-            # Set subcategory name
+            # Add subcategory text name (keep subcategory_id)
             subcategory_id = document.get("subcategory_id")
             if subcategory_id and subcategory_id in subcategory_name_map:
                 document["subcategory"] = subcategory_name_map[subcategory_id]
@@ -819,6 +820,125 @@ async def generate_building_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
+    # Count units and buildings for each PM company
+    if pm_companies:
+        pm_company_ids_list = [pm.get("id") for pm in pm_companies if pm.get("id")]
+        
+        # Get building access counts
+        pm_building_counts = {}
+        if pm_company_ids_list:
+            pm_building_access_all = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            for row in (pm_building_access_all.data or []):
+                pm_id = row.get("pm_company_id")
+                if pm_id:
+                    pm_building_counts[pm_id] = pm_building_counts.get(pm_id, 0) + 1
+        
+        # Get unit access counts (direct + inherited from buildings, avoiding double counting)
+        pm_unit_counts = {}
+        if pm_company_ids_list:
+            # Get building access for each PM company
+            pm_building_access_for_units = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id, building_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            
+            # Map PM company to their accessible building IDs
+            pm_to_buildings = {}
+            building_ids_set = set()
+            for row in (pm_building_access_for_units.data or []):
+                pm_id = row.get("pm_company_id")
+                building_id = row.get("building_id")
+                if pm_id and building_id:
+                    building_ids_set.add(building_id)
+                    if pm_id not in pm_to_buildings:
+                        pm_to_buildings[pm_id] = set()
+                    pm_to_buildings[pm_id].add(building_id)
+            
+            # Get all units from buildings PM companies have access to
+            units_from_buildings_map = {}  # building_id -> set of unit_ids
+            if building_ids_set:
+                units_from_buildings = (
+                    client.table("units")
+                    .select("id, building_id")
+                    .in_("building_id", list(building_ids_set))
+                    .execute()
+                )
+                for unit in (units_from_buildings.data or []):
+                    b_id = unit.get("building_id")
+                    unit_id = unit.get("id")
+                    if b_id and unit_id:
+                        if b_id not in units_from_buildings_map:
+                            units_from_buildings_map[b_id] = set()
+                        units_from_buildings_map[b_id].add(unit_id)
+            
+            # Get direct unit access
+            pm_unit_access_direct = (
+                client.table("pm_company_unit_access")
+                .select("pm_company_id, unit_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            
+            # Get building_id for each directly accessed unit (to check if it's already included)
+            direct_unit_ids = set()
+            pm_to_direct_units = {}
+            for row in (pm_unit_access_direct.data or []):
+                pm_id = row.get("pm_company_id")
+                unit_id = row.get("unit_id")
+                if pm_id and unit_id:
+                    direct_unit_ids.add(unit_id)
+                    if pm_id not in pm_to_direct_units:
+                        pm_to_direct_units[pm_id] = set()
+                    pm_to_direct_units[pm_id].add(unit_id)
+            
+            # Get building_id for directly accessed units
+            direct_units_with_buildings = {}
+            if direct_unit_ids:
+                direct_units_result = (
+                    client.table("units")
+                    .select("id, building_id")
+                    .in_("id", list(direct_unit_ids))
+                    .execute()
+                )
+                for unit in (direct_units_result.data or []):
+                    unit_id = unit.get("id")
+                    building_id = unit.get("building_id")
+                    if unit_id and building_id:
+                        direct_units_with_buildings[unit_id] = building_id
+            
+            # Calculate unique unit counts per PM company
+            for pm_id in pm_company_ids_list:
+                accessible_unit_ids = set()
+                
+                # Add units from buildings they have access to
+                building_ids = pm_to_buildings.get(pm_id, set())
+                for b_id in building_ids:
+                    units_in_building = units_from_buildings_map.get(b_id, set())
+                    accessible_unit_ids.update(units_in_building)
+                
+                # Add direct unit access (only if unit is not already included via building access)
+                direct_units = pm_to_direct_units.get(pm_id, set())
+                for unit_id in direct_units:
+                    unit_building_id = direct_units_with_buildings.get(unit_id)
+                    # If unit's building is not in PM company's building access, add it
+                    if unit_building_id not in building_ids:
+                        accessible_unit_ids.add(unit_id)
+                
+                pm_unit_counts[pm_id] = len(accessible_unit_ids)
+        
+        # Add counts to each PM company
+        for pm in pm_companies:
+            pm_id = pm.get("id")
+            pm["unit_count"] = pm_unit_counts.get(pm_id, 0)
+            pm["building_count"] = pm_building_counts.get(pm_id, 0)
+    
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
     
@@ -864,7 +984,7 @@ async def generate_building_report(
         # Remove fields from documents
         documents_filtered = []
         for doc in documents:
-            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted"]})
+            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted", "unit_id", "content_type"]})
         
         # Remove fields from contractors
         contractors_filtered = []
@@ -1135,8 +1255,9 @@ async def generate_unit_report(
             subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
         
         # Update documents with category and subcategory names
+        # Keep category_id and subcategory_id, and add category and subcategory text names
         for document in documents:
-            # Set category name (rename from content_type to category)
+            # Add category text name (keep category_id)
             category_id = document.get("category_id")
             if category_id and category_id in category_name_map:
                 document["category"] = category_name_map[category_id]
@@ -1146,7 +1267,7 @@ async def generate_unit_report(
             # Remove old content_type field if it exists
             document.pop("content_type", None)
             
-            # Set subcategory name
+            # Add subcategory text name (keep subcategory_id)
             subcategory_id = document.get("subcategory_id")
             if subcategory_id and subcategory_id in subcategory_name_map:
                 document["subcategory"] = subcategory_name_map[subcategory_id]
@@ -1253,6 +1374,98 @@ async def generate_unit_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
+    # Count units and buildings for each PM company
+    if pm_companies:
+        pm_company_ids_list = [pm.get("id") for pm in pm_companies if pm.get("id")]
+        
+        # Get building access counts
+        pm_building_counts = {}
+        if pm_company_ids_list:
+            pm_building_access_all = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            for row in (pm_building_access_all.data or []):
+                pm_id = row.get("pm_company_id")
+                if pm_id:
+                    pm_building_counts[pm_id] = pm_building_counts.get(pm_id, 0) + 1
+        
+        # Get unit access counts (direct + inherited from buildings)
+        pm_unit_counts = {}
+        if pm_company_ids_list:
+            # Direct unit access
+            pm_unit_access_direct = (
+                client.table("pm_company_unit_access")
+                .select("pm_company_id, unit_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            direct_unit_counts = {}
+            for row in (pm_unit_access_direct.data or []):
+                pm_id = row.get("pm_company_id")
+                if pm_id:
+                    direct_unit_counts[pm_id] = direct_unit_counts.get(pm_id, 0) + 1
+            
+            # Inherited units from buildings (get unique unit counts per PM company)
+            pm_building_access_for_units = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id, building_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            
+            # Get all building IDs
+            building_ids_set = set()
+            pm_to_buildings = {}
+            for row in (pm_building_access_for_units.data or []):
+                pm_id = row.get("pm_company_id")
+                building_id = row.get("building_id")
+                if pm_id and building_id:
+                    building_ids_set.add(building_id)
+                    if pm_id not in pm_to_buildings:
+                        pm_to_buildings[pm_id] = set()
+                    pm_to_buildings[pm_id].add(building_id)
+            
+            # Get all units from these buildings
+            inherited_unit_counts = {}
+            if building_ids_set:
+                units_from_buildings = (
+                    client.table("units")
+                    .select("id, building_id")
+                    .in_("building_id", list(building_ids_set))
+                    .execute()
+                )
+                # Count units per building
+                building_unit_counts = {}
+                for unit in (units_from_buildings.data or []):
+                    b_id = unit.get("building_id")
+                    if b_id:
+                        building_unit_counts[b_id] = building_unit_counts.get(b_id, 0) + 1
+                
+                # Sum units per PM company based on their building access
+                for pm_id, building_ids in pm_to_buildings.items():
+                    total_units = 0
+                    for b_id in building_ids:
+                        total_units += building_unit_counts.get(b_id, 0)
+                    inherited_unit_counts[pm_id] = total_units
+            
+            # Combine direct and inherited unit counts (avoid double counting)
+            # For now, we'll use direct + inherited (even though there might be overlap)
+            # In practice, inherited units from buildings already include direct unit access
+            for pm_id in pm_company_ids_list:
+                direct_count = direct_unit_counts.get(pm_id, 0)
+                inherited_count = inherited_unit_counts.get(pm_id, 0)
+                # Use the larger value to avoid double counting (inherited includes direct)
+                pm_unit_counts[pm_id] = max(direct_count, inherited_count) if (direct_count > 0 and inherited_count > 0) else (direct_count + inherited_count)
+        
+        # Add counts to each PM company
+        for pm in pm_companies:
+            pm_id = pm.get("id")
+            pm["unit_count"] = pm_unit_counts.get(pm_id, 0)
+            pm["building_count"] = pm_building_counts.get(pm_id, 0)
+    
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
     
@@ -1336,7 +1549,7 @@ async def generate_unit_report(
         # Remove fields from documents
         documents_filtered = []
         for doc in documents:
-            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted"]})
+            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted", "unit_id", "content_type"]})
         documents = documents_filtered
         
         # Remove fields from contractors
