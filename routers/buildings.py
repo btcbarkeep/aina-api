@@ -264,7 +264,19 @@ def get_building_events(
         if event_type:
             query = query.eq("event_type", event_type)
         if contractor_id:
-            query = query.eq("contractor_id", contractor_id)
+            # Get event IDs from event_contractors junction table
+            event_contractors_result = (
+                client.table("event_contractors")
+                .select("event_id")
+                .eq("contractor_id", contractor_id)
+                .execute()
+            )
+            contractor_event_ids = [row["event_id"] for row in (event_contractors_result.data or [])]
+            if contractor_event_ids:
+                query = query.in_("id", contractor_event_ids)
+            else:
+                # No events match, return empty result
+                query = query.eq("id", "00000000-0000-0000-0000-000000000000")  # Non-existent ID
         # Validate enum values
         if severity:
             from models.enums import EventSeverity
