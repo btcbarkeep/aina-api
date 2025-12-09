@@ -614,35 +614,57 @@ async def generate_building_report(
                 doc_id = document.get("id")
                 unit_ids = document_units_map.get(doc_id, [])
                 document["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
+                
+                # Remove document_id and unit_id fields if they exist (keep only unit_ids)
+                document.pop("document_id", None)
+                document.pop("unit_id", None)
     
-    # Fetch document category names and replace content_type with category name
+    # Fetch document category and subcategory names
     if documents:
-        # Get unique category_ids from documents
+        # Get unique category_ids and subcategory_ids from documents
         category_ids = list(set([d.get("category_id") for d in documents if d.get("category_id")]))
+        subcategory_ids = list(set([d.get("subcategory_id") for d in documents if d.get("subcategory_id")]))
         
+        # Fetch category names from document_categories table
+        category_name_map = {}
         if category_ids:
-            # Fetch category names from document_categories table
             document_categories_result = (
                 client.table("document_categories")
                 .select("id, name")
                 .in_("id", category_ids)
                 .execute()
             )
-            # Create a map: category_id -> category_name
             category_name_map = {cat["id"]: cat["name"] for cat in (document_categories_result.data or [])}
+        
+        # Fetch subcategory names from document_subcategories table
+        subcategory_name_map = {}
+        if subcategory_ids:
+            document_subcategories_result = (
+                client.table("document_subcategories")
+                .select("id, name")
+                .in_("id", subcategory_ids)
+                .execute()
+            )
+            subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
+        
+        # Update documents with category and subcategory names
+        for document in documents:
+            # Set category name (rename from content_type to category)
+            category_id = document.get("category_id")
+            if category_id and category_id in category_name_map:
+                document["category"] = category_name_map[category_id]
+            else:
+                document["category"] = None
             
-            # Replace content_type with category name for each document
-            for document in documents:
-                category_id = document.get("category_id")
-                if category_id and category_id in category_name_map:
-                    # Replace content_type with category name (or add it if it doesn't exist)
-                    document["content_type"] = category_name_map[category_id]
-                elif category_id:
-                    # Category ID exists but not found in map, set content_type to None
-                    document["content_type"] = None
-                else:
-                    # No category_id, set content_type to None
-                    document["content_type"] = None
+            # Remove old content_type field if it exists
+            document.pop("content_type", None)
+            
+            # Set subcategory name
+            subcategory_id = document.get("subcategory_id")
+            if subcategory_id and subcategory_id in subcategory_name_map:
+                document["subcategory"] = subcategory_name_map[subcategory_id]
+            else:
+                document["subcategory"] = None
     
     # Get contractors (via events)
     event_contractors_result = (
@@ -1079,35 +1101,57 @@ async def generate_unit_report(
     if documents:
         for document in documents:
             document["unit_ids"] = [unit_id]  # List with single unit_id
+            
+            # Remove document_id and unit_id fields if they exist (keep only unit_ids)
+            document.pop("document_id", None)
+            document.pop("unit_id", None)
     
-    # Fetch document category names and replace content_type with category name
+    # Fetch document category and subcategory names
     if documents:
-        # Get unique category_ids from documents
+        # Get unique category_ids and subcategory_ids from documents
         category_ids = list(set([d.get("category_id") for d in documents if d.get("category_id")]))
+        subcategory_ids = list(set([d.get("subcategory_id") for d in documents if d.get("subcategory_id")]))
         
+        # Fetch category names from document_categories table
+        category_name_map = {}
         if category_ids:
-            # Fetch category names from document_categories table
             document_categories_result = (
                 client.table("document_categories")
                 .select("id, name")
                 .in_("id", category_ids)
                 .execute()
             )
-            # Create a map: category_id -> category_name
             category_name_map = {cat["id"]: cat["name"] for cat in (document_categories_result.data or [])}
+        
+        # Fetch subcategory names from document_subcategories table
+        subcategory_name_map = {}
+        if subcategory_ids:
+            document_subcategories_result = (
+                client.table("document_subcategories")
+                .select("id, name")
+                .in_("id", subcategory_ids)
+                .execute()
+            )
+            subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
+        
+        # Update documents with category and subcategory names
+        for document in documents:
+            # Set category name (rename from content_type to category)
+            category_id = document.get("category_id")
+            if category_id and category_id in category_name_map:
+                document["category"] = category_name_map[category_id]
+            else:
+                document["category"] = None
             
-            # Replace content_type with category name for each document
-            for document in documents:
-                category_id = document.get("category_id")
-                if category_id and category_id in category_name_map:
-                    # Replace content_type with category name (or add it if it doesn't exist)
-                    document["content_type"] = category_name_map[category_id]
-                elif category_id:
-                    # Category ID exists but not found in map, set content_type to None
-                    document["content_type"] = None
-                else:
-                    # No category_id, set content_type to None
-                    document["content_type"] = None
+            # Remove old content_type field if it exists
+            document.pop("content_type", None)
+            
+            # Set subcategory name
+            subcategory_id = document.get("subcategory_id")
+            if subcategory_id and subcategory_id in subcategory_name_map:
+                document["subcategory"] = subcategory_name_map[subcategory_id]
+            else:
+                document["subcategory"] = None
     
     # Get contractors (via events for this unit)
     contractors = []
