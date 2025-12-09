@@ -20,6 +20,7 @@ class PMCompanyBase(BaseModel):
     contact_phone: Optional[str] = None
     contact_email: Optional[str] = None
     notes: Optional[str] = None
+    license: Optional[str] = None
     
     # Subscription fields
     subscription_tier: SubscriptionTier = Field(SubscriptionTier.free, description="Subscription tier: 'free' or 'paid'")
@@ -47,6 +48,7 @@ class PMCompanyUpdate(BaseModel):
     contact_phone: Optional[str] = None
     contact_email: Optional[str] = None
     notes: Optional[str] = None
+    license: Optional[str] = None
     subscription_tier: Optional[SubscriptionTier] = None
     stripe_customer_id: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
