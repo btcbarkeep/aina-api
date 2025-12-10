@@ -439,17 +439,14 @@ async def upload_aoao_org_logo(
             temp_file.write(content)
             temp_file.flush()
         
-        # Upload to S3 with public-read ACL for permanent access
+        # Upload to S3 (bucket policy should allow public access to logos)
         try:
             content_type = file.content_type or "image/jpeg"
             s3.upload_file(
                 Filename=temp_file_path,
                 Bucket=bucket,
                 Key=s3_key,
-                ExtraArgs={
-                    "ContentType": content_type,
-                    "ACL": "public-read"  # Make logo publicly accessible
-                },
+                ExtraArgs={"ContentType": content_type},
             )
             logger.info(f"Uploaded AOAO organization logo to S3: {s3_key}")
         except Exception as e:
@@ -464,6 +461,7 @@ async def upload_aoao_org_logo(
                 logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
     
     # Generate permanent public URL (no expiration)
+    # Note: This requires bucket policy to allow public access to logo paths
     try:
         # Public URL format: https://{bucket}.s3.{region}.amazonaws.com/{key}
         if region == "us-east-1":
