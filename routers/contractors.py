@@ -798,14 +798,17 @@ async def upload_contractor_logo(
             temp_file.write(content)
             temp_file.flush()
         
-        # Upload to S3
+        # Upload to S3 with public-read ACL for permanent access
         try:
             content_type = file.content_type or "image/jpeg"
             s3.upload_file(
                 Filename=temp_file_path,
                 Bucket=bucket,
                 Key=s3_key,
-                ExtraArgs={"ContentType": content_type},
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "ACL": "public-read"  # Make logo publicly accessible
+                },
             )
             logger.info(f"Uploaded contractor logo to S3: {s3_key}")
         except Exception as e:
@@ -819,15 +822,16 @@ async def upload_contractor_logo(
             except Exception as e:
                 logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
     
-    # Generate presigned URL (valid for 1 year for logos)
+    # Generate permanent public URL (no expiration)
     try:
-        logo_url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": s3_key},
-            ExpiresIn=31536000,  # 1 year
-        )
+        # Public URL format: https://{bucket}.s3.{region}.amazonaws.com/{key}
+        if region == "us-east-1":
+            # us-east-1 uses a different URL format
+            logo_url = f"https://{bucket}.s3.amazonaws.com/{s3_key}"
+        else:
+            logo_url = f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"
     except Exception as e:
-        logger.error(f"Failed to generate presigned URL: {e}")
+        logger.error(f"Failed to generate public URL: {e}")
         raise HTTPException(500, "Failed to generate logo URL")
     
     # Optionally update contractor's logo_url field
