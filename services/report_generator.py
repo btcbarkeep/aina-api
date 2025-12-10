@@ -1580,6 +1580,55 @@ async def generate_unit_report(
             pm_companies_filtered.append({k: v for k, v in pm.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
         pm_companies = pm_companies_filtered
     
+    # Get owners with access to this unit
+    owners = []
+    try:
+        # Get user_units_access records for this unit
+        user_units_access_result = (
+            client.table("user_units_access")
+            .select("user_id, created_at")
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        
+        if user_units_access_result.data:
+            # Get all user_ids that have access to this unit
+            user_ids = [row["user_id"] for row in user_units_access_result.data]
+            
+            # Get user_subscriptions for these users where role = "owner"
+            if user_ids:
+                user_subscriptions_result = (
+                    client.table("user_subscriptions")
+                    .select("user_id, subscription_tier")
+                    .in_("user_id", user_ids)
+                    .eq("role", "owner")
+                    .execute()
+                )
+                
+                # Create a map of user_id -> subscription_tier
+                user_subscription_map = {
+                    row["user_id"]: row["subscription_tier"] 
+                    for row in (user_subscriptions_result.data or [])
+                }
+                
+                # Create a map of user_id -> created_at from user_units_access
+                user_access_created_at_map = {
+                    row["user_id"]: row["created_at"]
+                    for row in user_units_access_result.data
+                }
+                
+                # Combine the data: only include users that have role="owner" in user_subscriptions
+                for user_id in user_subscription_map.keys():
+                    owners.append({
+                        "user_id": user_id,
+                        "subscription_tier": user_subscription_map[user_id],
+                        "created_at": user_access_created_at_map.get(user_id),
+                    })
+    except Exception as e:
+        # If there's an error (e.g., table doesn't exist), continue without owners data
+        # This ensures the report still works even if the tables aren't available
+        pass
+    
     # Build report data
     report_data = {
         "unit": unit,
@@ -1589,6 +1638,7 @@ async def generate_unit_report(
         "contractors": contractors,
         "property_management_companies": pm_companies,
         "aoao_organizations": aoao_orgs,
+        "owners": owners,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
