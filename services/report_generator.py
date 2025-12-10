@@ -999,15 +999,81 @@ async def generate_building_report(
         "total_pm_companies": total_pm_companies_count if (not internal and context_role == "public") else len(pm_companies),
     }
     
+    # Get owners for each unit (before filtering for public reports)
+    if units:
+        unit_ids = [u.get("id") for u in units if u.get("id")]
+        if unit_ids:
+            try:
+                # Get user_units_access records for all units
+                user_units_access_result = (
+                    client.table("user_units_access")
+                    .select("user_id, unit_id, created_at")
+                    .in_("unit_id", unit_ids)
+                    .execute()
+                )
+                
+                if user_units_access_result.data:
+                    # Get all user_ids that have access to these units
+                    user_ids = list(set([row["user_id"] for row in user_units_access_result.data]))
+                    
+                    # Get user_subscriptions for these users where role = "owner"
+                    if user_ids:
+                        user_subscriptions_result = (
+                            client.table("user_subscriptions")
+                            .select("user_id, subscription_tier")
+                            .in_("user_id", user_ids)
+                            .eq("role", "owner")
+                            .execute()
+                        )
+                        
+                        # Create a map of user_id -> subscription_tier
+                        user_subscription_map = {
+                            row["user_id"]: row["subscription_tier"] 
+                            for row in (user_subscriptions_result.data or [])
+                        }
+                        
+                        # Create a map of unit_id -> list of owners
+                        unit_owners_map = {}
+                        for row in user_units_access_result.data:
+                            unit_id = row.get("unit_id")
+                            user_id = row.get("user_id")
+                            if unit_id and user_id and user_id in user_subscription_map:
+                                if unit_id not in unit_owners_map:
+                                    unit_owners_map[unit_id] = []
+                                unit_owners_map[unit_id].append({
+                                    "user_id": user_id,
+                                    "subscription_tier": user_subscription_map[user_id],
+                                    "created_at": row.get("created_at"),
+                                })
+                        
+                        # Add owners to each unit
+                        for unit in units:
+                            unit_id = unit.get("id")
+                            if unit_id:
+                                unit["owners"] = unit_owners_map.get(unit_id, [])
+                            else:
+                                unit["owners"] = []
+            except Exception as e:
+                # Log error but continue without owners data
+                from core.logging_config import logger
+                logger.warning(f"Failed to fetch owners for building report: {e}")
+                # Set empty owners for all units
+                for unit in units:
+                    unit["owners"] = []
+    
     # For public reports, remove unnecessary fields to reduce payload size
     if not internal and context_role == "public":
         # Remove fields from building
         building_filtered = {k: v for k, v in building.items() if k not in ["created_at", "updated_at", "metadata", "metadata_last_refreshed"]}
         
-        # Remove fields from units
+        # Remove fields from units (but preserve owners field)
         units_filtered = []
         for unit in units:
-            units_filtered.append({k: v for k, v in unit.items() if k not in ["bedrooms", "bathrooms", "square_feet", "created_at", "updated_at", "parcel_number"]})
+            filtered_unit = {k: v for k, v in unit.items() if k not in ["bedrooms", "bathrooms", "square_feet", "created_at", "updated_at", "parcel_number"]}
+            # Preserve owners field if it exists
+            if "owners" in unit:
+                filtered_unit["owners"] = unit["owners"]
+            units_filtered.append(filtered_unit)
         
         # Remove fields from documents
         documents_filtered = []
@@ -1692,9 +1758,10 @@ async def generate_unit_report(
                         "created_at": user_access_created_at_map.get(user_id),
                     })
     except Exception as e:
-        # If there's an error (e.g., table doesn't exist), continue without owners data
-        # This ensures the report still works even if the tables aren't available
-        pass
+        # Log error but continue without owners data
+        from core.logging_config import logger
+        logger.warning(f"Failed to fetch owners for unit report (unit_id: {unit_id}): {e}")
+        # owners remains empty list
     
     # Build report data
     report_data = {
