@@ -1102,6 +1102,116 @@ async def generate_building_report(
         aoao_orgs = aoao_orgs_filtered
         pm_companies = pm_companies_filtered
     
+    # Get most active contractor's last 5 events (for public reports only)
+    most_active_contractor_events = []
+    if not internal and context_role == "public" and contractor_event_counts:
+        try:
+            # Find contractor with most events
+            most_active_contractor_id = max(contractor_event_counts.items(), key=lambda x: x[1])[0] if contractor_event_counts else None
+            
+            if most_active_contractor_id:
+                # Get event IDs for this contractor in this building
+                contractor_event_ids_result = (
+                    client.table("event_contractors")
+                    .select("event_id, events!inner(building_id)")
+                    .eq("contractor_id", most_active_contractor_id)
+                    .eq("events.building_id", building_id)
+                    .execute()
+                )
+                
+                contractor_event_ids = [row["event_id"] for row in (contractor_event_ids_result.data or []) if row.get("event_id")]
+                
+                if contractor_event_ids:
+                    # Get the last 5 events
+                    contractor_events_result = (
+                        client.table("events")
+                        .select("*")
+                        .in_("id", contractor_event_ids)
+                        .order("occurred_at", desc=True)
+                        .limit(5)
+                        .execute()
+                    )
+                    
+                    contractor_events = contractor_events_result.data or []
+                    
+                    # Get unit_ids for these events
+                    if contractor_events:
+                        contractor_event_ids_list = [e.get("id") for e in contractor_events if e.get("id")]
+                        if contractor_event_ids_list:
+                            event_units_result = (
+                                client.table("event_units")
+                                .select("event_id, unit_id")
+                                .in_("event_id", contractor_event_ids_list)
+                                .execute()
+                            )
+                            
+                            event_units_map = {}
+                            if event_units_result.data:
+                                for row in event_units_result.data:
+                                    event_id = row.get("event_id")
+                                    unit_id = row.get("unit_id")
+                                    if event_id and unit_id:
+                                        if event_id not in event_units_map:
+                                            event_units_map[event_id] = []
+                                        event_units_map[event_id].append(unit_id)
+                            
+                            # Get unit numbers for units_affected
+                            all_unit_ids = set()
+                            for unit_ids_list in event_units_map.values():
+                                all_unit_ids.update(unit_ids_list)
+                            
+                            unit_numbers_map = {}
+                            if all_unit_ids:
+                                units_result = (
+                                    client.table("units")
+                                    .select("id, unit_number")
+                                    .in_("id", list(all_unit_ids))
+                                    .execute()
+                                )
+                                if units_result.data:
+                                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
+                            
+                            # Format events similar to main events
+                            for event in contractor_events:
+                                event_id = event.get("id")
+                                unit_ids = event_units_map.get(event_id, [])
+                                event["unit_ids"] = unit_ids
+                                
+                                # Add units_affected if multiple units
+                                if len(unit_ids) > 1:
+                                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
+                                    if unit_numbers:
+                                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
+                                
+                                # Remove unit_number field
+                                event.pop("unit_number", None)
+                                
+                                # Sanitize for public role
+                                sanitized = sanitize_event_for_role(event, context_role)
+                                if sanitized:
+                                    most_active_contractor_events.append(sanitized)
+                            
+                            # Replace event_type with category name
+                            if most_active_contractor_events:
+                                category_ids = list(set([e.get("category_id") for e in most_active_contractor_events if e.get("category_id")]))
+                                if category_ids:
+                                    event_categories_result = (
+                                        client.table("event_categories")
+                                        .select("id, name")
+                                        .in_("id", category_ids)
+                                        .execute()
+                                    )
+                                    category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
+                                    
+                                    for event in most_active_contractor_events:
+                                        category_id = event.get("category_id")
+                                        if category_id and category_id in category_name_map:
+                                            event["event_type"] = category_name_map[category_id]
+        except Exception as e:
+            from core.logging_config import logger
+            logger.warning(f"Failed to fetch most active contractor events for building report: {e}")
+            # most_active_contractor_events remains empty list
+    
     # Build report data
     report_data = {
         "building": building,
@@ -1111,6 +1221,7 @@ async def generate_building_report(
         "contractors": contractors,
         "aoao_organizations": aoao_orgs,
         "property_management_companies": pm_companies,
+        "most_active_contractor_events": most_active_contractor_events,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
@@ -1414,6 +1525,7 @@ async def generate_unit_report(
     
     # Get contractors (via events for this unit)
     contractors = []
+    contractor_event_counts = {}  # Initialize outside if block for later use
     if event_ids:
         event_contractors_result = (
             client.table("event_contractors")
@@ -1424,7 +1536,6 @@ async def generate_unit_report(
         contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or []) if row.get("contractor_id")]))
         
         # Count events per contractor
-        contractor_event_counts = {}
         for row in (event_contractors_result.data or []):
             cid = row.get("contractor_id")
             if cid:
@@ -1763,6 +1874,116 @@ async def generate_unit_report(
         logger.warning(f"Failed to fetch owners for unit report (unit_id: {unit_id}): {e}")
         # owners remains empty list
     
+    # Get most active contractor's last 5 events (for public reports only)
+    most_active_contractor_events = []
+    if not internal and context_role == "public" and event_ids and contractor_event_counts:
+        try:
+            # Find contractor with most events
+            most_active_contractor_id = max(contractor_event_counts.items(), key=lambda x: x[1])[0] if contractor_event_counts else None
+            
+            if most_active_contractor_id:
+                # Get event IDs for this contractor for this unit
+                contractor_events_result = (
+                    client.table("event_contractors")
+                    .select("event_id")
+                    .eq("contractor_id", most_active_contractor_id)
+                    .in_("event_id", event_ids)
+                    .execute()
+                )
+                
+                contractor_event_ids = [row["event_id"] for row in (contractor_events_result.data or []) if row.get("event_id")]
+                
+                if contractor_event_ids:
+                    # Get the last 5 events
+                    contractor_events_result = (
+                        client.table("events")
+                        .select("*")
+                        .in_("id", contractor_event_ids)
+                        .order("occurred_at", desc=True)
+                        .limit(5)
+                        .execute()
+                    )
+                    
+                    contractor_events = contractor_events_result.data or []
+                    
+                    # Get unit_ids for these events
+                    if contractor_events:
+                        event_ids_for_contractor = [e.get("id") for e in contractor_events if e.get("id")]
+                        if event_ids_for_contractor:
+                            event_units_result = (
+                                client.table("event_units")
+                                .select("event_id, unit_id")
+                                .in_("event_id", event_ids_for_contractor)
+                                .execute()
+                            )
+                            
+                            event_units_map = {}
+                            if event_units_result.data:
+                                for row in event_units_result.data:
+                                    event_id = row.get("event_id")
+                                    unit_id = row.get("unit_id")
+                                    if event_id and unit_id:
+                                        if event_id not in event_units_map:
+                                            event_units_map[event_id] = []
+                                        event_units_map[event_id].append(unit_id)
+                            
+                            # Get unit numbers for units_affected
+                            all_unit_ids = set()
+                            for unit_ids_list in event_units_map.values():
+                                all_unit_ids.update(unit_ids_list)
+                            
+                            unit_numbers_map = {}
+                            if all_unit_ids:
+                                units_result = (
+                                    client.table("units")
+                                    .select("id, unit_number")
+                                    .in_("id", list(all_unit_ids))
+                                    .execute()
+                                )
+                                if units_result.data:
+                                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
+                            
+                            # Format events similar to main events
+                            for event in contractor_events:
+                                event_id = event.get("id")
+                                unit_ids = event_units_map.get(event_id, [])
+                                event["unit_ids"] = unit_ids
+                                
+                                # Add units_affected if multiple units
+                                if len(unit_ids) > 1:
+                                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
+                                    if unit_numbers:
+                                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
+                                
+                                # Remove unit_number field
+                                event.pop("unit_number", None)
+                                
+                                # Sanitize for public role
+                                sanitized = sanitize_event_for_role(event, context_role)
+                                if sanitized:
+                                    most_active_contractor_events.append(sanitized)
+                            
+                            # Replace event_type with category name
+                            if most_active_contractor_events:
+                                category_ids = list(set([e.get("category_id") for e in most_active_contractor_events if e.get("category_id")]))
+                                if category_ids:
+                                    event_categories_result = (
+                                        client.table("event_categories")
+                                        .select("id, name")
+                                        .in_("id", category_ids)
+                                        .execute()
+                                    )
+                                    category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
+                                    
+                                    for event in most_active_contractor_events:
+                                        category_id = event.get("category_id")
+                                        if category_id and category_id in category_name_map:
+                                            event["event_type"] = category_name_map[category_id]
+        except Exception as e:
+            from core.logging_config import logger
+            logger.warning(f"Failed to fetch most active contractor events for unit report: {e}")
+            # most_active_contractor_events remains empty list
+    
     # Build report data
     report_data = {
         "unit": unit,
@@ -1773,6 +1994,7 @@ async def generate_unit_report(
         "property_management_companies": pm_companies,
         "aoao_organizations": aoao_orgs,
         "owners": owners,
+        "most_active_contractor_events": most_active_contractor_events,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
