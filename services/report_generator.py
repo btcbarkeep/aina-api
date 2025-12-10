@@ -480,11 +480,34 @@ async def generate_building_report(
                             event_units_map[event_id] = []
                         event_units_map[event_id].append(unit_id)
             
+            # Get all unique unit_ids to fetch unit numbers
+            all_unit_ids = set()
+            for unit_ids_list in event_units_map.values():
+                all_unit_ids.update(unit_ids_list)
+            
+            # Fetch unit numbers from units table
+            unit_numbers_map = {}
+            if all_unit_ids and not internal and context_role == "public":
+                units_result = (
+                    client.table("units")
+                    .select("id, unit_number")
+                    .in_("id", list(all_unit_ids))
+                    .execute()
+                )
+                if units_result.data:
+                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
+            
             # Add unit_ids to each event (list of all unit_ids)
             for event in events:
                 event_id = event.get("id")
                 unit_ids = event_units_map.get(event_id, [])
                 event["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
+                
+                # For public reports, add units_affected if multiple units
+                if not internal and context_role == "public" and len(unit_ids) > 1:
+                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
+                    if unit_numbers:
+                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
                 
                 # Remove unit_number field for public reports
                 if not internal and context_role == "public":
@@ -1149,15 +1172,59 @@ async def generate_unit_report(
         events = events[:5]
     
     # Attach unit_ids to events from event_units junction table
-    # For unit reports, all events are linked to this unit via event_units
-    # Return as a list for consistency (even though it's always one unit for unit reports)
+    # Get all unit_ids for each event (not just the single unit_id)
     if events:
-        for event in events:
-            event["unit_ids"] = [unit_id]  # List with single unit_id
+        event_ids = [e.get("id") for e in events if e.get("id")]
+        if event_ids:
+            event_units_result = (
+                client.table("event_units")
+                .select("event_id, unit_id")
+                .in_("event_id", event_ids)
+                .execute()
+            )
+            # Create a map: event_id -> list of unit_ids
+            event_units_map = {}
+            if event_units_result.data:
+                for row in event_units_result.data:
+                    event_id = row.get("event_id")
+                    unit_id = row.get("unit_id")
+                    if event_id and unit_id:
+                        if event_id not in event_units_map:
+                            event_units_map[event_id] = []
+                        event_units_map[event_id].append(unit_id)
             
-            # Remove unit_number field for public reports
-            if not internal and context_role == "public":
-                event.pop("unit_number", None)
+            # Get all unique unit_ids to fetch unit numbers
+            all_unit_ids = set()
+            for unit_ids_list in event_units_map.values():
+                all_unit_ids.update(unit_ids_list)
+            
+            # Fetch unit numbers from units table (for public reports)
+            unit_numbers_map = {}
+            if all_unit_ids and not internal and context_role == "public":
+                units_result = (
+                    client.table("units")
+                    .select("id, unit_number")
+                    .in_("id", list(all_unit_ids))
+                    .execute()
+                )
+                if units_result.data:
+                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
+            
+            # Add unit_ids to each event (list of all unit_ids)
+            for event in events:
+                event_id = event.get("id")
+                unit_ids = event_units_map.get(event_id, [])
+                event["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
+                
+                # For public reports, add units_affected if multiple units
+                if not internal and context_role == "public" and len(unit_ids) > 1:
+                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
+                    if unit_numbers:
+                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
+                
+                # Remove unit_number field for public reports
+                if not internal and context_role == "public":
+                    event.pop("unit_number", None)
     
     # Fetch event category names and replace event_type with category name
     if events:
