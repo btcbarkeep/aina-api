@@ -201,7 +201,8 @@ def approve_request(
     }
 
     # 1) CREATE USER
-    create_supabase_user(email, metadata)
+    user_resp = create_supabase_user(email, metadata)
+    new_user_id = getattr(user_resp.user, "id", None) if user_resp and user_resp.user else None
 
     # 2) SEND INVITE (optional)
     try:
@@ -230,6 +231,7 @@ def approve_request(
         "status": "approved",
         "email": email,
         "assigned_role": requested_role,
+        "user_id": new_user_id,
     }
 
 
