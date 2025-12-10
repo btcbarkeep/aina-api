@@ -208,7 +208,7 @@ def start_trial(
     subscription = create_or_update_user_subscription(
         user_id=current_user.auth_user_id,
         role=role,
-        subscription_tier="paid" if requirements["requires_paid"] else "free",
+        subscription_tier="paid",  # Trials always use "paid" tier to match business entities
         subscription_status="trialing",
         is_trial=True,
         trial_started_at=now,
@@ -376,7 +376,7 @@ def admin_start_trial_for_user(
     subscription = create_or_update_user_subscription(
         user_id=user_id,
         role=role,
-        subscription_tier="paid" if requirements["requires_paid"] else "free",
+        subscription_tier="paid",  # Trials always use "paid" tier to match business entities
         subscription_status="trialing",
         is_trial=True,
         trial_started_at=now,
