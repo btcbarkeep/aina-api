@@ -1431,23 +1431,33 @@ async def generate_unit_report(
                     pass
     
     # Get documents for this unit (via document_units)
-    document_units_result = (
-        client.table("document_units")
-        .select("document_id")
-        .eq("unit_id", unit_id)
-        .execute()
-    )
-    document_ids = [row["document_id"] for row in (document_units_result.data or [])]
-    
     documents = []
-    if document_ids:
-        documents_query = client.table("documents").select("*").in_("id", document_ids)
+    from core.logging_config import logger
+    try:
+        document_units_result = (
+            client.table("document_units")
+            .select("document_id")
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        document_ids = [row["document_id"] for row in (document_units_result.data or [])]
         
-        if not internal or context_role == "public":
-            documents_query = documents_query.eq("is_public", True)
+        logger.debug(f"Found {len(document_ids)} document_ids linked to unit {unit_id}")
         
-        documents_result = documents_query.order("created_at", desc=True).execute()
-        documents = documents_result.data or []
+        if document_ids:
+            documents_query = client.table("documents").select("*").in_("id", document_ids)
+            
+            # For public reports, only show public documents
+            if not internal and context_role == "public":
+                documents_query = documents_query.eq("is_public", True)
+            
+            documents_result = documents_query.order("created_at", desc=True).execute()
+            documents = documents_result.data or []
+            
+            logger.debug(f"Fetched {len(documents)} documents for unit {unit_id} (after is_public filter)")
+    except Exception as e:
+        logger.error(f"Failed to fetch documents for unit report (unit_id: {unit_id}): {e}", exc_info=True)
+        documents = []
     
     # Sanitize documents based on role
     sanitized_documents = []
@@ -1575,21 +1585,39 @@ async def generate_unit_report(
     
     # Get property management companies assigned to this unit
     pm_companies = []
-    pm_unit_access_result = (
-        client.table("pm_company_unit_access")
-        .select("pm_company_id")
-        .eq("unit_id", unit_id)
-        .execute()
-    )
-    pm_company_ids = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
-    if pm_company_ids:
-        pm_companies_result = (
-            client.table("property_management_companies")
-            .select("*")
-            .in_("id", pm_company_ids)
+    try:
+        pm_unit_access_result = (
+            client.table("pm_company_unit_access")
+            .select("pm_company_id, created_at")
+            .eq("unit_id", unit_id)
             .execute()
         )
-        pm_companies = pm_companies_result.data or []
+        pm_company_ids = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
+        
+        # Create a map of pm_company_id -> created_at from access table
+        pm_access_created_at_map = {
+            row["pm_company_id"]: row["created_at"]
+            for row in (pm_unit_access_result.data or [])
+        }
+        
+        if pm_company_ids:
+            pm_companies_result = (
+                client.table("property_management_companies")
+                .select("*")
+                .in_("id", pm_company_ids)
+                .execute()
+            )
+            pm_companies = pm_companies_result.data or []
+            
+            # Add access information (created_at) to each PM company
+            for pm in pm_companies:
+                pm_id = pm.get("id")
+                if pm_id and pm_id in pm_access_created_at_map:
+                    pm["access_created_at"] = pm_access_created_at_map[pm_id]
+    except Exception as e:
+        from core.logging_config import logger
+        logger.warning(f"Failed to fetch property management companies for unit report (unit_id: {unit_id}): {e}")
+        # pm_companies remains empty list
     
     # Build quick lookup for event creators to PM/AOAO org names (for event counts)
     def _norm_name(val: Optional[str]) -> Optional[str]:
@@ -1826,6 +1854,7 @@ async def generate_unit_report(
     
     # Get owners with access to this unit
     owners = []
+    from core.logging_config import logger
     try:
         # Get user_units_access records for this unit
         user_units_access_result = (
@@ -1868,10 +1897,15 @@ async def generate_unit_report(
                         "subscription_tier": user_subscription_map[user_id],
                         "created_at": user_access_created_at_map.get(user_id),
                     })
+                
+                logger.debug(f"Found {len(owners)} owners for unit {unit_id}")
+            else:
+                logger.debug(f"No user_ids found for unit {unit_id} in user_units_access")
+        else:
+            logger.debug(f"No user_units_access records found for unit {unit_id}")
     except Exception as e:
         # Log error but continue without owners data
-        from core.logging_config import logger
-        logger.warning(f"Failed to fetch owners for unit report (unit_id: {unit_id}): {e}")
+        logger.error(f"Failed to fetch owners for unit report (unit_id: {unit_id}): {e}", exc_info=True)
         # owners remains empty list
     
     # Get most active contractor's last 5 events (for public reports only)
