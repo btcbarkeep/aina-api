@@ -1281,17 +1281,10 @@ async def generate_unit_report(
     format: str = "json"
 ) -> ReportResult:
     """
-    Generate a unit report.
-    
-    Args:
-        unit_id: Unit ID
-        user: Current user (None for public)
-        context_role: Effective role
-        internal: Whether this is an internal report
-        format: "json" or "pdf"
+    Generate a unit report (restored to last known-good public behavior).
     """
     client = get_supabase_client()
-    
+
     # Get unit info
     unit_result = (
         client.table("units")
@@ -1300,10 +1293,8 @@ async def generate_unit_report(
         .limit(1)
         .execute()
     )
-    
     if not unit_result.data:
         raise ValueError(f"Unit {unit_id} not found")
-    
     unit = unit_result.data[0]
     building_id = unit.get("building_id")
     
@@ -2081,16 +2072,15 @@ async def generate_unit_report(
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
     }
-    
+
     # Generate report ID and filename
     report_id = str(uuid4())
     unit_number = unit.get("unit_number", "unit")
     filename = f"unit-report-{unit_number}-{datetime.utcnow().strftime('%Y%m%d')}"
-    
+
     # Generate PDF if requested
     download_url = None
-    size_bytes = len(str(report_data).encode('utf-8'))
-    
+    size_bytes = len(str(report_data).encode("utf-8"))
     if format == "pdf":
         try:
             pdf_bytes = generate_pdf_bytes(report_data)
@@ -2098,16 +2088,13 @@ async def generate_unit_report(
             upload_result = await upload_report_to_s3(pdf_bytes, f"{filename}.pdf")
             download_url = upload_result.download_url
             filename = f"{filename}.pdf"
-        except Exception as e:
-            # Fallback to JSON if PDF generation fails
+        except Exception:
             format = "json"
             filename = f"{filename}.json"
-    
     if format == "json":
         filename = f"{filename}.json"
-    
+
     expires_at = (datetime.utcnow() + timedelta(days=7 if not internal else 30)).isoformat() + "Z"
-    
     return ReportResult(
         report_id=report_id,
         filename=filename,
