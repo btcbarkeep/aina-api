@@ -1393,7 +1393,8 @@ async def generate_unit_report(
                     event["event_type"] = category_name_map[category_id]
                 # If category_id doesn't exist in map, keep original event_type
     
-    # Get documents for this unit (via document_units)
+    # Get documents for this unit (via document_units and unit_id column)
+    # FEATURE 4: Include documents from both junction table AND direct unit_id column
     document_units_result = (
         client.table("document_units")
         .select("document_id")
@@ -1402,9 +1403,21 @@ async def generate_unit_report(
     )
     document_ids = [row["document_id"] for row in (document_units_result.data or [])]
     
+    # Also include documents that have unit_id directly set
+    direct_docs_result = (
+        client.table("documents")
+        .select("id")
+        .eq("unit_id", unit_id)
+        .execute()
+    )
+    direct_doc_ids = [row["id"] for row in (direct_docs_result.data or [])]
+    
+    # Combine both sources and remove duplicates
+    combined_doc_ids = list(set(document_ids + direct_doc_ids))
+    
     documents = []
-    if document_ids:
-        documents_query = client.table("documents").select("*").in_("id", document_ids)
+    if combined_doc_ids:
+        documents_query = client.table("documents").select("*").in_("id", combined_doc_ids)
         
         if not internal or context_role == "public":
             documents_query = documents_query.eq("is_public", True)
@@ -1481,6 +1494,7 @@ async def generate_unit_report(
     
     # Get contractors (via events for this unit)
     contractors = []
+    contractor_event_counts = {}  # Initialize outside if block for later use
     if event_ids:
         event_contractors_result = (
             client.table("event_contractors")
@@ -1491,7 +1505,6 @@ async def generate_unit_report(
         contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or []) if row.get("contractor_id")]))
         
         # Count events per contractor
-        contractor_event_counts = {}
         for row in (event_contractors_result.data or []):
             cid = row.get("contractor_id")
             if cid:
@@ -1578,6 +1591,96 @@ async def generate_unit_report(
     
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
+    
+    # FEATURE 6: Count units and buildings for each PM company
+    if pm_companies:
+        pm_company_ids_list = [pm.get("id") for pm in pm_companies if pm.get("id")]
+        
+        # Get building access counts
+        pm_building_counts = {}
+        if pm_company_ids_list:
+            pm_building_access_all = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            for row in (pm_building_access_all.data or []):
+                pm_id = row.get("pm_company_id")
+                if pm_id:
+                    pm_building_counts[pm_id] = pm_building_counts.get(pm_id, 0) + 1
+        
+        # Get unit access counts (direct + inherited from buildings)
+        pm_unit_counts = {}
+        if pm_company_ids_list:
+            # Direct unit access
+            pm_unit_access_direct = (
+                client.table("pm_company_unit_access")
+                .select("pm_company_id, unit_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            direct_unit_counts = {}
+            for row in (pm_unit_access_direct.data or []):
+                pm_id = row.get("pm_company_id")
+                if pm_id:
+                    direct_unit_counts[pm_id] = direct_unit_counts.get(pm_id, 0) + 1
+            
+            # Inherited units from buildings (get unique unit counts per PM company)
+            pm_building_access_for_units = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id, building_id")
+                .in_("pm_company_id", pm_company_ids_list)
+                .execute()
+            )
+            
+            # Get all building IDs
+            building_ids_set = set()
+            pm_to_buildings = {}
+            for row in (pm_building_access_for_units.data or []):
+                pm_id = row.get("pm_company_id")
+                building_id = row.get("building_id")
+                if pm_id and building_id:
+                    building_ids_set.add(building_id)
+                    if pm_id not in pm_to_buildings:
+                        pm_to_buildings[pm_id] = set()
+                    pm_to_buildings[pm_id].add(building_id)
+            
+            # Get all units from these buildings
+            inherited_unit_counts = {}
+            if building_ids_set:
+                units_from_buildings = (
+                    client.table("units")
+                    .select("id, building_id")
+                    .in_("building_id", list(building_ids_set))
+                    .execute()
+                )
+                # Count units per building
+                building_unit_counts = {}
+                for unit in (units_from_buildings.data or []):
+                    b_id = unit.get("building_id")
+                    if b_id:
+                        building_unit_counts[b_id] = building_unit_counts.get(b_id, 0) + 1
+                
+                # Sum units per PM company based on their building access
+                for pm_id, building_ids in pm_to_buildings.items():
+                    total_units = 0
+                    for b_id in building_ids:
+                        total_units += building_unit_counts.get(b_id, 0)
+                    inherited_unit_counts[pm_id] = total_units
+            
+            # Combine direct and inherited unit counts (avoid double counting)
+            # Use the larger value to avoid double counting (inherited includes direct)
+            for pm_id in pm_company_ids_list:
+                direct_count = direct_unit_counts.get(pm_id, 0)
+                inherited_count = inherited_unit_counts.get(pm_id, 0)
+                pm_unit_counts[pm_id] = max(direct_count, inherited_count) if (direct_count > 0 and inherited_count > 0) else (direct_count + inherited_count)
+        
+        # Add counts to each PM company
+        for pm in pm_companies:
+            pm_id = pm.get("id")
+            pm["unit_count"] = pm_unit_counts.get(pm_id, 0)
+            pm["building_count"] = pm_building_counts.get(pm_id, 0)
     
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
@@ -1737,6 +1840,116 @@ async def generate_unit_report(
     if unit is not None:
         unit["owners"] = owners
     
+    # FEATURE 5: Get most active contractor's last 5 events (for public reports only)
+    most_active_contractor_events = []
+    if not internal and context_role == "public" and event_ids and contractor_event_counts:
+        try:
+            # Find contractor with most events
+            most_active_contractor_id = max(contractor_event_counts.items(), key=lambda x: x[1])[0] if contractor_event_counts else None
+            
+            if most_active_contractor_id:
+                # Get event IDs for this contractor for this unit
+                contractor_events_result = (
+                    client.table("event_contractors")
+                    .select("event_id")
+                    .eq("contractor_id", most_active_contractor_id)
+                    .in_("event_id", event_ids)
+                    .execute()
+                )
+                
+                contractor_event_ids = [row["event_id"] for row in (contractor_events_result.data or []) if row.get("event_id")]
+                
+                if contractor_event_ids:
+                    # Get the last 5 events
+                    contractor_events_result = (
+                        client.table("events")
+                        .select("*")
+                        .in_("id", contractor_event_ids)
+                        .order("occurred_at", desc=True)
+                        .limit(5)
+                        .execute()
+                    )
+                    
+                    contractor_events = contractor_events_result.data or []
+                    
+                    # Get unit_ids for these events
+                    if contractor_events:
+                        event_ids_for_contractor = [e.get("id") for e in contractor_events if e.get("id")]
+                        if event_ids_for_contractor:
+                            event_units_result = (
+                                client.table("event_units")
+                                .select("event_id, unit_id")
+                                .in_("event_id", event_ids_for_contractor)
+                                .execute()
+                            )
+                            
+                            event_units_map = {}
+                            if event_units_result.data:
+                                for row in event_units_result.data:
+                                    event_id = row.get("event_id")
+                                    event_unit_id = row.get("unit_id")  # Use different variable name to avoid shadowing function parameter
+                                    if event_id and event_unit_id:
+                                        if event_id not in event_units_map:
+                                            event_units_map[event_id] = []
+                                        event_units_map[event_id].append(event_unit_id)
+                            
+                            # Get unit numbers for units_affected
+                            all_unit_ids = set()
+                            for unit_ids_list in event_units_map.values():
+                                all_unit_ids.update(unit_ids_list)
+                            
+                            unit_numbers_map = {}
+                            if all_unit_ids:
+                                units_result = (
+                                    client.table("units")
+                                    .select("id, unit_number")
+                                    .in_("id", list(all_unit_ids))
+                                    .execute()
+                                )
+                                if units_result.data:
+                                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
+                            
+                            # Format events similar to main events
+                            for event in contractor_events:
+                                event_id = event.get("id")
+                                unit_ids = event_units_map.get(event_id, [])
+                                event["unit_ids"] = unit_ids
+                                
+                                # Add units_affected if multiple units
+                                if len(unit_ids) > 1:
+                                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
+                                    if unit_numbers:
+                                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
+                                
+                                # Remove unit_number field
+                                event.pop("unit_number", None)
+                                
+                                # Sanitize for public role
+                                sanitized = sanitize_event_for_role(event, context_role)
+                                if sanitized:
+                                    most_active_contractor_events.append(sanitized)
+                            
+                            # Replace event_type with category name
+                            if most_active_contractor_events:
+                                category_ids = list(set([e.get("category_id") for e in most_active_contractor_events if e.get("category_id")]))
+                                if category_ids:
+                                    event_categories_result = (
+                                        client.table("event_categories")
+                                        .select("id, name")
+                                        .in_("id", category_ids)
+                                        .execute()
+                                    )
+                                    category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
+                                    
+                                    for event in most_active_contractor_events:
+                                        category_id = event.get("category_id")
+                                        if category_id and category_id in category_name_map:
+                                            event["event_type"] = category_name_map[category_id]
+        except Exception as e:
+            from core.logging_config import logger
+            logger.warning(f"Failed to fetch most active contractor events for unit report: {e}")
+            # most_active_contractor_events remains empty list
+    
     # Build report data
     report_data = {
         "unit": unit,
@@ -1746,6 +1959,7 @@ async def generate_unit_report(
         "contractors": contractors,
         "property_management_companies": pm_companies,
         "aoao_organizations": aoao_orgs,
+        "most_active_contractor_events": most_active_contractor_events,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
