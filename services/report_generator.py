@@ -1298,23 +1298,13 @@ async def generate_unit_report(
     )
     if not unit_result.data:
         raise ValueError(f"Unit {original_unit_id} not found")
+    
+    # Get unit directly from Supabase (same as working version)
     unit = unit_result.data[0]
-    fetched_unit_id = unit.get("id")
-    if fetched_unit_id and str(fetched_unit_id) != str(original_unit_id):
-        raise ValueError(f"Mismatch: requested unit_id {original_unit_id} but fetched {fetched_unit_id} from units table")
-    
-    # Log the unit fields for debugging - log the actual raw unit dict
-    from core.logging_config import logger
-    logger.debug(f"Fetched unit fields: {list(unit.keys())}")
-    logger.debug(f"Raw unit data: {unit}")
-    logger.debug(f"Unit number (direct): {unit.get('unit_number')}, Floor: {unit.get('floor')}, Bedrooms: {unit.get('bedrooms')}")
-    
-    # Ensure the unit object has the correct ID
-    unit["id"] = str(fetched_unit_id) if fetched_unit_id else original_unit_id
+    building_id = unit.get("building_id")
     
     # Use original_unit_id for all subsequent queries to prevent any variable shadowing
     unit_id = original_unit_id
-    building_id = unit.get("building_id")
     
     # Get building info
     building = None
@@ -2076,43 +2066,10 @@ async def generate_unit_report(
             # most_active_contractor_events remains empty list
     
     # Build report data
-    # Use original_unit_id directly - we've already verified it matches the fetched unit
-    # Don't rely on unit.get("id") as the unit object might have been modified
-    
-    # Create a comprehensive unit dict with ALL expected fields
-    # Access fields directly from the unit dict (not using .get() to preserve actual values)
-    # Start with a copy of the entire unit dict to preserve all fields exactly as returned
-    import copy
-    unit_copy = copy.deepcopy(unit)
-    
-    # Ensure the ID is always the verified original_unit_id
-    unit_copy["id"] = original_unit_id
-    
-    # Explicitly ensure all expected fields are present (even if None/null)
-    # This handles cases where Supabase might omit null fields
-    expected_fields = {
-        "building_id": unit.get("building_id"),
-        "unit_number": unit.get("unit_number"),
-        "floor": unit.get("floor"),
-        "bedrooms": unit.get("bedrooms"),
-        "bathrooms": unit.get("bathrooms"),
-        "square_feet": unit.get("square_feet"),
-        "owner_name": unit.get("owner_name"),
-        "parcel_number": unit.get("parcel_number"),
-        "created_at": unit.get("created_at"),
-        "updated_at": unit.get("updated_at"),
-    }
-    
-    # Update unit_copy with expected fields (this will add missing fields or update existing ones)
-    for key, value in expected_fields.items():
-        if key not in unit_copy or unit_copy[key] is None:
-            unit_copy[key] = value
-    
-    # Log what we're about to return
-    logger.debug(f"Unit copy before return - unit_number: {unit_copy.get('unit_number')}, floor: {unit_copy.get('floor')}, bedrooms: {unit_copy.get('bedrooms')}")
-    
+    # Use unit directly (same as working version - no filtering or copying)
+    # The unit object from Supabase contains all fields, and we've only added "owners" to it
     report_data = {
-        "unit": unit_copy,
+        "unit": unit,
         "building": building,
         "events": events,
         "documents": documents,
