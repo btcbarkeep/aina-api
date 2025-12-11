@@ -1533,20 +1533,40 @@ async def generate_unit_report(
         contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         contractors = contractors[:5]
     
-    # Get property management companies assigned to this unit
+    # Get property management companies assigned to this unit or its building
     pm_companies = []
+    pm_company_ids = set()
+    
+    # Direct unit access
     pm_unit_access_result = (
         client.table("pm_company_unit_access")
         .select("pm_company_id")
         .eq("unit_id", unit_id)
         .execute()
     )
-    pm_company_ids = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
+    for row in (pm_unit_access_result.data or []):
+        pm_id = row.get("pm_company_id")
+        if pm_id:
+            pm_company_ids.add(pm_id)
+    
+    # Building-level access (inherit PMs with building access)
+    if building_id:
+        pm_building_access_result = (
+            client.table("pm_company_building_access")
+            .select("pm_company_id")
+            .eq("building_id", building_id)
+            .execute()
+        )
+        for row in (pm_building_access_result.data or []):
+            pm_id = row.get("pm_company_id")
+            if pm_id:
+                pm_company_ids.add(pm_id)
+    
     if pm_company_ids:
         pm_companies_result = (
             client.table("property_management_companies")
             .select("*")
-            .in_("id", pm_company_ids)
+            .in_("id", list(pm_company_ids))
             .execute()
         )
         pm_companies = pm_companies_result.data or []
