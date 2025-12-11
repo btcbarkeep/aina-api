@@ -1434,6 +1434,51 @@ async def generate_unit_report(
         for document in documents:
             document["unit_ids"] = [unit_id]  # List with single unit_id
     
+    # FEATURE 3: Fetch document category and subcategory names
+    if documents:
+        # Get unique category_ids and subcategory_ids from documents
+        category_ids = list(set([d.get("category_id") for d in documents if d.get("category_id")]))
+        subcategory_ids = list(set([d.get("subcategory_id") for d in documents if d.get("subcategory_id")]))
+        
+        # Fetch category names from document_categories table
+        category_name_map = {}
+        if category_ids:
+            document_categories_result = (
+                client.table("document_categories")
+                .select("id, name")
+                .in_("id", category_ids)
+                .execute()
+            )
+            category_name_map = {cat["id"]: cat["name"] for cat in (document_categories_result.data or [])}
+        
+        # Fetch subcategory names from document_subcategories table
+        subcategory_name_map = {}
+        if subcategory_ids:
+            document_subcategories_result = (
+                client.table("document_subcategories")
+                .select("id, name")
+                .in_("id", subcategory_ids)
+                .execute()
+            )
+            subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
+        
+        # Update documents with category and subcategory names
+        # Keep category_id and subcategory_id, and add category and subcategory text names
+        for document in documents:
+            # Add category text name (keep category_id)
+            category_id = document.get("category_id")
+            if category_id and category_id in category_name_map:
+                document["category"] = category_name_map[category_id]
+            else:
+                document["category"] = None
+            
+            # Add subcategory text name (keep subcategory_id)
+            subcategory_id = document.get("subcategory_id")
+            if subcategory_id and subcategory_id in subcategory_name_map:
+                document["subcategory"] = subcategory_name_map[subcategory_id]
+            else:
+                document["subcategory"] = None
+    
     # Get contractors (via events for this unit)
     contractors = []
     if event_ids:
