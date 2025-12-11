@@ -639,12 +639,12 @@ async def get_public_unit_report(
             
             building_id = building_result.data[0]["id"]
             
-            # Query unit by unit_number and building_id (exact match)
+            # Query unit by unit_number and building_id (case-insensitive)
             unit_result = (
                 client.table("units")
                 .select("id")
                 .eq("building_id", building_id)
-                .eq("unit_number", identifier)
+                .ilike("unit_number", identifier)
                 .limit(1)
                 .execute()
             )
