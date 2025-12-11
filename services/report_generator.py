@@ -1,6 +1,6 @@
 # services/report_generator.py
 
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from uuid import uuid4
 import uuid
@@ -480,65 +480,15 @@ async def generate_building_report(
                             event_units_map[event_id] = []
                         event_units_map[event_id].append(unit_id)
             
-            # Get all unique unit_ids to fetch unit numbers
-            all_unit_ids = set()
-            for unit_ids_list in event_units_map.values():
-                all_unit_ids.update(unit_ids_list)
-            
-            # Fetch unit numbers from units table
-            unit_numbers_map = {}
-            if all_unit_ids and not internal and context_role == "public":
-                units_result = (
-                    client.table("units")
-                    .select("id, unit_number")
-                    .in_("id", list(all_unit_ids))
-                    .execute()
-                )
-                if units_result.data:
-                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
-            
             # Add unit_ids to each event (list of all unit_ids)
             for event in events:
                 event_id = event.get("id")
                 unit_ids = event_units_map.get(event_id, [])
                 event["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
                 
-                # For public reports, add units_affected if multiple units
-                if not internal and context_role == "public" and len(unit_ids) > 1:
-                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
-                    if unit_numbers:
-                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
-                
                 # Remove unit_number field for public reports
                 if not internal and context_role == "public":
                     event.pop("unit_number", None)
-    
-    # Fetch event category names and replace event_type with category name
-    if events:
-        # Get unique category_ids from events
-        category_ids = list(set([e.get("category_id") for e in events if e.get("category_id")]))
-        
-        if category_ids:
-            # Fetch category names from event_categories table
-            event_categories_result = (
-                client.table("event_categories")
-                .select("id, name")
-                .in_("id", category_ids)
-                .execute()
-            )
-            # Create a map: category_id -> category_name
-            category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
-            
-            # Replace event_type with category name for each event
-            for event in events:
-                category_id = event.get("category_id")
-                if category_id and category_id in category_name_map:
-                    # Replace event_type with category name
-                    event["event_type"] = category_name_map[category_id]
-                elif category_id:
-                    # Category ID exists but not found in map, keep original event_type or set to None
-                    # If no category_id, keep original event_type
-                    pass
     
     # Get documents for this building
     documents_query = client.table("documents").select("*").eq("building_id", building_id)
@@ -637,58 +587,6 @@ async def generate_building_report(
                 doc_id = document.get("id")
                 unit_ids = document_units_map.get(doc_id, [])
                 document["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
-                
-                # Remove document_id and unit_id fields if they exist (keep only unit_ids)
-                document.pop("document_id", None)
-                document.pop("unit_id", None)
-    
-    # Fetch document category and subcategory names
-    if documents:
-        # Get unique category_ids and subcategory_ids from documents
-        category_ids = list(set([d.get("category_id") for d in documents if d.get("category_id")]))
-        subcategory_ids = list(set([d.get("subcategory_id") for d in documents if d.get("subcategory_id")]))
-        
-        # Fetch category names from document_categories table
-        category_name_map = {}
-        if category_ids:
-            document_categories_result = (
-                client.table("document_categories")
-                .select("id, name")
-                .in_("id", category_ids)
-                .execute()
-            )
-            category_name_map = {cat["id"]: cat["name"] for cat in (document_categories_result.data or [])}
-        
-        # Fetch subcategory names from document_subcategories table
-        subcategory_name_map = {}
-        if subcategory_ids:
-            document_subcategories_result = (
-                client.table("document_subcategories")
-                .select("id, name")
-                .in_("id", subcategory_ids)
-                .execute()
-            )
-            subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
-        
-        # Update documents with category and subcategory names
-        # Keep category_id and subcategory_id, and add category and subcategory text names
-        for document in documents:
-            # Add category text name (keep category_id)
-            category_id = document.get("category_id")
-            if category_id and category_id in category_name_map:
-                document["category"] = category_name_map[category_id]
-            else:
-                document["category"] = None
-            
-            # Remove old content_type field if it exists
-            document.pop("content_type", None)
-            
-            # Add subcategory text name (keep subcategory_id)
-            subcategory_id = document.get("subcategory_id")
-            if subcategory_id and subcategory_id in subcategory_name_map:
-                document["subcategory"] = subcategory_name_map[subcategory_id]
-            else:
-                document["subcategory"] = None
     
     # Get contractors (via events)
     event_contractors_result = (
@@ -727,19 +625,10 @@ async def generate_building_report(
     # Store total contractor count before limiting (for public reports)
     total_contractors_count = len(contractors)
     
-    # For public reports, limit to top 5 contractors
-    # Prioritize contractors with "paid" subscription, then sort by event count
+    # For public reports, limit to top 5 contractors by event count
     if not internal and context_role == "public":
-        # Separate paid and non-paid contractors
-        paid_contractors = [c for c in contractors if c.get("subscription_tier") == "paid"]
-        non_paid_contractors = [c for c in contractors if c.get("subscription_tier") != "paid"]
-        
-        # Sort each group by event count (descending)
-        paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        non_paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        
-        # Combine: paid first, then non-paid, take top 5
-        contractors = (paid_contractors + non_paid_contractors)[:5]
+        contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        contractors = contractors[:5]
     
     # Get property management companies assigned to this building
     pm_building_access_result = (
@@ -852,151 +741,26 @@ async def generate_building_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
-    # Count units and buildings for each PM company
-    if pm_companies:
-        pm_company_ids_list = [pm.get("id") for pm in pm_companies if pm.get("id")]
-        
-        # Get building access counts
-        pm_building_counts = {}
-        if pm_company_ids_list:
-            pm_building_access_all = (
-                client.table("pm_company_building_access")
-                .select("pm_company_id")
-                .in_("pm_company_id", pm_company_ids_list)
-                .execute()
-            )
-            for row in (pm_building_access_all.data or []):
-                pm_id = row.get("pm_company_id")
-                if pm_id:
-                    pm_building_counts[pm_id] = pm_building_counts.get(pm_id, 0) + 1
-        
-        # Get unit access counts (direct + inherited from buildings, avoiding double counting)
-        pm_unit_counts = {}
-        if pm_company_ids_list:
-            # Get building access for each PM company
-            pm_building_access_for_units = (
-                client.table("pm_company_building_access")
-                .select("pm_company_id, building_id")
-                .in_("pm_company_id", pm_company_ids_list)
-                .execute()
-            )
-            
-            # Map PM company to their accessible building IDs
-            pm_to_buildings = {}
-            building_ids_set = set()
-            for row in (pm_building_access_for_units.data or []):
-                pm_id = row.get("pm_company_id")
-                building_id = row.get("building_id")
-                if pm_id and building_id:
-                    building_ids_set.add(building_id)
-                    if pm_id not in pm_to_buildings:
-                        pm_to_buildings[pm_id] = set()
-                    pm_to_buildings[pm_id].add(building_id)
-            
-            # Get all units from buildings PM companies have access to
-            units_from_buildings_map = {}  # building_id -> set of unit_ids
-            if building_ids_set:
-                units_from_buildings = (
-                    client.table("units")
-                    .select("id, building_id")
-                    .in_("building_id", list(building_ids_set))
-                    .execute()
-                )
-                for unit in (units_from_buildings.data or []):
-                    b_id = unit.get("building_id")
-                    unit_id = unit.get("id")
-                    if b_id and unit_id:
-                        if b_id not in units_from_buildings_map:
-                            units_from_buildings_map[b_id] = set()
-                        units_from_buildings_map[b_id].add(unit_id)
-            
-            # Get direct unit access
-            pm_unit_access_direct = (
-                client.table("pm_company_unit_access")
-                .select("pm_company_id, unit_id")
-                .in_("pm_company_id", pm_company_ids_list)
-                .execute()
-            )
-            
-            # Get building_id for each directly accessed unit (to check if it's already included)
-            direct_unit_ids = set()
-            pm_to_direct_units = {}
-            for row in (pm_unit_access_direct.data or []):
-                pm_id = row.get("pm_company_id")
-                unit_id = row.get("unit_id")
-                if pm_id and unit_id:
-                    direct_unit_ids.add(unit_id)
-                    if pm_id not in pm_to_direct_units:
-                        pm_to_direct_units[pm_id] = set()
-                    pm_to_direct_units[pm_id].add(unit_id)
-            
-            # Get building_id for directly accessed units
-            direct_units_with_buildings = {}
-            if direct_unit_ids:
-                direct_units_result = (
-                    client.table("units")
-                    .select("id, building_id")
-                    .in_("id", list(direct_unit_ids))
-                    .execute()
-                )
-                for unit in (direct_units_result.data or []):
-                    unit_id = unit.get("id")
-                    building_id = unit.get("building_id")
-                    if unit_id and building_id:
-                        direct_units_with_buildings[unit_id] = building_id
-            
-            # Calculate unique unit counts per PM company
-            for pm_id in pm_company_ids_list:
-                accessible_unit_ids = set()
-                
-                # Add units from buildings they have access to
-                building_ids = pm_to_buildings.get(pm_id, set())
-                for b_id in building_ids:
-                    units_in_building = units_from_buildings_map.get(b_id, set())
-                    accessible_unit_ids.update(units_in_building)
-                
-                # Add direct unit access (only if unit is not already included via building access)
-                direct_units = pm_to_direct_units.get(pm_id, set())
-                for unit_id in direct_units:
-                    unit_building_id = direct_units_with_buildings.get(unit_id)
-                    # If unit's building is not in PM company's building access, add it
-                    if unit_building_id not in building_ids:
-                        accessible_unit_ids.add(unit_id)
-                
-                pm_unit_counts[pm_id] = len(accessible_unit_ids)
-        
-        # Add counts to each PM company
-        for pm in pm_companies:
-            pm_id = pm.get("id")
-            pm["unit_count"] = pm_unit_counts.get(pm_id, 0)
-            pm["building_count"] = pm_building_counts.get(pm_id, 0)
-    
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
     
-    # For public reports, limit to top 5 PM companies
-    # Prioritize PM companies with "paid" subscription, then sort by event count
+    # For public reports, limit to top 5 PM companies by event count
+    # Include PM companies with 0 events if there aren't 5 with events
     if not internal and context_role == "public":
-        # Separate paid and non-paid PM companies
-        paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") == "paid"]
-        non_paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") != "paid"]
+        # Sort by event count (descending)
+        pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         
-        # Sort each group by event count (descending)
-        paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        non_paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        # Separate PM companies with events from those without
+        pm_with_events = [pm for pm in pm_companies if pm.get("event_count", 0) > 0]
+        pm_without_events = [pm for pm in pm_companies if pm.get("event_count", 0) == 0]
         
-        # Combine: paid first, then non-paid, take top 5
-        pm_companies = (paid_pm_companies + non_paid_pm_companies)[:5]
-    
-    # Deduplicate PM companies (unit + building access can double count)
-    if pm_companies:
-        pm_dedup: Dict[str, Dict[str, Any]] = {}
-        for pm in pm_companies:
-            pm_id = pm.get("id")
-            if pm_id:
-                # Keep the first occurrence (already carries event_count/access_created_at)
-                pm_dedup.setdefault(pm_id, pm)
-        pm_companies = list(pm_dedup.values())
+        # Take up to 5 with events, then fill remaining slots with those without events
+        result = pm_with_events[:5]
+        remaining_slots = 5 - len(result)
+        if remaining_slots > 0 and pm_without_events:
+            result.extend(pm_without_events[:remaining_slots])
+        
+        pm_companies = result
     
     # Calculate statistics
     # Use total counts (not limited) for public reports
@@ -1009,86 +773,20 @@ async def generate_building_report(
         "total_pm_companies": total_pm_companies_count if (not internal and context_role == "public") else len(pm_companies),
     }
     
-    # Get owners for each unit (before filtering for public reports)
-    if units:
-        unit_ids = [u.get("id") for u in units if u.get("id")]
-        if unit_ids:
-            try:
-                # Get user_units_access records for all units
-                user_units_access_result = (
-                    client.table("user_units_access")
-                    .select("user_id, unit_id, created_at")
-                    .in_("unit_id", unit_ids)
-                    .execute()
-                )
-                
-                if user_units_access_result.data:
-                    # Get all user_ids that have access to these units
-                    user_ids = list(set([row["user_id"] for row in user_units_access_result.data]))
-                    
-                    # Get user_subscriptions for these users where role = "owner"
-                    if user_ids:
-                        user_subscriptions_result = (
-                            client.table("user_subscriptions")
-                            .select("user_id, subscription_tier")
-                            .in_("user_id", user_ids)
-                            .eq("role", "owner")
-                            .execute()
-                        )
-                        
-                        # Create a map of user_id -> subscription_tier
-                        user_subscription_map = {
-                            row["user_id"]: row["subscription_tier"] 
-                            for row in (user_subscriptions_result.data or [])
-                        }
-                        
-                        # Create a map of unit_id -> list of owners
-                        unit_owners_map = {}
-                        for row in user_units_access_result.data:
-                            unit_id = row.get("unit_id")
-                            user_id = row.get("user_id")
-                            if unit_id and user_id and user_id in user_subscription_map:
-                                if unit_id not in unit_owners_map:
-                                    unit_owners_map[unit_id] = []
-                                unit_owners_map[unit_id].append({
-                                    "user_id": user_id,
-                                    "subscription_tier": user_subscription_map[user_id],
-                                    "created_at": row.get("created_at"),
-                                })
-                        
-                        # Add owners to each unit
-                        for unit in units:
-                            unit_id = unit.get("id")
-                            if unit_id:
-                                unit["owners"] = unit_owners_map.get(unit_id, [])
-                            else:
-                                unit["owners"] = []
-            except Exception as e:
-                # Log error but continue without owners data
-                from core.logging_config import logger
-                logger.warning(f"Failed to fetch owners for building report: {e}")
-                # Set empty owners for all units
-                for unit in units:
-                    unit["owners"] = []
-    
     # For public reports, remove unnecessary fields to reduce payload size
     if not internal and context_role == "public":
         # Remove fields from building
         building_filtered = {k: v for k, v in building.items() if k not in ["created_at", "updated_at", "metadata", "metadata_last_refreshed"]}
         
-        # Remove fields from units (but preserve owners field)
+        # Remove fields from units
         units_filtered = []
         for unit in units:
-            filtered_unit = {k: v for k, v in unit.items() if k not in ["bedrooms", "bathrooms", "square_feet", "created_at", "updated_at", "parcel_number"]}
-            # Preserve owners field if it exists
-            if "owners" in unit:
-                filtered_unit["owners"] = unit["owners"]
-            units_filtered.append(filtered_unit)
+            units_filtered.append({k: v for k, v in unit.items() if k not in ["bedrooms", "bathrooms", "square_feet", "created_at", "updated_at", "parcel_number"]})
         
         # Remove fields from documents
         documents_filtered = []
         for doc in documents:
-            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted", "unit_id", "content_type"]})
+            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted"]})
         
         # Remove fields from contractors
         contractors_filtered = []
@@ -1112,116 +810,6 @@ async def generate_building_report(
         aoao_orgs = aoao_orgs_filtered
         pm_companies = pm_companies_filtered
     
-    # Get most active contractor's last 5 events (for public reports only)
-    most_active_contractor_events = []
-    if not internal and context_role == "public" and contractor_event_counts:
-        try:
-            # Find contractor with most events
-            most_active_contractor_id = max(contractor_event_counts.items(), key=lambda x: x[1])[0] if contractor_event_counts else None
-            
-            if most_active_contractor_id:
-                # Get event IDs for this contractor in this building
-                contractor_event_ids_result = (
-                    client.table("event_contractors")
-                    .select("event_id, events!inner(building_id)")
-                    .eq("contractor_id", most_active_contractor_id)
-                    .eq("events.building_id", building_id)
-                    .execute()
-                )
-                
-                contractor_event_ids = [row["event_id"] for row in (contractor_event_ids_result.data or []) if row.get("event_id")]
-                
-                if contractor_event_ids:
-                    # Get the last 5 events
-                    contractor_events_result = (
-                        client.table("events")
-                        .select("*")
-                        .in_("id", contractor_event_ids)
-                        .order("occurred_at", desc=True)
-                        .limit(5)
-                        .execute()
-                    )
-                    
-                    contractor_events = contractor_events_result.data or []
-                    
-                    # Get unit_ids for these events
-                    if contractor_events:
-                        contractor_event_ids_list = [e.get("id") for e in contractor_events if e.get("id")]
-                        if contractor_event_ids_list:
-                            event_units_result = (
-                                client.table("event_units")
-                                .select("event_id, unit_id")
-                                .in_("event_id", contractor_event_ids_list)
-                                .execute()
-                            )
-                            
-                            event_units_map = {}
-                            if event_units_result.data:
-                                for row in event_units_result.data:
-                                    event_id = row.get("event_id")
-                                    unit_id = row.get("unit_id")
-                                    if event_id and unit_id:
-                                        if event_id not in event_units_map:
-                                            event_units_map[event_id] = []
-                                        event_units_map[event_id].append(unit_id)
-                            
-                            # Get unit numbers for units_affected
-                            all_unit_ids = set()
-                            for unit_ids_list in event_units_map.values():
-                                all_unit_ids.update(unit_ids_list)
-                            
-                            unit_numbers_map = {}
-                            if all_unit_ids:
-                                units_result = (
-                                    client.table("units")
-                                    .select("id, unit_number")
-                                    .in_("id", list(all_unit_ids))
-                                    .execute()
-                                )
-                                if units_result.data:
-                                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
-                            
-                            # Format events similar to main events
-                            for event in contractor_events:
-                                event_id = event.get("id")
-                                unit_ids = event_units_map.get(event_id, [])
-                                event["unit_ids"] = unit_ids
-                                
-                                # Add units_affected if multiple units
-                                if len(unit_ids) > 1:
-                                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
-                                    if unit_numbers:
-                                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
-                                
-                                # Remove unit_number field
-                                event.pop("unit_number", None)
-                                
-                                # Sanitize for public role
-                                sanitized = sanitize_event_for_role(event, context_role)
-                                if sanitized:
-                                    most_active_contractor_events.append(sanitized)
-                            
-                            # Replace event_type with category name
-                            if most_active_contractor_events:
-                                category_ids = list(set([e.get("category_id") for e in most_active_contractor_events if e.get("category_id")]))
-                                if category_ids:
-                                    event_categories_result = (
-                                        client.table("event_categories")
-                                        .select("id, name")
-                                        .in_("id", category_ids)
-                                        .execute()
-                                    )
-                                    category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
-                                    
-                                    for event in most_active_contractor_events:
-                                        category_id = event.get("category_id")
-                                        if category_id and category_id in category_name_map:
-                                            event["event_type"] = category_name_map[category_id]
-        except Exception as e:
-            from core.logging_config import logger
-            logger.warning(f"Failed to fetch most active contractor events for building report: {e}")
-            # most_active_contractor_events remains empty list
-    
     # Build report data
     report_data = {
         "building": building,
@@ -1231,7 +819,6 @@ async def generate_building_report(
         "contractors": contractors,
         "aoao_organizations": aoao_orgs,
         "property_management_companies": pm_companies,
-        "most_active_contractor_events": most_active_contractor_events,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
@@ -1281,10 +868,17 @@ async def generate_unit_report(
     format: str = "json"
 ) -> ReportResult:
     """
-    Generate a unit report (restored to last known-good public behavior).
+    Generate a unit report.
+    
+    Args:
+        unit_id: Unit ID
+        user: Current user (None for public)
+        context_role: Effective role
+        internal: Whether this is an internal report
+        format: "json" or "pdf"
     """
     client = get_supabase_client()
-
+    
     # Get unit info
     unit_result = (
         client.table("units")
@@ -1293,12 +887,11 @@ async def generate_unit_report(
         .limit(1)
         .execute()
     )
+    
     if not unit_result.data:
         raise ValueError(f"Unit {unit_id} not found")
+    
     unit = unit_result.data[0]
-    fetched_unit_id = unit.get("id")
-    if fetched_unit_id and str(fetched_unit_id) != str(unit_id):
-        raise ValueError(f"Mismatch: requested unit_id {unit_id} but fetched {fetched_unit_id} from units table")
     building_id = unit.get("building_id")
     
     # Get building info
@@ -1353,126 +946,34 @@ async def generate_unit_report(
         events = events[:5]
     
     # Attach unit_ids to events from event_units junction table
-    # Get all unit_ids for each event (not just the single unit_id)
+    # For unit reports, all events are linked to this unit via event_units
+    # Return as a list for consistency (even though it's always one unit for unit reports)
     if events:
-        event_ids = [e.get("id") for e in events if e.get("id")]
-        if event_ids:
-            event_units_result = (
-                client.table("event_units")
-                .select("event_id, unit_id")
-                .in_("event_id", event_ids)
-                .execute()
-            )
-            # Create a map: event_id -> list of unit_ids
-            event_units_map = {}
-            if event_units_result.data:
-                for row in event_units_result.data:
-                    event_id = row.get("event_id")
-                    unit_id = row.get("unit_id")
-                    if event_id and unit_id:
-                        if event_id not in event_units_map:
-                            event_units_map[event_id] = []
-                        event_units_map[event_id].append(unit_id)
+        for event in events:
+            event["unit_ids"] = [unit_id]  # List with single unit_id
             
-            # Get all unique unit_ids to fetch unit numbers
-            all_unit_ids = set()
-            for unit_ids_list in event_units_map.values():
-                all_unit_ids.update(unit_ids_list)
-            
-            # Fetch unit numbers from units table (for public reports)
-            unit_numbers_map = {}
-            if all_unit_ids and not internal and context_role == "public":
-                units_result = (
-                    client.table("units")
-                    .select("id, unit_number")
-                    .in_("id", list(all_unit_ids))
-                    .execute()
-                )
-                if units_result.data:
-                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
-            
-            # Add unit_ids to each event (list of all unit_ids)
-            for event in events:
-                event_id = event.get("id")
-                unit_ids = event_units_map.get(event_id, [])
-                event["unit_ids"] = unit_ids  # List of all unit_ids (empty list if none)
-                
-                # For public reports, add units_affected if multiple units
-                if not internal and context_role == "public" and len(unit_ids) > 1:
-                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
-                    if unit_numbers:
-                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
-                
-                # Remove unit_number field for public reports
-                if not internal and context_role == "public":
-                    event.pop("unit_number", None)
-    
-    # Fetch event category names and replace event_type with category name
-    if events:
-        # Get unique category_ids from events
-        category_ids = list(set([e.get("category_id") for e in events if e.get("category_id")]))
-        
-        if category_ids:
-            # Fetch category names from event_categories table
-            event_categories_result = (
-                client.table("event_categories")
-                .select("id, name")
-                .in_("id", category_ids)
-                .execute()
-            )
-            # Create a map: category_id -> category_name
-            category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
-            
-            # Replace event_type with category name for each event
-            for event in events:
-                category_id = event.get("category_id")
-                if category_id and category_id in category_name_map:
-                    # Replace event_type with category name
-                    event["event_type"] = category_name_map[category_id]
-                elif category_id:
-                    # Category ID exists but not found in map, keep original event_type or set to None
-                    # If no category_id, keep original event_type
-                    pass
-    
-    # Get documents for this unit (via document_units and unit_id column)
-    documents = []
-    from core.logging_config import logger
-    try:
-        # Collect doc ids from junction table
-        document_units_result = (
-            client.table("document_units")
-            .select("document_id")
-            .eq("unit_id", unit_id)
-            .execute()
-        )
-        document_ids = [row["document_id"] for row in (document_units_result.data or [])]
-        
-        # Also include documents that have unit_id directly set
-        direct_docs_result = (
-            client.table("documents")
-            .select("id")
-            .eq("unit_id", unit_id)
-            .execute()
-        )
-        direct_doc_ids = [row["id"] for row in (direct_docs_result.data or [])]
-        
-        combined_doc_ids = list({*document_ids, *direct_doc_ids})
-        logger.debug(f"Found {len(combined_doc_ids)} document_ids linked to unit {unit_id} (junction + direct)")
-        
-        if combined_doc_ids:
-            documents_query = client.table("documents").select("*").in_("id", combined_doc_ids)
-            
-            # For public reports, only show public documents
+            # Remove unit_number field for public reports
             if not internal and context_role == "public":
-                documents_query = documents_query.eq("is_public", True)
-            
-            documents_result = documents_query.order("created_at", desc=True).execute()
-            documents = documents_result.data or []
-            
-            logger.debug(f"Fetched {len(documents)} documents for unit {unit_id} (after is_public filter)")
-    except Exception as e:
-        logger.error(f"Failed to fetch documents for unit report (unit_id: {unit_id}): {e}", exc_info=True)
-        documents = []
+                event.pop("unit_number", None)
+    
+    # Get documents for this unit (via document_units)
+    document_units_result = (
+        client.table("document_units")
+        .select("document_id")
+        .eq("unit_id", unit_id)
+        .execute()
+    )
+    document_ids = [row["document_id"] for row in (document_units_result.data or [])]
+    
+    documents = []
+    if document_ids:
+        documents_query = client.table("documents").select("*").in_("id", document_ids)
+        
+        if not internal or context_role == "public":
+            documents_query = documents_query.eq("is_public", True)
+        
+        documents_result = documents_query.order("created_at", desc=True).execute()
+        documents = documents_result.data or []
     
     # Sanitize documents based on role
     sanitized_documents = []
@@ -1495,62 +996,9 @@ async def generate_unit_report(
     if documents:
         for document in documents:
             document["unit_ids"] = [unit_id]  # List with single unit_id
-            
-            # Remove document_id and unit_id fields if they exist (keep only unit_ids)
-            document.pop("document_id", None)
-            document.pop("unit_id", None)
-    
-    # Fetch document category and subcategory names
-    if documents:
-        # Get unique category_ids and subcategory_ids from documents
-        category_ids = list(set([d.get("category_id") for d in documents if d.get("category_id")]))
-        subcategory_ids = list(set([d.get("subcategory_id") for d in documents if d.get("subcategory_id")]))
-        
-        # Fetch category names from document_categories table
-        category_name_map = {}
-        if category_ids:
-            document_categories_result = (
-                client.table("document_categories")
-                .select("id, name")
-                .in_("id", category_ids)
-                .execute()
-            )
-            category_name_map = {cat["id"]: cat["name"] for cat in (document_categories_result.data or [])}
-        
-        # Fetch subcategory names from document_subcategories table
-        subcategory_name_map = {}
-        if subcategory_ids:
-            document_subcategories_result = (
-                client.table("document_subcategories")
-                .select("id, name")
-                .in_("id", subcategory_ids)
-                .execute()
-            )
-            subcategory_name_map = {subcat["id"]: subcat["name"] for subcat in (document_subcategories_result.data or [])}
-        
-        # Update documents with category and subcategory names
-        # Keep category_id and subcategory_id, and add category and subcategory text names
-        for document in documents:
-            # Add category text name (keep category_id)
-            category_id = document.get("category_id")
-            if category_id and category_id in category_name_map:
-                document["category"] = category_name_map[category_id]
-            else:
-                document["category"] = None
-            
-            # Remove old content_type field if it exists
-            document.pop("content_type", None)
-            
-            # Add subcategory text name (keep subcategory_id)
-            subcategory_id = document.get("subcategory_id")
-            if subcategory_id and subcategory_id in subcategory_name_map:
-                document["subcategory"] = subcategory_name_map[subcategory_id]
-            else:
-                document["subcategory"] = None
     
     # Get contractors (via events for this unit)
     contractors = []
-    contractor_event_counts = {}  # Initialize outside if block for later use
     if event_ids:
         event_contractors_result = (
             client.table("event_contractors")
@@ -1561,6 +1009,7 @@ async def generate_unit_report(
         contractor_ids = list(set([row["contractor_id"] for row in (event_contractors_result.data or []) if row.get("contractor_id")]))
         
         # Count events per contractor
+        contractor_event_counts = {}
         for row in (event_contractors_result.data or []):
             cid = row.get("contractor_id")
             if cid:
@@ -1584,78 +1033,28 @@ async def generate_unit_report(
     # Store total contractor count before limiting (for public reports)
     total_contractors_count = len(contractors)
     
-    # For public reports, limit to top 5 contractors
-    # Prioritize contractors with "paid" subscription, then sort by event count
+    # For public reports, limit to top 5 contractors by event count
     if not internal and context_role == "public":
-        # Separate paid and non-paid contractors
-        paid_contractors = [c for c in contractors if c.get("subscription_tier") == "paid"]
-        non_paid_contractors = [c for c in contractors if c.get("subscription_tier") != "paid"]
-        
-        # Sort each group by event count (descending)
-        paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        non_paid_contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        
-        # Combine: paid first, then non-paid, take top 5
-        contractors = (paid_contractors + non_paid_contractors)[:5]
+        contractors.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        contractors = contractors[:5]
     
-    # Get property management companies assigned to this unit or its building
+    # Get property management companies assigned to this unit
     pm_companies = []
-    try:
-        pm_company_ids: Set[str] = set()
-        pm_access_created_at_map: Dict[str, Any] = {}
-        
-        # Direct unit access
-        pm_unit_access_result = (
-            client.table("pm_company_unit_access")
-            .select("pm_company_id, created_at")
-            .eq("unit_id", unit_id)
+    pm_unit_access_result = (
+        client.table("pm_company_unit_access")
+        .select("pm_company_id")
+        .eq("unit_id", unit_id)
+        .execute()
+    )
+    pm_company_ids = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
+    if pm_company_ids:
+        pm_companies_result = (
+            client.table("property_management_companies")
+            .select("*")
+            .in_("id", pm_company_ids)
             .execute()
         )
-        for row in (pm_unit_access_result.data or []):
-            pm_id = row.get("pm_company_id")
-            created_at = row.get("created_at")
-            if pm_id:
-                pm_company_ids.add(pm_id)
-                # Prefer earliest access timestamp if multiple
-                existing = pm_access_created_at_map.get(pm_id)
-                if not existing or (created_at and created_at < existing):
-                    pm_access_created_at_map[pm_id] = created_at
-        
-        # Building-level access (inherit PMs with building access)
-        if building_id:
-            pm_building_access_result = (
-                client.table("pm_company_building_access")
-                .select("pm_company_id, created_at")
-                .eq("building_id", building_id)
-                .execute()
-            )
-            for row in (pm_building_access_result.data or []):
-                pm_id = row.get("pm_company_id")
-                created_at = row.get("created_at")
-                if pm_id:
-                    pm_company_ids.add(pm_id)
-                    existing = pm_access_created_at_map.get(pm_id)
-                    if not existing or (created_at and created_at < existing):
-                        pm_access_created_at_map[pm_id] = created_at
-        
-        if pm_company_ids:
-            pm_companies_result = (
-                client.table("property_management_companies")
-                .select("*")
-                .in_("id", list(pm_company_ids))
-                .execute()
-            )
-            pm_companies = pm_companies_result.data or []
-            
-            # Add access information (created_at) to each PM company
-            for pm in pm_companies:
-                pm_id = pm.get("id")
-                if pm_id and pm_id in pm_access_created_at_map:
-                    pm["access_created_at"] = pm_access_created_at_map[pm_id]
-    except Exception as e:
-        from core.logging_config import logger
-        logger.warning(f"Failed to fetch property management companies for unit report (unit_id: {unit_id}): {e}")
-        # pm_companies remains empty list
+        pm_companies = pm_companies_result.data or []
     
     # Build quick lookup for event creators to PM/AOAO org names (for event counts)
     def _norm_name(val: Optional[str]) -> Optional[str]:
@@ -1698,114 +1097,26 @@ async def generate_unit_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
-    # Count units and buildings for each PM company
-    if pm_companies:
-        pm_company_ids_list = [pm.get("id") for pm in pm_companies if pm.get("id")]
-        
-        # Get building access counts
-        pm_building_counts = {}
-        if pm_company_ids_list:
-            pm_building_access_all = (
-                client.table("pm_company_building_access")
-                .select("pm_company_id")
-                .in_("pm_company_id", pm_company_ids_list)
-                .execute()
-            )
-            for row in (pm_building_access_all.data or []):
-                pm_id = row.get("pm_company_id")
-                if pm_id:
-                    pm_building_counts[pm_id] = pm_building_counts.get(pm_id, 0) + 1
-        
-        # Get unit access counts (direct + inherited from buildings)
-        pm_unit_counts = {}
-        if pm_company_ids_list:
-            # Direct unit access
-            pm_unit_access_direct = (
-                client.table("pm_company_unit_access")
-                .select("pm_company_id, unit_id")
-                .in_("pm_company_id", pm_company_ids_list)
-                .execute()
-            )
-            direct_unit_counts = {}
-            for row in (pm_unit_access_direct.data or []):
-                pm_id = row.get("pm_company_id")
-                if pm_id:
-                    direct_unit_counts[pm_id] = direct_unit_counts.get(pm_id, 0) + 1
-            
-            # Inherited units from buildings (get unique unit counts per PM company)
-            pm_building_access_for_units = (
-                client.table("pm_company_building_access")
-                .select("pm_company_id, building_id")
-                .in_("pm_company_id", pm_company_ids_list)
-                .execute()
-            )
-            
-            # Get all building IDs
-            building_ids_set = set()
-            pm_to_buildings = {}
-            for row in (pm_building_access_for_units.data or []):
-                pm_id = row.get("pm_company_id")
-                building_id = row.get("building_id")
-                if pm_id and building_id:
-                    building_ids_set.add(building_id)
-                    if pm_id not in pm_to_buildings:
-                        pm_to_buildings[pm_id] = set()
-                    pm_to_buildings[pm_id].add(building_id)
-            
-            # Get all units from these buildings
-            inherited_unit_counts = {}
-            if building_ids_set:
-                units_from_buildings = (
-                    client.table("units")
-                    .select("id, building_id")
-                    .in_("building_id", list(building_ids_set))
-                    .execute()
-                )
-                # Count units per building
-                building_unit_counts = {}
-                for unit in (units_from_buildings.data or []):
-                    b_id = unit.get("building_id")
-                    if b_id:
-                        building_unit_counts[b_id] = building_unit_counts.get(b_id, 0) + 1
-                
-                # Sum units per PM company based on their building access
-                for pm_id, building_ids in pm_to_buildings.items():
-                    total_units = 0
-                    for b_id in building_ids:
-                        total_units += building_unit_counts.get(b_id, 0)
-                    inherited_unit_counts[pm_id] = total_units
-            
-            # Combine direct and inherited unit counts (avoid double counting)
-            # For now, we'll use direct + inherited (even though there might be overlap)
-            # In practice, inherited units from buildings already include direct unit access
-            for pm_id in pm_company_ids_list:
-                direct_count = direct_unit_counts.get(pm_id, 0)
-                inherited_count = inherited_unit_counts.get(pm_id, 0)
-                # Use the larger value to avoid double counting (inherited includes direct)
-                pm_unit_counts[pm_id] = max(direct_count, inherited_count) if (direct_count > 0 and inherited_count > 0) else (direct_count + inherited_count)
-        
-        # Add counts to each PM company
-        for pm in pm_companies:
-            pm_id = pm.get("id")
-            pm["unit_count"] = pm_unit_counts.get(pm_id, 0)
-            pm["building_count"] = pm_building_counts.get(pm_id, 0)
-    
     # Store total PM companies count before limiting (for public reports)
     total_pm_companies_count = len(pm_companies)
     
-    # For public reports, limit to top 5 PM companies
-    # Prioritize PM companies with "paid" subscription, then sort by event count
+    # For public reports, limit to top 5 PM companies by event count
+    # Include PM companies with 0 events if there aren't 5 with events
     if not internal and context_role == "public":
-        # Separate paid and non-paid PM companies
-        paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") == "paid"]
-        non_paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") != "paid"]
+        # Sort by event count (descending)
+        pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         
-        # Sort each group by event count (descending)
-        paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        non_paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        # Separate PM companies with events from those without
+        pm_with_events = [pm for pm in pm_companies if pm.get("event_count", 0) > 0]
+        pm_without_events = [pm for pm in pm_companies if pm.get("event_count", 0) == 0]
         
-        # Combine: paid first, then non-paid, take top 5
-        pm_companies = (paid_pm_companies + non_paid_pm_companies)[:5]
+        # Take up to 5 with events, then fill remaining slots with those without events
+        result = pm_with_events[:5]
+        remaining_slots = 5 - len(result)
+        if remaining_slots > 0 and pm_without_events:
+            result.extend(pm_without_events[:remaining_slots])
+        
+        pm_companies = result
     
     # Get AOAO organizations assigned to this unit's building
     # (AOAO organizations are assigned at the building level, not unit level)
@@ -1860,7 +1171,7 @@ async def generate_unit_report(
         "total_aoao_organizations": len(aoao_orgs),
     }
     
-    # For public reports, remove unnecessary fields to reduce payload size (but keep key unit fields)
+    # For public reports, remove unnecessary fields to reduce payload size
     if not internal and context_role == "public":
         # Remove fields from building (if it exists)
         if building:
@@ -1869,7 +1180,7 @@ async def generate_unit_report(
         # Remove fields from documents
         documents_filtered = []
         for doc in documents:
-            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted", "unit_id", "content_type"]})
+            documents_filtered.append({k: v for k, v in doc.items() if k not in ["filename", "file_size", "is_redacted"]})
         documents = documents_filtered
         
         # Remove fields from contractors
@@ -1889,176 +1200,6 @@ async def generate_unit_report(
         for pm in pm_companies:
             pm_companies_filtered.append({k: v for k, v in pm.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
         pm_companies = pm_companies_filtered
-        
-    # Get owners with access to this unit
-    owners = []
-    from core.logging_config import logger
-    try:
-        # Get user_units_access records for this unit
-        user_units_access_result = (
-            client.table("user_units_access")
-            .select("user_id, created_at")
-            .eq("unit_id", unit_id)
-            .execute()
-        )
-        
-        if user_units_access_result.data:
-            # Get all user_ids that have access to this unit
-            user_ids = [row["user_id"] for row in user_units_access_result.data]
-            
-            # Get user_subscriptions for these users where role = "owner"
-            if user_ids:
-                user_subscriptions_result = (
-                    client.table("user_subscriptions")
-                    .select("user_id, subscription_tier")
-                    .in_("user_id", user_ids)
-                    .eq("role", "owner")
-                    .execute()
-                )
-                
-                # Create a map of user_id -> subscription_tier
-                user_subscription_map = {
-                    row["user_id"]: row["subscription_tier"] 
-                    for row in (user_subscriptions_result.data or [])
-                }
-                
-                # Create a map of user_id -> created_at from user_units_access
-                user_access_created_at_map = {
-                    row["user_id"]: row["created_at"]
-                    for row in user_units_access_result.data
-                }
-                
-                # Combine the data: only include users that have role="owner" in user_subscriptions
-                for user_id in user_subscription_map.keys():
-                    owners.append({
-                        "user_id": user_id,
-                        "subscription_tier": user_subscription_map[user_id],
-                        "created_at": user_access_created_at_map.get(user_id),
-                    })
-                
-                logger.debug(f"Found {len(owners)} owners for unit {unit_id}")
-            else:
-                logger.debug(f"No user_ids found for unit {unit_id} in user_units_access")
-        else:
-            logger.debug(f"No user_units_access records found for unit {unit_id}")
-    except Exception as e:
-        # Log error but continue without owners data
-        logger.error(f"Failed to fetch owners for unit report (unit_id: {unit_id}): {e}", exc_info=True)
-        # owners remains empty list
-    
-    # Attach owners directly on unit payload for visibility
-    if unit is not None:
-        unit["owners"] = owners
-    
-    # Get most active contractor's last 5 events (for public reports only)
-    most_active_contractor_events = []
-    if not internal and context_role == "public" and event_ids and contractor_event_counts:
-        try:
-            # Find contractor with most events
-            most_active_contractor_id = max(contractor_event_counts.items(), key=lambda x: x[1])[0] if contractor_event_counts else None
-            
-            if most_active_contractor_id:
-                # Get event IDs for this contractor for this unit
-                contractor_events_result = (
-                    client.table("event_contractors")
-                    .select("event_id")
-                    .eq("contractor_id", most_active_contractor_id)
-                    .in_("event_id", event_ids)
-                    .execute()
-                )
-                
-                contractor_event_ids = [row["event_id"] for row in (contractor_events_result.data or []) if row.get("event_id")]
-                
-                if contractor_event_ids:
-                    # Get the last 5 events
-                    contractor_events_result = (
-                        client.table("events")
-                        .select("*")
-                        .in_("id", contractor_event_ids)
-                        .order("occurred_at", desc=True)
-                        .limit(5)
-                        .execute()
-                    )
-                    
-                    contractor_events = contractor_events_result.data or []
-                    
-                    # Get unit_ids for these events
-                    if contractor_events:
-                        event_ids_for_contractor = [e.get("id") for e in contractor_events if e.get("id")]
-                        if event_ids_for_contractor:
-                            event_units_result = (
-                                client.table("event_units")
-                                .select("event_id, unit_id")
-                                .in_("event_id", event_ids_for_contractor)
-                                .execute()
-                            )
-                            
-                            event_units_map = {}
-                            if event_units_result.data:
-                                for row in event_units_result.data:
-                                    event_id = row.get("event_id")
-                                    unit_id = row.get("unit_id")
-                                    if event_id and unit_id:
-                                        if event_id not in event_units_map:
-                                            event_units_map[event_id] = []
-                                        event_units_map[event_id].append(unit_id)
-                            
-                            # Get unit numbers for units_affected
-                            all_unit_ids = set()
-                            for unit_ids_list in event_units_map.values():
-                                all_unit_ids.update(unit_ids_list)
-                            
-                            unit_numbers_map = {}
-                            if all_unit_ids:
-                                units_result = (
-                                    client.table("units")
-                                    .select("id, unit_number")
-                                    .in_("id", list(all_unit_ids))
-                                    .execute()
-                                )
-                                if units_result.data:
-                                    unit_numbers_map = {unit["id"]: unit["unit_number"] for unit in units_result.data}
-                            
-                            # Format events similar to main events
-                            for event in contractor_events:
-                                event_id = event.get("id")
-                                unit_ids = event_units_map.get(event_id, [])
-                                event["unit_ids"] = unit_ids
-                                
-                                # Add units_affected if multiple units
-                                if len(unit_ids) > 1:
-                                    unit_numbers = [unit_numbers_map.get(uid, "") for uid in unit_ids if uid in unit_numbers_map]
-                                    if unit_numbers:
-                                        event["units_affected"] = ", ".join(sorted(unit_numbers, key=lambda x: (len(x), x)))
-                                
-                                # Remove unit_number field
-                                event.pop("unit_number", None)
-                                
-                                # Sanitize for public role
-                                sanitized = sanitize_event_for_role(event, context_role)
-                                if sanitized:
-                                    most_active_contractor_events.append(sanitized)
-                            
-                            # Replace event_type with category name
-                            if most_active_contractor_events:
-                                category_ids = list(set([e.get("category_id") for e in most_active_contractor_events if e.get("category_id")]))
-                                if category_ids:
-                                    event_categories_result = (
-                                        client.table("event_categories")
-                                        .select("id, name")
-                                        .in_("id", category_ids)
-                                        .execute()
-                                    )
-                                    category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
-                                    
-                                    for event in most_active_contractor_events:
-                                        category_id = event.get("category_id")
-                                        if category_id and category_id in category_name_map:
-                                            event["event_type"] = category_name_map[category_id]
-        except Exception as e:
-            from core.logging_config import logger
-            logger.warning(f"Failed to fetch most active contractor events for unit report: {e}")
-            # most_active_contractor_events remains empty list
     
     # Build report data
     report_data = {
@@ -2069,21 +1210,20 @@ async def generate_unit_report(
         "contractors": contractors,
         "property_management_companies": pm_companies,
         "aoao_organizations": aoao_orgs,
-        "owners": owners,
-        "most_active_contractor_events": most_active_contractor_events,
         "statistics": stats,
         "generated_at": datetime.utcnow().isoformat(),
         "is_public": not internal,
     }
-
+    
     # Generate report ID and filename
     report_id = str(uuid4())
     unit_number = unit.get("unit_number", "unit")
     filename = f"unit-report-{unit_number}-{datetime.utcnow().strftime('%Y%m%d')}"
-
+    
     # Generate PDF if requested
     download_url = None
-    size_bytes = len(str(report_data).encode("utf-8"))
+    size_bytes = len(str(report_data).encode('utf-8'))
+    
     if format == "pdf":
         try:
             pdf_bytes = generate_pdf_bytes(report_data)
@@ -2091,13 +1231,16 @@ async def generate_unit_report(
             upload_result = await upload_report_to_s3(pdf_bytes, f"{filename}.pdf")
             download_url = upload_result.download_url
             filename = f"{filename}.pdf"
-        except Exception:
+        except Exception as e:
+            # Fallback to JSON if PDF generation fails
             format = "json"
             filename = f"{filename}.json"
+    
     if format == "json":
         filename = f"{filename}.json"
-
+    
     expires_at = (datetime.utcnow() + timedelta(days=7 if not internal else 30)).isoformat() + "Z"
+    
     return ReportResult(
         report_id=report_id,
         filename=filename,
