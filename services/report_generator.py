@@ -2078,17 +2078,32 @@ async def generate_unit_report(
     # Use original_unit_id directly - we've already verified it matches the fetched unit
     # Don't rely on unit.get("id") as the unit object might have been modified
     
-    # Create a copy of the entire unit dict to preserve ALL fields exactly as they come from the database
+    # Create a comprehensive unit dict with ALL expected fields
+    # Supabase may omit null fields, so we explicitly include all fields from the schema
     # This ensures we get all fields: bedrooms, bathrooms, square_feet, floor, owner_name, parcel_number, etc.
-    import copy
-    unit_copy = copy.deepcopy(unit)
+    unit_copy = {
+        "id": original_unit_id,  # Always use the verified original_unit_id
+        "building_id": unit.get("building_id"),
+        "unit_number": unit.get("unit_number"),
+        "floor": unit.get("floor"),
+        "bedrooms": unit.get("bedrooms"),
+        "bathrooms": unit.get("bathrooms"),
+        "square_feet": unit.get("square_feet"),
+        "owner_name": unit.get("owner_name"),
+        "parcel_number": unit.get("parcel_number"),
+        "created_at": unit.get("created_at"),
+        "updated_at": unit.get("updated_at"),
+    }
     
-    # Ensure the ID is always the original_unit_id we verified
-    unit_copy["id"] = original_unit_id
+    # Include "owners" if it was added (from line 1960)
+    if "owners" in unit:
+        unit_copy["owners"] = unit["owners"]
     
-    # Note: "owners" is added to the unit dict on line 1960, and deepcopy will include it
-    # If there's any duplication, it's because the database might have an "owners" field
-    # or it was added elsewhere. The deepcopy ensures we have exactly what's in the unit dict.
+    # Include any other fields that might exist in the database result
+    # (but don't overwrite fields we've already set)
+    for key, value in unit.items():
+        if key not in unit_copy:
+            unit_copy[key] = value
     
     report_data = {
         "unit": unit_copy,
