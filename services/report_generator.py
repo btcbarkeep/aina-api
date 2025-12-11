@@ -1286,19 +1286,28 @@ async def generate_unit_report(
     client = get_supabase_client()
 
     # Get unit info
+    # Preserve the original unit_id parameter to ensure it's never overwritten
+    original_unit_id = str(unit_id).strip()
+    
     unit_result = (
         client.table("units")
         .select("*")
-        .eq("id", unit_id)
+        .eq("id", original_unit_id)
         .limit(1)
         .execute()
     )
     if not unit_result.data:
-        raise ValueError(f"Unit {unit_id} not found")
+        raise ValueError(f"Unit {original_unit_id} not found")
     unit = unit_result.data[0]
     fetched_unit_id = unit.get("id")
-    if fetched_unit_id and str(fetched_unit_id) != str(unit_id):
-        raise ValueError(f"Mismatch: requested unit_id {unit_id} but fetched {fetched_unit_id} from units table")
+    if fetched_unit_id and str(fetched_unit_id) != str(original_unit_id):
+        raise ValueError(f"Mismatch: requested unit_id {original_unit_id} but fetched {fetched_unit_id} from units table")
+    
+    # Ensure the unit object has the correct ID
+    unit["id"] = str(fetched_unit_id) if fetched_unit_id else original_unit_id
+    
+    # Use original_unit_id for all subsequent queries to prevent any variable shadowing
+    unit_id = original_unit_id
     building_id = unit.get("building_id")
     
     # Get building info
@@ -2061,8 +2070,18 @@ async def generate_unit_report(
             # most_active_contractor_events remains empty list
     
     # Build report data
+    # Create a copy of the unit to ensure it's not modified by reference
+    # Verify the unit ID one more time before returning
+    final_unit_id = unit.get("id")
+    if final_unit_id and str(final_unit_id) != str(original_unit_id):
+        raise ValueError(f"Unit ID mismatch before returning report: expected {original_unit_id}, got {final_unit_id}")
+    
+    # Create a copy of the unit dict to prevent any accidental modifications
+    unit_copy = unit.copy()
+    unit_copy["id"] = str(final_unit_id) if final_unit_id else original_unit_id
+    
     report_data = {
-        "unit": unit,
+        "unit": unit_copy,
         "building": building,
         "events": events,
         "documents": documents,
