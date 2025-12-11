@@ -988,6 +988,16 @@ async def generate_building_report(
         # Combine: paid first, then non-paid, take top 5
         pm_companies = (paid_pm_companies + non_paid_pm_companies)[:5]
     
+    # Deduplicate PM companies (unit + building access can double count)
+    if pm_companies:
+        pm_dedup: Dict[str, Dict[str, Any]] = {}
+        for pm in pm_companies:
+            pm_id = pm.get("id")
+            if pm_id:
+                # Keep the first occurrence (already carries event_count/access_created_at)
+                pm_dedup.setdefault(pm_id, pm)
+        pm_companies = list(pm_dedup.values())
+    
     # Calculate statistics
     # Use total counts (not limited) for public reports
     stats = {
@@ -1430,10 +1440,11 @@ async def generate_unit_report(
                     # If no category_id, keep original event_type
                     pass
     
-    # Get documents for this unit (via document_units)
+    # Get documents for this unit (via document_units and unit_id column)
     documents = []
     from core.logging_config import logger
     try:
+        # Collect doc ids from junction table
         document_units_result = (
             client.table("document_units")
             .select("document_id")
@@ -1442,10 +1453,20 @@ async def generate_unit_report(
         )
         document_ids = [row["document_id"] for row in (document_units_result.data or [])]
         
-        logger.debug(f"Found {len(document_ids)} document_ids linked to unit {unit_id}")
+        # Also include documents that have unit_id directly set
+        direct_docs_result = (
+            client.table("documents")
+            .select("id")
+            .eq("unit_id", unit_id)
+            .execute()
+        )
+        direct_doc_ids = [row["id"] for row in (direct_docs_result.data or [])]
         
-        if document_ids:
-            documents_query = client.table("documents").select("*").in_("id", document_ids)
+        combined_doc_ids = list({*document_ids, *direct_doc_ids})
+        logger.debug(f"Found {len(combined_doc_ids)} document_ids linked to unit {unit_id} (junction + direct)")
+        
+        if combined_doc_ids:
+            documents_query = client.table("documents").select("*").in_("id", combined_doc_ids)
             
             # For public reports, only show public documents
             if not internal and context_role == "public":
@@ -1934,10 +1955,6 @@ async def generate_unit_report(
     # Attach owners directly on unit payload for visibility
     if unit is not None:
         unit["owners"] = owners
-    
-    # Attach PM companies directly on unit payload (includes building-level access)
-    if unit is not None:
-        unit["property_management_companies"] = pm_companies
     
     # Get most active contractor's last 5 events (for public reports only)
     most_active_contractor_events = []
