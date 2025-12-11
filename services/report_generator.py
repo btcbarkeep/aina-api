@@ -1982,26 +1982,26 @@ async def generate_unit_report(
                     
                     contractor_events = contractor_events_result.data or []
                     
-                            # Get unit_ids for these events
-                            if contractor_events:
-                                event_ids_for_contractor = [e.get("id") for e in contractor_events if e.get("id")]
-                                if event_ids_for_contractor:
-                                    event_units_result = (
-                                        client.table("event_units")
-                                        .select("event_id, unit_id")
-                                        .in_("event_id", event_ids_for_contractor)
-                                        .execute()
-                                    )
-                                    
-                                    event_units_map = {}
-                                    if event_units_result.data:
-                                        for row in event_units_result.data:
-                                            event_id = row.get("event_id")
-                                            event_unit_id = row.get("unit_id")  # Use different variable name to avoid shadowing function parameter
-                                            if event_id and event_unit_id:
-                                                if event_id not in event_units_map:
-                                                    event_units_map[event_id] = []
-                                                event_units_map[event_id].append(event_unit_id)
+                    # Get unit_ids for these events
+                    if contractor_events:
+                        event_ids_for_contractor = [e.get("id") for e in contractor_events if e.get("id")]
+                        if event_ids_for_contractor:
+                            event_units_result = (
+                                client.table("event_units")
+                                .select("event_id, unit_id")
+                                .in_("event_id", event_ids_for_contractor)
+                                .execute()
+                            )
+                            
+                            event_units_map = {}
+                            if event_units_result.data:
+                                for row in event_units_result.data:
+                                    event_id = row.get("event_id")
+                                    event_unit_id = row.get("unit_id")  # Use different variable name to avoid shadowing function parameter
+                                    if event_id and event_unit_id:
+                                        if event_id not in event_units_map:
+                                            event_units_map[event_id] = []
+                                        event_units_map[event_id].append(event_unit_id)
                             
                             # Get unit numbers for units_affected
                             all_unit_ids = set()
