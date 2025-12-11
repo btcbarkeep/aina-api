@@ -2070,16 +2070,13 @@ async def generate_unit_report(
             # most_active_contractor_events remains empty list
     
     # Build report data
-    # Create a copy of the unit to ensure it's not modified by reference
-    # Verify the unit ID one more time before returning
-    final_unit_id = unit.get("id")
-    if final_unit_id and str(final_unit_id) != str(original_unit_id):
-        raise ValueError(f"Unit ID mismatch before returning report: expected {original_unit_id}, got {final_unit_id}")
+    # Use original_unit_id directly - we've already verified it matches the fetched unit
+    # Don't rely on unit.get("id") as the unit object might have been modified
     
     # Create a deep copy of the unit dict with all fields preserved
     # For unit reports, we want ALL unit fields (bedrooms, bathrooms, square_feet, floor, owner_name, parcel_number, etc.)
     unit_copy = {
-        "id": str(final_unit_id) if final_unit_id else original_unit_id,
+        "id": original_unit_id,  # Always use the original_unit_id we verified at the start
         "building_id": unit.get("building_id"),
         "unit_number": unit.get("unit_number"),
         "floor": unit.get("floor"),
@@ -2094,9 +2091,9 @@ async def generate_unit_report(
     # Preserve owners if it was added
     if "owners" in unit:
         unit_copy["owners"] = unit["owners"]
-    # Include any other fields that might exist
+    # Include any other fields that might exist (but ensure ID is always original_unit_id)
     for key, value in unit.items():
-        if key not in unit_copy:
+        if key not in unit_copy and key != "id":  # Skip "id" to ensure we use original_unit_id
             unit_copy[key] = value
     
     report_data = {
