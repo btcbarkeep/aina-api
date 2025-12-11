@@ -1866,7 +1866,7 @@ async def generate_unit_report(
         "total_aoao_organizations": len(aoao_orgs),
     }
     
-    # For public reports, remove unnecessary fields to reduce payload size
+    # For public reports, remove unnecessary fields to reduce payload size (but keep key unit fields)
     if not internal and context_role == "public":
         # Remove fields from building (if it exists)
         if building:
@@ -1895,7 +1895,7 @@ async def generate_unit_report(
         for pm in pm_companies:
             pm_companies_filtered.append({k: v for k, v in pm.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
         pm_companies = pm_companies_filtered
-    
+        
     # Get owners with access to this unit
     owners = []
     from core.logging_config import logger
