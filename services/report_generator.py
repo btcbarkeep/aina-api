@@ -1931,6 +1931,14 @@ async def generate_unit_report(
         logger.error(f"Failed to fetch owners for unit report (unit_id: {unit_id}): {e}", exc_info=True)
         # owners remains empty list
     
+    # Attach owners directly on unit payload for visibility
+    if unit is not None:
+        unit["owners"] = owners
+    
+    # Attach PM companies directly on unit payload (includes building-level access)
+    if unit is not None:
+        unit["property_management_companies"] = pm_companies
+    
     # Get most active contractor's last 5 events (for public reports only)
     most_active_contractor_events = []
     if not internal and context_role == "public" and event_ids and contractor_event_counts:
