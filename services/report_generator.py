@@ -1303,10 +1303,11 @@ async def generate_unit_report(
     if fetched_unit_id and str(fetched_unit_id) != str(original_unit_id):
         raise ValueError(f"Mismatch: requested unit_id {original_unit_id} but fetched {fetched_unit_id} from units table")
     
-    # Log the unit fields for debugging
+    # Log the unit fields for debugging - log the actual raw unit dict
     from core.logging_config import logger
     logger.debug(f"Fetched unit fields: {list(unit.keys())}")
-    logger.debug(f"Unit number: {unit.get('unit_number')}, Floor: {unit.get('floor')}, Bedrooms: {unit.get('bedrooms')}")
+    logger.debug(f"Raw unit data: {unit}")
+    logger.debug(f"Unit number (direct): {unit.get('unit_number')}, Floor: {unit.get('floor')}, Bedrooms: {unit.get('bedrooms')}")
     
     # Ensure the unit object has the correct ID
     unit["id"] = str(fetched_unit_id) if fetched_unit_id else original_unit_id
@@ -2079,10 +2080,17 @@ async def generate_unit_report(
     # Don't rely on unit.get("id") as the unit object might have been modified
     
     # Create a comprehensive unit dict with ALL expected fields
-    # Supabase may omit null fields, so we explicitly include all fields from the schema
-    # This ensures we get all fields: bedrooms, bathrooms, square_feet, floor, owner_name, parcel_number, etc.
-    unit_copy = {
-        "id": original_unit_id,  # Always use the verified original_unit_id
+    # Access fields directly from the unit dict (not using .get() to preserve actual values)
+    # Start with a copy of the entire unit dict to preserve all fields exactly as returned
+    import copy
+    unit_copy = copy.deepcopy(unit)
+    
+    # Ensure the ID is always the verified original_unit_id
+    unit_copy["id"] = original_unit_id
+    
+    # Explicitly ensure all expected fields are present (even if None/null)
+    # This handles cases where Supabase might omit null fields
+    expected_fields = {
         "building_id": unit.get("building_id"),
         "unit_number": unit.get("unit_number"),
         "floor": unit.get("floor"),
@@ -2095,15 +2103,13 @@ async def generate_unit_report(
         "updated_at": unit.get("updated_at"),
     }
     
-    # Include "owners" if it was added (from line 1960)
-    if "owners" in unit:
-        unit_copy["owners"] = unit["owners"]
-    
-    # Include any other fields that might exist in the database result
-    # (but don't overwrite fields we've already set)
-    for key, value in unit.items():
-        if key not in unit_copy:
+    # Update unit_copy with expected fields (this will add missing fields or update existing ones)
+    for key, value in expected_fields.items():
+        if key not in unit_copy or unit_copy[key] is None:
             unit_copy[key] = value
+    
+    # Log what we're about to return
+    logger.debug(f"Unit copy before return - unit_number: {unit_copy.get('unit_number')}, floor: {unit_copy.get('floor')}, bedrooms: {unit_copy.get('bedrooms')}")
     
     report_data = {
         "unit": unit_copy,
