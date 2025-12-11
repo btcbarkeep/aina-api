@@ -1,6 +1,6 @@
 # services/report_generator.py
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from datetime import datetime, timedelta
 from uuid import uuid4
 import uuid
@@ -1583,28 +1583,51 @@ async def generate_unit_report(
         # Combine: paid first, then non-paid, take top 5
         contractors = (paid_contractors + non_paid_contractors)[:5]
     
-    # Get property management companies assigned to this unit
+    # Get property management companies assigned to this unit or its building
     pm_companies = []
     try:
+        pm_company_ids: Set[str] = set()
+        pm_access_created_at_map: Dict[str, Any] = {}
+        
+        # Direct unit access
         pm_unit_access_result = (
             client.table("pm_company_unit_access")
             .select("pm_company_id, created_at")
             .eq("unit_id", unit_id)
             .execute()
         )
-        pm_company_ids = [row["pm_company_id"] for row in (pm_unit_access_result.data or [])]
+        for row in (pm_unit_access_result.data or []):
+            pm_id = row.get("pm_company_id")
+            created_at = row.get("created_at")
+            if pm_id:
+                pm_company_ids.add(pm_id)
+                # Prefer earliest access timestamp if multiple
+                existing = pm_access_created_at_map.get(pm_id)
+                if not existing or (created_at and created_at < existing):
+                    pm_access_created_at_map[pm_id] = created_at
         
-        # Create a map of pm_company_id -> created_at from access table
-        pm_access_created_at_map = {
-            row["pm_company_id"]: row["created_at"]
-            for row in (pm_unit_access_result.data or [])
-        }
+        # Building-level access (inherit PMs with building access)
+        if building_id:
+            pm_building_access_result = (
+                client.table("pm_company_building_access")
+                .select("pm_company_id, created_at")
+                .eq("building_id", building_id)
+                .execute()
+            )
+            for row in (pm_building_access_result.data or []):
+                pm_id = row.get("pm_company_id")
+                created_at = row.get("created_at")
+                if pm_id:
+                    pm_company_ids.add(pm_id)
+                    existing = pm_access_created_at_map.get(pm_id)
+                    if not existing or (created_at and created_at < existing):
+                        pm_access_created_at_map[pm_id] = created_at
         
         if pm_company_ids:
             pm_companies_result = (
                 client.table("property_management_companies")
                 .select("*")
-                .in_("id", pm_company_ids)
+                .in_("id", list(pm_company_ids))
                 .execute()
             )
             pm_companies = pm_companies_result.data or []
