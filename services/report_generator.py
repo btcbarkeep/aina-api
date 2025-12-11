@@ -1296,6 +1296,9 @@ async def generate_unit_report(
     if not unit_result.data:
         raise ValueError(f"Unit {unit_id} not found")
     unit = unit_result.data[0]
+    fetched_unit_id = unit.get("id")
+    if fetched_unit_id and str(fetched_unit_id) != str(unit_id):
+        raise ValueError(f"Mismatch: requested unit_id {unit_id} but fetched {fetched_unit_id} from units table")
     building_id = unit.get("building_id")
     
     # Get building info
