@@ -1369,6 +1369,30 @@ async def generate_unit_report(
             if not internal and context_role == "public":
                 event.pop("unit_number", None)
     
+    # FEATURE 2: Fetch event category names and replace event_type with category name
+    if events:
+        # Get unique category_ids from events
+        category_ids = list(set([e.get("category_id") for e in events if e.get("category_id")]))
+        
+        if category_ids:
+            # Fetch category names from event_categories table
+            event_categories_result = (
+                client.table("event_categories")
+                .select("id, name")
+                .in_("id", category_ids)
+                .execute()
+            )
+            # Create a map: category_id -> category_name
+            category_name_map = {cat["id"]: cat["name"] for cat in (event_categories_result.data or [])}
+            
+            # Replace event_type with category name for each event
+            for event in events:
+                category_id = event.get("category_id")
+                if category_id and category_id in category_name_map:
+                    # Replace event_type with category name
+                    event["event_type"] = category_name_map[category_id]
+                # If category_id doesn't exist in map, keep original event_type
+    
     # Get documents for this unit (via document_units)
     document_units_result = (
         client.table("document_units")
