@@ -975,18 +975,41 @@ async def generate_building_report(
     total_pm_companies_count = len(pm_companies)
     
     # For public reports, limit to top 5 PM companies
-    # Prioritize PM companies with "paid" subscription, then sort by event count
+    # Prioritize: 1) Paid subscription (up to 5), 2) Building access, then sort by event count
     if not internal and context_role == "public":
-        # Separate paid and non-paid PM companies
+        # Track which PM companies have building access
+        pm_ids_with_building_access = set(pm_company_ids_from_building)
+        for pm in pm_companies:
+            pm["has_building_access"] = pm.get("id") in pm_ids_with_building_access
+        
+        # Separate into categories
         paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") == "paid"]
         non_paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") != "paid"]
+        building_access_pm_companies = [pm for pm in pm_companies if pm.get("has_building_access")]
         
         # Sort each group by event count (descending)
         paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         non_paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        building_access_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
         
-        # Combine: paid first, then non-paid, take top 5
-        pm_companies = (paid_pm_companies + non_paid_pm_companies)[:5]
+        # Build result: prioritize paid (up to 5), then add building access if slots remain
+        result = paid_pm_companies[:5]
+        
+        # If we have fewer than 5 paid, add building-access PMs that aren't already included
+        if len(result) < 5:
+            remaining_slots = 5 - len(result)
+            result_ids = {pm.get("id") for pm in result}
+            building_access_to_add = [pm for pm in building_access_pm_companies if pm.get("id") not in result_ids]
+            result.extend(building_access_to_add[:remaining_slots])
+        
+        # Fill remaining slots with other non-paid PMs (that don't have building access or aren't already included)
+        if len(result) < 5:
+            remaining_slots = 5 - len(result)
+            result_ids = {pm.get("id") for pm in result}
+            others_to_add = [pm for pm in non_paid_pm_companies if pm.get("id") not in result_ids]
+            result.extend(others_to_add[:remaining_slots])
+        
+        pm_companies = result
     
     # Deduplicate PM companies (unit + building access can double count)
     if pm_companies:
