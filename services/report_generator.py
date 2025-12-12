@@ -1544,12 +1544,15 @@ async def generate_unit_report(
         .eq("unit_id", unit_id)
         .execute()
     )
+    unit_access_pm_ids = []
     for row in (pm_unit_access_result.data or []):
         pm_id = row.get("pm_company_id")
         if pm_id:
             pm_company_ids.add(pm_id)
+            unit_access_pm_ids.append(pm_id)
     
     # Building-level access (inherit PMs with building access)
+    building_access_pm_ids = []
     if building_id:
         pm_building_access_result = (
             client.table("pm_company_building_access")
@@ -1561,6 +1564,13 @@ async def generate_unit_report(
             pm_id = row.get("pm_company_id")
             if pm_id:
                 pm_company_ids.add(pm_id)
+                building_access_pm_ids.append(pm_id)
+    
+    # Debug logging
+    from core.logging_config import logger
+    logger.debug(f"Unit {unit_id} (building_id: {building_id}): Found {len(unit_access_pm_ids)} PM companies with direct unit access: {unit_access_pm_ids}")
+    logger.debug(f"Unit {unit_id} (building_id: {building_id}): Found {len(building_access_pm_ids)} PM companies with building access: {building_access_pm_ids}")
+    logger.debug(f"Unit {unit_id}: Total unique PM company IDs: {list(pm_company_ids)}")
     
     if pm_company_ids:
         pm_companies_result = (
@@ -1570,6 +1580,7 @@ async def generate_unit_report(
             .execute()
         )
         pm_companies = pm_companies_result.data or []
+        logger.debug(f"Unit {unit_id}: Fetched {len(pm_companies)} PM companies from database: {[pm.get('id') for pm in pm_companies]}")
     
     # Build quick lookup for event creators to PM/AOAO org names (for event counts)
     def _norm_name(val: Optional[str]) -> Optional[str]:
@@ -1677,8 +1688,8 @@ async def generate_unit_report(
                 )
                 # Count units per building
                 building_unit_counts = {}
-                for unit in (units_from_buildings.data or []):
-                    b_id = unit.get("building_id")
+                for building_unit in (units_from_buildings.data or []):  # Use different variable name to avoid shadowing the main 'unit' variable
+                    b_id = building_unit.get("building_id")
                     if b_id:
                         building_unit_counts[b_id] = building_unit_counts.get(b_id, 0) + 1
                 
