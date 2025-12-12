@@ -975,24 +975,30 @@ async def generate_building_report(
     total_pm_companies_count = len(pm_companies)
     
     # For public reports, limit to top 5 PM companies
-    # Prioritize: 1) Paid subscription (up to 5), 2) Building access, then sort by event count
+    # Prioritize: 1) Paid subscription (up to 5), 2) Building access or 3+ units, then sort by event/unit count
     if not internal and context_role == "public":
         # Track which PM companies have building access
         pm_ids_with_building_access = set(pm_company_ids_from_building)
         for pm in pm_companies:
             pm["has_building_access"] = pm.get("id") in pm_ids_with_building_access
+            pm["has_significant_unit_access"] = pm.get("unit_count", 0) >= 3
         
         # Separate into categories
         paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") == "paid"]
         non_paid_pm_companies = [pm for pm in pm_companies if pm.get("subscription_tier") != "paid"]
         building_access_pm_companies = [pm for pm in pm_companies if pm.get("has_building_access")]
+        significant_unit_access_pm_companies = [pm for pm in pm_companies if pm.get("has_significant_unit_access")]
         
-        # Sort each group by event count (descending)
-        paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        non_paid_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
-        building_access_pm_companies.sort(key=lambda x: x.get("event_count", 0), reverse=True)
+        # Sort each group by event count (primary) and unit count (secondary, descending)
+        def sort_key(pm):
+            return (pm.get("event_count", 0), pm.get("unit_count", 0))
         
-        # Build result: prioritize paid (up to 5), then add building access if slots remain
+        paid_pm_companies.sort(key=sort_key, reverse=True)
+        non_paid_pm_companies.sort(key=sort_key, reverse=True)
+        building_access_pm_companies.sort(key=sort_key, reverse=True)
+        significant_unit_access_pm_companies.sort(key=sort_key, reverse=True)
+        
+        # Build result: prioritize paid (up to 5), then add building access or significant unit access if slots remain
         result = paid_pm_companies[:5]
         
         # If we have fewer than 5 paid, add building-access PMs that aren't already included
@@ -1002,11 +1008,19 @@ async def generate_building_report(
             building_access_to_add = [pm for pm in building_access_pm_companies if pm.get("id") not in result_ids]
             result.extend(building_access_to_add[:remaining_slots])
         
-        # Fill remaining slots with other non-paid PMs (that don't have building access or aren't already included)
+        # If still fewer than 5, add PMs with significant unit access (3+ units) that aren't already included
+        if len(result) < 5:
+            remaining_slots = 5 - len(result)
+            result_ids = {pm.get("id") for pm in result}
+            significant_unit_to_add = [pm for pm in significant_unit_access_pm_companies if pm.get("id") not in result_ids]
+            result.extend(significant_unit_to_add[:remaining_slots])
+        
+        # Fill remaining slots with other non-paid PMs (that don't have building access or significant unit access)
         if len(result) < 5:
             remaining_slots = 5 - len(result)
             result_ids = {pm.get("id") for pm in result}
             others_to_add = [pm for pm in non_paid_pm_companies if pm.get("id") not in result_ids]
+            others_to_add.sort(key=sort_key, reverse=True)
             result.extend(others_to_add[:remaining_slots])
         
         pm_companies = result
