@@ -1369,7 +1369,7 @@ async def generate_unit_report(
             if not internal and context_role == "public":
                 event.pop("unit_number", None)
     
-    # FEATURE 2: Fetch event category names and replace event_type with category name
+    # Fetch event category names and replace event_type with category name
     if events:
         # Get unique category_ids from events
         category_ids = list(set([e.get("category_id") for e in events if e.get("category_id")]))
@@ -1394,7 +1394,6 @@ async def generate_unit_report(
                 # If category_id doesn't exist in map, keep original event_type
     
     # Get documents for this unit (via document_units and unit_id column)
-    # FEATURE 4: Include documents from both junction table AND direct unit_id column
     document_units_result = (
         client.table("document_units")
         .select("document_id")
@@ -1447,7 +1446,7 @@ async def generate_unit_report(
         for document in documents:
             document["unit_ids"] = [unit_id]  # List with single unit_id
     
-    # FEATURE 3: Fetch document category and subcategory names
+    # Fetch document category and subcategory names
     if documents:
         # Get unique category_ids and subcategory_ids from documents
         category_ids = list(set([d.get("category_id") for d in documents if d.get("category_id")]))
@@ -1544,15 +1543,12 @@ async def generate_unit_report(
         .eq("unit_id", unit_id)
         .execute()
     )
-    unit_access_pm_ids = []
     for row in (pm_unit_access_result.data or []):
         pm_id = row.get("pm_company_id")
         if pm_id:
             pm_company_ids.add(pm_id)
-            unit_access_pm_ids.append(pm_id)
     
     # Building-level access (inherit PMs with building access)
-    building_access_pm_ids = []
     if building_id:
         pm_building_access_result = (
             client.table("pm_company_building_access")
@@ -1564,13 +1560,6 @@ async def generate_unit_report(
             pm_id = row.get("pm_company_id")
             if pm_id:
                 pm_company_ids.add(pm_id)
-                building_access_pm_ids.append(pm_id)
-    
-    # Debug logging
-    from core.logging_config import logger
-    logger.debug(f"Unit {unit_id} (building_id: {building_id}): Found {len(unit_access_pm_ids)} PM companies with direct unit access: {unit_access_pm_ids}")
-    logger.debug(f"Unit {unit_id} (building_id: {building_id}): Found {len(building_access_pm_ids)} PM companies with building access: {building_access_pm_ids}")
-    logger.debug(f"Unit {unit_id}: Total unique PM company IDs: {list(pm_company_ids)}")
     
     if pm_company_ids:
         pm_companies_result = (
@@ -1580,7 +1569,6 @@ async def generate_unit_report(
             .execute()
         )
         pm_companies = pm_companies_result.data or []
-        logger.debug(f"Unit {unit_id}: Fetched {len(pm_companies)} PM companies from database: {[pm.get('id') for pm in pm_companies]}")
     
     # Build quick lookup for event creators to PM/AOAO org names (for event counts)
     def _norm_name(val: Optional[str]) -> Optional[str]:
@@ -1623,7 +1611,7 @@ async def generate_unit_report(
     for pm in pm_companies:
         pm["event_count"] = pm_event_counts.get(pm.get("id"), 0)
     
-    # FEATURE 6: Count units and buildings for each PM company
+    # Count units and buildings for each PM company
     if pm_companies:
         pm_company_ids_list = [pm.get("id") for pm in pm_companies if pm.get("id")]
         
@@ -1817,7 +1805,7 @@ async def generate_unit_report(
             pm_companies_filtered.append({k: v for k, v in pm.items() if k not in ["phone", "email", "updated_at", "stripe_customer_id", "stripe_subscription_id", "subscription_status"]})
         pm_companies = pm_companies_filtered
     
-    # FEATURE 1: Get owners with access to this unit
+    # Get owners with access to this unit
     owners = []
     try:
         # Get user_units_access records for this unit
@@ -1871,7 +1859,7 @@ async def generate_unit_report(
     if unit is not None:
         unit["owners"] = owners
     
-    # FEATURE 5: Get most active contractor's last 5 events (for public reports only)
+    # Get most active contractor's last 5 events (for public reports only)
     most_active_contractor_events = []
     if not internal and context_role == "public" and event_ids and contractor_event_counts:
         try:
